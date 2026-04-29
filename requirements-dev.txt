@@ -1,0 +1,56 @@
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
+pytest-timeout>=2.1.0
+httpx>=0.24.0              # For FastAPI testing
+faker>=19.0.0              # For generating test data
+
+# ── Code Quality ──────────────────────────────────────────────────────────────
+black>=23.7.0              # Code formatter
+isort>=5.12.0              # Import sorter
+flake8>=6.1.0              # Linter
+mypy>=1.5.0                # Type checker
+pylint>=2.17.0             # Code analyzer
+ruff>=0.0.285              # Fast Python linter (alternative to flake8)
+
+# ── Type Stubs ────────────────────────────────────────────────────────────────
+types-requests>=2.31.0
+types-PyYAML>=6.0.12
+types-Pillow>=10.0.0
+types-cachetools>=5.3.0
+
+# ── Development Tools ─────────────────────────────────────────────────────────
+ipython>=8.14.0            # Enhanced Python shell
+jupyter>=1.0.0             # Jupyter notebooks
+notebook>=7.0.0            # Jupyter notebook server
+ipykernel>=6.25.0          # Jupyter kernel
+ipywidgets>=8.1.0          # Interactive widgets
+
+# ── Debugging & Profiling ─────────────────────────────────────────────────────
+pdbpp>=0.10.3              # Enhanced debugger
+line-profiler>=4.0.0       # Line-by-line profiling
+memory-profiler>=0.61.0    # Memory profiling
+py-spy>=0.3.14             # Sampling profiler
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+mkdocs>=1.5.0              # Documentation generator
+mkdocs-material>=9.2.0     # Material theme for MkDocs
+mkdocstrings>=0.22.0       # Auto-generate docs from docstrings
+mkdocstrings-python>=1.5.0 # Python handler for mkdocstrings
+
+# ── Monitoring & Observability ────────────────────────────────────────────────
+prometheus-client>=0.17.0  # Prometheus metrics
+opentelemetry-api>=1.20.0  # OpenTelemetry API
+opentelemetry-sdk>=1.20.0  # OpenTelemetry SDK
+
+# ── Pre-commit Hooks ──────────────────────────────────────────────────────────
+pre-commit>=3.3.0          # Git pre-commit hooks
+
+# ── Security ──────────────────────────────────────────────────────────────────
+bandit>=1.7.5              # Security linter
+safety>=2.3.5              # Dependency vulnerability scanner
+
+# ── Performance Testing ───────────────────────────────────────────────────────
+locust>=2.15.0             # Load testing framework

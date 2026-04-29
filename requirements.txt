@@ -1,0 +1,44 @@
+# ── Core ML / Training ────────────────────────────────────────────────────────
+aiofiles>=23.2.1
+aiohttp>=3.9.0
+bert-score==0.3.13
+datasets==4.4.2
+numpy<2.0.0          # NumPy 2.x incompatible with PyTorch 2.2.2 on Python 3.12
+peft==0.18.1
+Pillow==11.3.0
+sacrebleu==2.6.0
+sentence-transformers==2.7.0  # Compatible with PyTorch 2.2.2
+# torch CPU version for Python 3.12 (max available: 2.2.2)
+torch==2.2.2
+tqdm==4.67.1
+transformers==4.40.0          # Compatible with PyTorch 2.2.2
+
+# ── RAG system ────────────────────────────────────────────────────────────────
+# Vector similarity search
+faiss-cpu==1.9.0          # CPU build; requires numpy>=2.0
+
+# CLIP model (loaded via transformers, but needs these backends)
+# transformers already listed above — CLIP is included
+
+# YAML config parsing
+PyYAML>=6.0.1
+
+# ── Optional / Dev ────────────────────────────────────────────────────────────
+rouge-score>=0.1.2        # ROUGE metrics (used in train & eval scripts)
+mlflow>=2.11.0            # Experiment tracking
+
+# ── Services (Yandex Search + Wikipedia) ──────────────────────────────────────
+requests>=2.31.0
+cachetools>=5.3.0
+
+# ── VLM Inference (llama.cpp Python bindings) ─────────────────────────────────
+llama-cpp-python>=0.2.0   # For Qwen2-VL inference via GGUF models
+
+# ── Environment & Configuration ───────────────────────────────────────────────
+python-dotenv>=1.0.0      # For loading .env files
+
+# ── FastAPI & Web Server ──────────────────────────────────────────────────────
+fastapi>=0.109.0          # Web framework
+uvicorn>=0.27.0           # ASGI server
+pydantic-settings>=2.1.0  # Settings management
+python-multipart>=0.0.6   # For file uploads
