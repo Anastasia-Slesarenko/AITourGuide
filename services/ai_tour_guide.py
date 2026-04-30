@@ -718,7 +718,7 @@ class AITourGuide:
     
     async def _search_internet(
         self,
-        image: Image.Image,
+        image: Union[Image.Image, str, bytes],
         retrieved_scores: List[float],
         retrieved_descs: List[str],
         retrieved_names: List[str],
@@ -731,12 +731,12 @@ class AITourGuide:
         Использует Yandex Image Search + Wikipedia.
         
         Args:
-            image: PIL изображение для переформулирования
+            image: PIL изображение, путь к файлу или байты для Yandex поиска
             retrieved_scores: CLIP scores из retrieval
             retrieved_descs: Описания кандидатов из retrieval
             retrieved_names: Названия кандидатов из retrieval
             fallback_name: Название по умолчанию
-            image_path: Путь к изображению для Yandex поиска
+            image_path: Путь к изображению для логирования
             timeout: Таймаут в секундах
         
         Returns:
@@ -762,7 +762,7 @@ class AITourGuide:
                 # 1. Yandex Image Search (блокирующий вызов в thread)
                 landmark_names = await asyncio.to_thread(
                     self._yandex_search_sync,
-                    image_path
+                    image
                 )
                 
                 if landmark_names:
@@ -1007,7 +1007,7 @@ class AITourGuide:
         
         Args:
             image: PIL изображение
-            image_path: Путь к изображению
+            image_path: Путь к изображению или "bytes_image" для байтов
             retrieved: Список кандидатов из retrieval
             result: Словарь результата для обновления
             timing: Словарь для записи времени выполнения
@@ -1016,9 +1016,12 @@ class AITourGuide:
         retrieved_names = [r.get("name", "") for r in retrieved]
         retrieved_descs = [r.get("description", "") for r in retrieved]
         
+        # Для bytes используем само изображение, для путей - строку пути
+        search_image_input = image if image_path == "bytes_image" else str(image_path)
+        
         t0 = time.time()
         search_result = await self._search_internet(
-            image=image,
+            image=search_image_input,
             retrieved_scores=retrieved_scores,
             retrieved_descs=retrieved_descs,
             retrieved_names=retrieved_names,

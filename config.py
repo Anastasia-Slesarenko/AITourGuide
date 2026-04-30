@@ -46,16 +46,20 @@ class Settings(BaseSettings):
     
     def validate_paths(self) -> dict[str, bool]:
         """Validate that required paths exist"""
+        # For index_path, check if .faiss file exists
+        index_exists = os.path.exists(f"{self.index_path}.faiss")
+        
         return {
             "model_path": os.path.exists(self.model_path),
             "mmproj_path": os.path.exists(self.mmproj_path),
-            "index_path": os.path.exists(self.index_path),
+            "index_path": index_exists,
             "facts_db_path": os.path.exists(self.facts_db_path),
         }
     
     class Config:
         env_file = ".env"
         env_prefix = ""
+        extra = "ignore"  # Игнорировать неизвестные переменные окружения
         case_sensitive = False
 
 

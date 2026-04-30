@@ -44,3 +44,16 @@ async def get_client_id(request: Request) -> str:
         Client identifier (IP address or "unknown")
     """
     return request.client.host if request.client else "unknown"
+
+
+async def get_rate_limiter(request: Request):
+    """
+    Dependency for getting RateLimiter instance from app state.
+    
+    Args:
+        request: FastAPI request object
+    
+    Returns:
+        RateLimiter instance
+    """
+    return request.app.state.rate_limiter

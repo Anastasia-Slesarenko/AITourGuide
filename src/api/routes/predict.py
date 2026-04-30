@@ -5,13 +5,13 @@ Prediction endpoints for AITourGuide API.
 
 import asyncio
 import logging
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, Request
 from pydantic import BaseModel, Field
-from typing import Dict
+from typing import Dict, Annotated
 
 from services.ai_tour_guide import AITourGuide
-from src.api.dependencies import get_guide
-from src.api.middleware import check_rate_limit
+from src.api.dependencies import get_guide, get_rate_limiter
+from src.api.middleware import check_rate_limit, RateLimiter
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,8 @@ async def predict(
         description="Enable internet search for unknown landmarks"
     ),
     guide: AITourGuide = Depends(get_guide),
-    _rate_limit: None = Depends(check_rate_limit),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
+    request: Request = None,
 ):
     """
     Predict landmark from uploaded image.
@@ -89,6 +90,9 @@ async def predict(
     3. Generates description using VLM
     4. Falls back to internet search if confidence is low
     """
+    # Check rate limit
+    await check_rate_limit(request, rate_limiter)
+    
     # Validate file size
     content = await image.read()
     if len(content) > settings.max_file_size_bytes:

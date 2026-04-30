@@ -139,8 +139,14 @@ class YandexSearchService:
                 
                 with open(image, "rb") as image_file:
                     image_bytes = image_file.read()
-            else:
+            elif isinstance(image, bytes):
                 image_bytes = image
+            else:
+                # PIL Image - конвертируем в байты
+                from io import BytesIO
+                buffer = BytesIO()
+                image.save(buffer, format='JPEG')
+                image_bytes = buffer.getvalue()
 
             encoded_string = base64.b64encode(image_bytes).decode("utf-8")
             # Генерируем ключ кэша (по хешу изображения)
