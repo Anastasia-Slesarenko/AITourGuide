@@ -9,7 +9,7 @@ import asyncio
 from tqdm import tqdm
 
 
-IMAGES_DIR = Path("/Users/anastasiya/Documents/AIGuide/images")
+IMAGES_DIR = Path("/Users/anastasiya/Documents/AITourGuide/images")
 HEADERS = {"User-Agent": "AIGuideBot/1.0 (slesarenko221999@gmail.com)"}
 MAX_RETRIES = 3
 MAX_PER_LANDMARK = 5
@@ -21,7 +21,7 @@ SEMAPHORE_SIZE = 3
 REQUEST_DELAY = 1.0
 TIMEOUT = aiohttp.ClientTimeout(total=60)
 CSV_PATH = (
-    "/Users/anastasiya/Documents/AIGuide/setup_data_v3/data/df_collected_landmark_id_imgs_gr.csv"
+    "/Users/anastasiya/Documents/AITourGuide/setup_data_v3/data/df_collected_landmark_id_imgs_gr.csv"
 )
 
 

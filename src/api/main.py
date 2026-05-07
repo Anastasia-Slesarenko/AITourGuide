@@ -129,20 +129,6 @@ app.include_router(info_router)
 app.include_router(predict_router)
 app.include_router(health_router)
 
-# Legacy endpoints for backward compatibility
-@app.post("/predict", include_in_schema=False, deprecated=True)
-async def predict_legacy(*args, **kwargs):
-    """Legacy endpoint - use /v1/predict instead."""
-    from src.api.routes.predict import predict
-    return await predict(*args, **kwargs)
-
-
-@app.get("/health", include_in_schema=False, deprecated=True)
-async def health_check_legacy(*args, **kwargs):
-    """Legacy endpoint - use /v1/health instead."""
-    from src.api.routes.health import health_check
-    return await health_check(*args, **kwargs)
-
 
 # ========================================
 # MAIN

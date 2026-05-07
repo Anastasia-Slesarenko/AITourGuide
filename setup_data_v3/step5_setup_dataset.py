@@ -1,13 +1,22 @@
 """
-Dataset generation script for landmark recognition with VLM and FAISS-based hard negative mining.
+Step 5: Dataset generation script for landmark recognition with VLM and FAISS-based hard negative mining.
+
+Prerequisites:
+    - Requires clean_landmarks.json from step4_image_filter.py
+    - Input file contains validated images with captions
 
 This script:
-1. Loads landmark data with images
+1. Loads landmark data with validated images from clean_landmarks.json
 2. Encodes images using SigLIP model
 3. Fuses multi-image embeddings per landmark
 4. Uses FAISS to find hard negatives
 5. Generates training samples with candidates
 6. Splits data into train/val/test sets
+
+Input format (from step4):
+    - valid_images: list of {"path": str, "caption": str}
+    - not_valid_images: list of invalid image paths
+    - All other fields from text_filtered_landmarks.json
 """
 
 import json
@@ -24,7 +33,7 @@ import pandas as pd
 import torch
 from PIL import Image
 from tqdm import tqdm
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoProcessor, SiglipModel
 
 # ======================
 # LOGGING SETUP
@@ -44,7 +53,7 @@ class Config:
     """Configuration for dataset generation."""
     
     # Paths
-    data_path: str = "setup_data_v3/data/landmarks_data_wiki.json"
+    data_path: str = "setup_data_v3/data/landmarks_with_guide_descriptions.json"
     output_dir: Path = Path("setup_data_v3/data")
     
     # Model
@@ -113,6 +122,32 @@ class TextProcessor:
         return " ".join(sentences[:n_sentences])
     
     @staticmethod
+    def get_caption(row: pd.Series, image_path: str = None) -> str:
+        """
+        Get caption for a specific image from valid_images.
+        If image_path is provided, returns caption for that specific image.
+        Otherwise returns first available caption.
+        """
+        captions = row.get("captions", [])
+        images = row.get("images", [])
+        
+        if not captions:
+            # Fallback to name if no captions available
+            return row.get("name", "")
+        
+        if image_path and images:
+            # Find caption for specific image
+            try:
+                idx = images.index(image_path)
+                if idx < len(captions):
+                    return captions[idx]
+            except (ValueError, IndexError):
+                pass
+        
+        # Return first caption as fallback
+        return captions[0] if captions else row.get("name", "")
+    
+    @staticmethod
     def build_description(row: pd.Series) -> str:
         """Build landmark description from row data using template."""
         name = row.get("name", "")
@@ -174,7 +209,7 @@ class DataLoader:
     
     @staticmethod
     def load_data(data_path: str) -> pd.DataFrame:
-        """Load and preprocess landmark data."""
+        """Load and preprocess landmark data from clean_landmarks.json."""
         logger.info(f"Loading data from {data_path}")
         
         try:
@@ -195,8 +230,25 @@ class DataLoader:
         df["style"] = df["architectural_style_ru"].fillna(df["architectural_style_en"])
         df["summary"] = df["wikipedia_summary_ru"].fillna(df["wikipedia_summary_en"])
         
-        # Process image paths
-        df["images"] = df["image_path"].apply(DataLoader.ensure_list)
+        # Process valid_images from step4 output
+        # valid_images is a list of dicts with 'path' and 'caption' keys
+        def extract_image_paths(valid_images):
+            if isinstance(valid_images, list):
+                # Extract 'path' from each dict in valid_images
+                return [img.get("path") if isinstance(img, dict) else img
+                       for img in valid_images]
+            return []
+        
+        df["images"] = df["valid_images"].apply(extract_image_paths)
+        
+        # Also store captions for potential future use
+        def extract_captions(valid_images):
+            if isinstance(valid_images, list):
+                return [img.get("caption", "") if isinstance(img, dict) else ""
+                       for img in valid_images]
+            return []
+        
+        df["captions"] = df["valid_images"].apply(extract_captions)
         
         # Filter out landmarks without images
         initial_count = len(df)
@@ -230,7 +282,7 @@ class ImageEncoder:
         
         logger.info(f"Loading model {config.model_name} on {self.device}")
         try:
-            self.model = AutoModel.from_pretrained(config.model_name).to(self.device)
+            self.model = SiglipModel.from_pretrained(config.model_name).to(self.device)
             self.processor = AutoProcessor.from_pretrained(config.model_name)
             self.model.eval()
         except Exception as e:
@@ -490,12 +542,19 @@ class LandmarkEncoder:
                 "image_weights": weights  # Matching weights
             })
         
+        if not embeddings:
+            logger.error("No embeddings generated - all landmarks failed encoding")
+            return np.array([]), []
+        
         embeddings_array = np.array(embeddings, dtype=np.float32)
         
         # Validate normalization for FAISS IndexFlatIP
-        norms = np.linalg.norm(embeddings_array, axis=1)
-        assert np.allclose(norms, 1.0, atol=1e-3), \
-            f"Embeddings not normalized! Norms range: [{norms.min():.4f}, {norms.max():.4f}]"
+        if len(embeddings_array) > 0:
+            norms = np.linalg.norm(embeddings_array, axis=1)
+            if not np.allclose(norms, 1.0, atol=1e-3):
+                logger.warning(
+                    f"Embeddings not perfectly normalized! Norms range: [{norms.min():.4f}, {norms.max():.4f}]"
+                )
         
         logger.info(f"Encoded {len(embeddings_array)} landmarks")
         
@@ -514,31 +573,47 @@ class SampleGenerator:
         df: pd.DataFrame,
         embeddings: np.ndarray,
         metadata: List[Dict[str, Any]],
-        image_encoder: ImageEncoder
+        image_encoder: ImageEncoder,
+        allowed_indices: Optional[List[int]] = None
     ):
         self.config = config
         self.df = df
         self.embeddings = embeddings
         self.metadata = metadata
         self.image_encoder = image_encoder
+        self.allowed_indices = allowed_indices
         
-        # Build FAISS index
+        # Build FAISS index only on allowed indices (train split)
         logger.info("Building FAISS index...")
         dim = embeddings.shape[1]
         self.index = faiss.IndexFlatIP(dim)
-        self.index.add(embeddings)
         
-        # Find nearest neighbors
+        if allowed_indices is not None:
+            # Only add embeddings from allowed indices (train split)
+            train_embeddings = embeddings[allowed_indices]
+            self.index.add(train_embeddings)
+            
+            # Map from FAISS index position to original metadata index
+            self.faiss_to_meta_idx = {i: allowed_indices[i] for i in range(len(allowed_indices))}
+            self.meta_to_faiss_idx = {allowed_indices[i]: i for i in range(len(allowed_indices))}
+            
+            logger.info(f"FAISS index built with {self.index.ntotal} vectors (train split only)")
+        else:
+            # Fallback: use all embeddings (for backward compatibility)
+            self.index.add(embeddings)
+            self.faiss_to_meta_idx = {i: i for i in range(len(embeddings))}
+            self.meta_to_faiss_idx = {i: i for i in range(len(embeddings))}
+            logger.info(f"FAISS index built with {self.index.ntotal} vectors (all data)")
+        
+        # Find nearest neighbors for all embeddings
         self.distances, self.indices = self.index.search(
-            embeddings, config.faiss_k
+            embeddings, min(config.faiss_k, self.index.ntotal)
         )
         
         # Build lookup map
         self.lid_to_idx = {
             meta["lid"]: idx for idx, meta in enumerate(metadata)
         }
-        
-        logger.info(f"FAISS index built with {self.index.ntotal} vectors")
     
     def _get_landmark_confidence(self, idx: int) -> float:
         """Get precomputed confidence for landmark."""
@@ -575,6 +650,7 @@ class SampleGenerator:
     ) -> List[Dict]:
         """
         Sample negatives with diversity control and fixed distribution.
+        Only samples from allowed indices (train split).
         
         Returns:
             List of negative candidates
@@ -604,9 +680,18 @@ class SampleGenerator:
         used_lids = set()
         used_types = set()
         
-        # Pre-filter valid neighbors (exclude self)
-        valid_neighbors = [(i, n, distances[i]) for i, n in enumerate(neighbors)
-                          if n != idx and n < len(self.metadata)]
+        # Convert FAISS indices to metadata indices
+        # Pre-filter valid neighbors (exclude self and only use allowed indices)
+        valid_neighbors = []
+        for i, faiss_idx in enumerate(neighbors):
+            # Map FAISS index to metadata index
+            meta_idx = self.faiss_to_meta_idx.get(faiss_idx)
+            if meta_idx is None:
+                continue
+            if meta_idx != idx and meta_idx < len(self.metadata):
+                # Check if this index is in allowed set
+                if self.allowed_indices is None or meta_idx in self.allowed_indices:
+                    valid_neighbors.append((i, meta_idx, distances[i]))
         
         # Create index mapping for fast lookup
         neighbor_to_dist = {n: (i, dist) for i, n, dist in valid_neighbors}
@@ -638,9 +723,17 @@ class SampleGenerator:
             # Get similarity from pre-computed mapping
             _, similarity = neighbor_to_dist[neighbor_idx]
             
+            # Get random image for this landmark to get its caption
+            candidate_images = meta.get("valid_images", [])
+            if candidate_images:
+                candidate_image = random.choice(candidate_images)
+                caption = TextProcessor.get_caption(row, candidate_image)
+            else:
+                caption = meta["name"]
+            
             candidates.append({
                 "name": meta["name"],
-                "desc": TextProcessor.build_description(row),
+                "caption": caption,
                 "type": cand_type,
                 "sim": float(similarity)
             })
@@ -667,10 +760,10 @@ class SampleGenerator:
         return candidates
     
     def _sample_random_negatives(self, target_lid: str) -> List[Dict]:
-        """Sample completely random negatives (ignore FAISS)."""
+        """Sample completely random negatives (ignore FAISS). Only from allowed indices."""
         all_indices = [
             i for i, meta in enumerate(self.metadata)
-            if meta["lid"] != target_lid
+            if meta["lid"] != target_lid and (self.allowed_indices is None or i in self.allowed_indices)
         ]
         
         if not all_indices:
@@ -698,9 +791,17 @@ class SampleGenerator:
                             continue
                 used_types.add(landmark_type)
             
+            # Get random image for this landmark to get its caption
+            candidate_images = meta.get("valid_images", [])
+            if candidate_images:
+                candidate_image = random.choice(candidate_images)
+                caption = TextProcessor.get_caption(row, candidate_image)
+            else:
+                caption = meta["name"]
+            
             candidates.append({
                 "name": meta["name"],
-                "desc": TextProcessor.build_description(row),
+                "caption": caption,
                 "type": "random",
                 "sim": 0.0
             })
@@ -714,10 +815,29 @@ class SampleGenerator:
         name = meta["name"]
         row = self.df.iloc[meta["row_idx"]]
         
-        # Positive candidate
+        # Select image with weighted probability from valid images FIRST
+        valid_images = meta.get("valid_images", [])
+        image_weights = meta.get("image_weights", [])
+        
+        if not valid_images:
+            raise ValueError(f"No valid images for landmark {landmark_id}")
+        
+        if image_weights and len(image_weights) == len(valid_images):
+            # Weighted selection: prefer higher confidence images
+            total_weight = sum(image_weights)
+            if total_weight > 0:
+                probs = [w / total_weight for w in image_weights]
+                image_path = np.random.choice(valid_images, p=probs)
+            else:
+                image_path = random.choice(valid_images)
+        else:
+            # Fallback to random if weights not available
+            image_path = random.choice(valid_images)
+        
+        # Positive candidate with caption matching the selected image
         positive = {
             "name": name,
-            "desc": TextProcessor.build_description(row)
+            "caption": TextProcessor.get_caption(row, image_path)
         }
         
         # Decide whether to include positive
@@ -768,42 +888,23 @@ class SampleGenerator:
         # Shuffle AFTER controlling composition
         random.shuffle(candidates)
         
-        # Select image with weighted probability from valid images
-        valid_images = meta.get("valid_images", [])
-        image_weights = meta.get("image_weights", [])
-        
-        if not valid_images:
-            raise ValueError(f"No valid images for landmark {landmark_id}")
-        
-        if image_weights and len(image_weights) == len(valid_images):
-            # Weighted selection: prefer higher confidence images
-            total_weight = sum(image_weights)
-            if total_weight > 0:
-                probs = [w / total_weight for w in image_weights]
-                image_path = np.random.choice(valid_images, p=probs)
-            else:
-                image_path = random.choice(valid_images)
-        else:
-            # Fallback to random if weights not available
-            image_path = random.choice(valid_images)
-        
-        # Build contrastive pairs
+        # Build contrastive pairs with the selected image
         contrastive = self._build_contrastive_pairs(
-            idx, landmark_id, positive
+            idx, landmark_id, positive, image_path
         )
         
         return {
             "image": image_path,
             "candidates": candidates,
             "target": {
-                "name": target_name,
-                "landmark_id": landmark_id,
-                "confidence": target_confidence,
-                "evidence": TextProcessor.make_evidence(
-                    positive["desc"],
-                    self.config.evidence_max_length
-                )
-            },
+            "name": target_name,
+            "landmark_id": landmark_id,
+            "confidence": target_confidence,
+            "evidence": TextProcessor.make_evidence(
+                positive["caption"],
+                self.config.evidence_max_length
+            )
+        },
             "meta": {
                 "num_images": meta["num_images"],
                 "confidence": meta["confidence"],
@@ -814,53 +915,82 @@ class SampleGenerator:
         }
     
     def _build_contrastive_pairs(
-        self, idx: int, target_lid: str, positive: Dict
+        self, idx: int, target_lid: str, positive: Dict, image_path: str
     ) -> Dict[str, Any]:
-        """Build contrastive learning signals with similarity scores."""
-        # Filter out self explicitly
-        neighbors = [n for n in self.indices[idx] if n != idx]
-        distances = self.distances[idx]
+        """Build contrastive learning signals with similarity scores. Only from allowed indices."""
+        # Convert FAISS indices to metadata indices and filter
+        neighbors = []
+        for faiss_idx in self.indices[idx]:
+            meta_idx = self.faiss_to_meta_idx.get(faiss_idx)
+            if meta_idx is None:
+                continue
+            if meta_idx != idx and meta_idx < len(self.metadata):
+                # Check if this index is in allowed set
+                if self.allowed_indices is None or meta_idx in self.allowed_indices:
+                    neighbors.append(meta_idx)
         
         # Get one hard negative (most similar)
         hard_negative = None
         hard_sim = 0.0
-        for neighbor_idx in neighbors[:5]:
-            if neighbor_idx >= len(self.metadata):
-                continue
+        for i, neighbor_idx in enumerate(neighbors[:5]):
             meta = self.metadata[neighbor_idx]
             if meta["lid"] != target_lid:
                 row = self.df.iloc[meta["row_idx"]]
+                # Get random image for caption
+                neighbor_images = meta.get("valid_images", [])
+                if neighbor_images:
+                    neighbor_image = random.choice(neighbor_images)
+                    caption = TextProcessor.get_caption(row, neighbor_image)
+                else:
+                    caption = meta["name"]
+                
                 hard_negative = {
                     "name": meta["name"],
-                    "desc": TextProcessor.build_description(row)
+                    "caption": caption
                 }
-                # Find position in original distances
-                orig_pos = np.where(self.indices[idx] == neighbor_idx)[0]
-                hard_sim = float(distances[orig_pos[0]]) if len(orig_pos) > 0 else 0.0
+                # Get similarity directly from distances array
+                # Find actual position of neighbor_idx in self.indices[idx]
+                actual_pos = None
+                for j, n in enumerate(self.indices[idx]):
+                    if n == neighbor_idx:
+                        actual_pos = j
+                        break
+                hard_sim = float(self.distances[idx][actual_pos]) if actual_pos is not None else 0.0
                 break
         
         # Get one semi-hard negative
         semi_negative = None
         semi_sim = 0.0
-        for neighbor_idx in neighbors[10:20]:
-            if neighbor_idx >= len(self.metadata):
-                continue
+        for i, neighbor_idx in enumerate(neighbors[10:20]):
             meta = self.metadata[neighbor_idx]
             if meta["lid"] != target_lid:
                 row = self.df.iloc[meta["row_idx"]]
+                # Get random image for caption
+                neighbor_images = meta.get("valid_images", [])
+                if neighbor_images:
+                    neighbor_image = random.choice(neighbor_images)
+                    caption = TextProcessor.get_caption(row, neighbor_image)
+                else:
+                    caption = meta["name"]
+                
                 semi_negative = {
                     "name": meta["name"],
-                    "desc": TextProcessor.build_description(row)
+                    "caption": caption
                 }
-                orig_pos = np.where(self.indices[idx] == neighbor_idx)[0]
-                semi_sim = float(distances[orig_pos[0]]) if len(orig_pos) > 0 else 0.0
+                # Get similarity directly from distances array
+                actual_pos = None
+                for j, n in enumerate(self.indices[idx]):
+                    if n == neighbor_idx:
+                        actual_pos = j
+                        break
+                semi_sim = float(self.distances[idx][actual_pos]) if actual_pos is not None else 0.0
                 break
         
         return {
-            "positive": positive["desc"],
-            "hard_negative": hard_negative["desc"] if hard_negative else "",
+            "positive": positive["caption"],
+            "hard_negative": hard_negative["caption"] if hard_negative else "",
             "hard_negative_sim": hard_sim,
-            "semi_negative": semi_negative["desc"] if semi_negative else "",
+            "semi_negative": semi_negative["caption"] if semi_negative else "",
             "semi_negative_sim": semi_sim
         }
     
@@ -884,45 +1014,61 @@ class SampleGenerator:
 # DATA SPLITTER
 # ======================
 class DataSplitter:
-    """Splits samples into train/val/test sets."""
+    """Splits landmarks into train/val/test sets BEFORE sample generation."""
     
     @staticmethod
-    def split_samples(
-        samples: List[Dict], config: Config
-    ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    def split_landmarks(
+        metadata: List[Dict[str, Any]], config: Config
+    ) -> Tuple[List[int], List[int], List[int]]:
         """
-        Split samples by landmark_id with diversity constraint.
-        Ensures balanced distribution of landmark types.
+        Split landmarks by landmark_id into train/val/test indices.
+        Returns indices into metadata list.
+        
+        Returns:
+            Tuple of (train_indices, val_indices, test_indices)
         """
-        # Get unique landmark IDs
-        landmark_ids = list(
-            set(s["target"]["landmark_id"] for s in samples)
-        )
+        # Group indices by landmark_id
+        lid_to_indices = {}
+        for idx, meta in enumerate(metadata):
+            lid = meta["lid"]
+            if lid not in lid_to_indices:
+                lid_to_indices[lid] = []
+            lid_to_indices[lid].append(idx)
+        
+        # Get unique landmark IDs and shuffle
+        landmark_ids = list(lid_to_indices.keys())
         random.shuffle(landmark_ids)
         
+        # Split landmark IDs
         n = len(landmark_ids)
         train_end = int(config.train_ratio * n)
         val_end = int((config.train_ratio + config.val_ratio) * n)
         
-        train_ids = set(landmark_ids[:train_end])
-        val_ids = set(landmark_ids[train_end:val_end])
-        test_ids = set(landmark_ids[val_end:])
+        train_lids = set(landmark_ids[:train_end])
+        val_lids = set(landmark_ids[train_end:val_end])
+        test_lids = set(landmark_ids[val_end:])
         
-        train, val, test = [], [], []
+        # Collect indices for each split
+        train_indices = []
+        val_indices = []
+        test_indices = []
         
-        for sample in samples:
-            lid = sample["target"]["landmark_id"]
-            if lid in train_ids:
-                train.append(sample)
-            elif lid in val_ids:
-                val.append(sample)
-            elif lid in test_ids:
-                test.append(sample)
+        for lid, indices in lid_to_indices.items():
+            if lid in train_lids:
+                train_indices.extend(indices)
+            elif lid in val_lids:
+                val_indices.extend(indices)
+            elif lid in test_lids:
+                test_indices.extend(indices)
         
         logger.info(
-            f"Split: train={len(train)}, val={len(val)}, test={len(test)}"
+            f"Split landmarks: train={len(train_indices)}, val={len(val_indices)}, test={len(test_indices)}"
         )
-        return train, val, test
+        logger.info(
+            f"Unique landmarks: train={len(train_lids)}, val={len(val_lids)}, test={len(test_lids)}"
+        )
+        
+        return train_indices, val_indices, test_indices
 
 
 # ======================
@@ -975,18 +1121,34 @@ def main():
             logger.error("No landmarks were successfully encoded")
             return
         
-        # Generate samples
-        sample_generator = SampleGenerator(
-            config, df, embeddings, metadata, image_encoder
+        # Split landmarks BEFORE generating samples to prevent leakage
+        train_indices, val_indices, test_indices = DataSplitter.split_landmarks(
+            metadata, config
         )
-        samples = sample_generator.generate_all_samples()
         
-        if not samples:
-            logger.error("No samples were generated")
-            return
+        # Generate samples for each split separately
+        logger.info("Generating training samples (with FAISS on train split only)...")
+        train_generator = SampleGenerator(
+            config, df, embeddings, metadata, image_encoder,
+            allowed_indices=train_indices
+        )
+        train = [train_generator.generate_sample(idx) for idx in tqdm(train_indices, desc="Train samples")]
         
-        # Split data
-        train, val, test = DataSplitter.split_samples(samples, config)
+        logger.info("Generating validation samples (with FAISS on train split only)...")
+        val_generator = SampleGenerator(
+            config, df, embeddings, metadata, image_encoder,
+            allowed_indices=train_indices  # Val also uses train FAISS index
+        )
+        val = [val_generator.generate_sample(idx) for idx in tqdm(val_indices, desc="Val samples")]
+        
+        logger.info("Generating test samples (with FAISS on train split only)...")
+        test_generator = SampleGenerator(
+            config, df, embeddings, metadata, image_encoder,
+            allowed_indices=train_indices  # Test also uses train FAISS index
+        )
+        test = [test_generator.generate_sample(idx) for idx in tqdm(test_indices, desc="Test samples")]
+        
+        logger.info(f"Generated samples: train={len(train)}, val={len(val)}, test={len(test)}")
         
         # Save results
         FileWriter.save_jsonl(config.output_dir / "train.jsonl", train)

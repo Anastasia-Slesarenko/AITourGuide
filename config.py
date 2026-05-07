@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     facts_db_path: str = "rag/facts_db.pkl"
     
     # Device configuration
-    device: str = "cuda"
+    device: str = "cpu"
     
     # Timeouts and limits
     predict_timeout: int = 90

@@ -4,14 +4,8 @@
 Использует Yandex GPT для классификации объектов.
 
 Требует переменные окружения:
-    YC_API_KEY     — API ключ для доступа к Yandex AI Studio
-    YC_FOLDER_ID   — идентификатор каталога в Yandex Cloud
-
-Установка зависимостей:
-    pip install aiohttp tqdm python-dotenv
-
-Запуск:
-    python step1_text_filter.py
+    YC_IAM_TOKEN или YC_API_KEY — токен для доступа к Yandex AI Studio
+    YC_FOLDER_ID                 — идентификатор каталога в Yandex Cloud
 """
 
 import asyncio
@@ -45,14 +39,17 @@ logger = logging.getLogger(__name__)
 class Config:
     """Конфигурация для текстовой фильтрации."""
     # Пути к файлам
-    data_path: str = "setup_data_v3/landmarks_data_wiki.json"
+    data_path: str = "setup_data_v3/data/landmarks_data_wiki_with_img.json"
     output_path: str = "setup_data_v3/data/text_filtered_landmarks.json"
     
     # Кэш и прогресс
-    text_cache_path: str = "setup_data_v3/cache/text_classification.json"
-    progress_path: str = "setup_data_v3/cache/text_processed_landmarks.txt"
+    text_cache_path: str = "setup_data_v3/data/cache/text_classification.json"
+    progress_path: str = "setup_data_v3/data/cache/text_processed_landmarks.txt"
     
     # API Yandex
+    yc_iam_token: str = field(
+        default_factory=lambda: os.getenv("YC_IAM_TOKEN", "")
+    )
     yc_api_key: str = field(
         default_factory=lambda: os.getenv("YC_API_KEY", "")
     )
@@ -75,13 +72,24 @@ class Config:
     cache_flush_interval: int = 50
     
     def __post_init__(self):
-        if not self.yc_api_key or not self.yc_folder_id:
+        if not self.yc_folder_id:
             raise RuntimeError(
-                "Переменные окружения YC_API_KEY и YC_FOLDER_ID "
-                "должны быть установлены"
+                "Переменная окружения YC_FOLDER_ID должна быть установлена"
             )
         
-        self.text_model_uri = f"gpt://{self.yc_folder_id}/yandexgpt-lite"
+        if not self.yc_iam_token and not self.yc_api_key:
+            raise RuntimeError(
+                "Должна быть установлена переменная окружения "
+                "YC_IAM_TOKEN или YC_API_KEY"
+            )
+        
+        self.text_model_uri = f"gpt://{self.yc_folder_id}/yandexgpt-5-lite"
+        
+        # Логирование используемого метода аутентификации
+        if self.yc_iam_token:
+            logger.info("Используется IAM токен для аутентификации")
+        else:
+            logger.info("Используется API ключ для аутентификации")
         
         # Проверка существования входного файла
         if not Path(self.data_path).exists():
@@ -244,9 +252,9 @@ class YandexTextFilter:
         
         prompt = f"""Определи, является ли объект достопримечательностью.
 
-Достопримечательность: здание, сооружение, памятник, мост, башня, храм, музей, парк, статуя, фонтан, историческое место.
+Достопримечательность: здание, сооружение, памятник, мост, башня, храм, музей, статуя.
 
-НЕ подходит: территории, люди, абстракции, бытовые объекты, еда, животные.
+НЕ подходит: территории, люди, абстракции, бытовые объекты, еда, животные, парки.
 
 Название: {name}
 Описание: {description}
@@ -263,10 +271,18 @@ class YandexTextFilter:
             "messages": [{"role": "user", "text": prompt}]
         }
         
-        headers = {
-            "Authorization": f"Api-Key {self.config.yc_api_key}",
-            "Content-Type": "application/json"
-        }
+        # Выбор метода аутентификации
+        if self.config.yc_iam_token:
+            headers = {
+                "Authorization": f"Bearer {self.config.yc_iam_token}",
+                "Content-Type": "application/json",
+                "x-folder-id": self.config.yc_folder_id
+            }
+        else:
+            headers = {
+                "Authorization": f"Api-Key {self.config.yc_api_key}",
+                "Content-Type": "application/json"
+            }
         
         url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
         
