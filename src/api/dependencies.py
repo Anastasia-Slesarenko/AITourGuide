@@ -5,7 +5,7 @@ FastAPI dependency injection for AITourGuide.
 
 from typing import Optional
 from fastapi import HTTPException, Request
-from services.ai_tour_guide import AITourGuide
+from src.services.ai_tour_guide import AITourGuide
 
 
 # Global service instance

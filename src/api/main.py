@@ -8,12 +8,14 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
-from config import settings
-from services.ai_tour_guide import AITourGuide
+from src.core.config import settings
+from src.services.ai_tour_guide import AITourGuide
 from src.api.dependencies import set_guide
 from src.api.middleware import RateLimiter
-from src.api.routes import predict_router, health_router, info_router
+from src.api.routes import predict_router, health_router, info_router, frontend_router
 from src.core.logging import setup_logging
 
 # Setup logging
@@ -64,9 +66,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down AITourGuide...")
     try:
-        from src.api.dependencies import _guide
-        if _guide:
-            _guide.cleanup()
+        # Access guide through the dependency module
+        from src.api import dependencies
+        if dependencies._guide:
+            dependencies._guide.cleanup()
             logger.info("AITourGuide resources cleaned up")
     except Exception as e:
         logger.error(f"Error during cleanup: {e}")
@@ -120,14 +123,28 @@ app.state.rate_limiter = RateLimiter(
     period=settings.rate_limit_period
 )
 
+app.state.templates = Jinja2Templates(directory=str(settings.templates_path_abs))
+
 # ========================================
 # ROUTES
 # ========================================
 
 # Include routers
+app.include_router(frontend_router) 
 app.include_router(info_router)
 app.include_router(predict_router)
 app.include_router(health_router)
+
+# ========================================
+# STATIC FILES
+# ========================================
+
+# Монтируем статику (после роутеров, чтобы не конфликтовать)
+app.mount(
+    "/static", 
+    StaticFiles(directory=str(settings.static_path_abs)), 
+    name="static"
+)
 
 
 # ========================================

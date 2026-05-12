@@ -5,7 +5,7 @@ Unit tests for configuration module.
 
 import pytest
 from pathlib import Path
-from config import Settings
+from core.config import Settings
 
 
 class TestSettings:

@@ -9,10 +9,10 @@ from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends, R
 from pydantic import BaseModel, Field
 from typing import Dict, Annotated
 
-from services.ai_tour_guide import AITourGuide
+from src.services.ai_tour_guide import AITourGuide
 from src.api.dependencies import get_guide, get_rate_limiter
 from src.api.middleware import check_rate_limit, RateLimiter
-from config import settings
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 

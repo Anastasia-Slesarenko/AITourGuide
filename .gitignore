@@ -4,7 +4,8 @@ __pycache__/
 venv/
 .vscode/
 data/
-models/
+artifacts/
 images/
 *.xlsx
+.DS_Store
 DEPLOYMENT.md
