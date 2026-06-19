@@ -6,13 +6,13 @@ FROM python:3.11-slim AS builder
 WORKDIR /app
 
 # Системные зависимости для сборки
-RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
     curl \
     libglib2.0-0 \
-    libgl1-mesa-glx \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем только requirements для кэширования слоя
@@ -32,7 +32,7 @@ WORKDIR /app
 # Минимальные runtime-зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
-    libgl1-mesa-glx \
+    libgl1 \
     libgomp1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
