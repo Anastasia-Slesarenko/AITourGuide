@@ -6,7 +6,7 @@ FROM python:3.11-slim AS builder
 WORKDIR /app
 
 # Системные зависимости для сборки
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
