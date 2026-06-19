@@ -505,7 +505,11 @@ def build_index_from_landmarks(
 
     for landmark in tqdm(landmarks, desc="Сбор изображений"):
         landmark_id = landmark.get("landmark_id", "")
-        landmark_name = landmark.get("name", "")
+        landmark_name = (
+            landmark.get("name_en", "").strip()
+            or landmark.get("name_ru", "").strip()
+            or landmark.get("name", "").strip()
+        )
         valid_images = landmark.get("valid_images", [])
 
         for img_data in valid_images[:max_images_per_landmark]:

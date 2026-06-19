@@ -31,7 +31,7 @@ services:
   # SGLang VLM-сервер
   # ----------------------------------------------------------
   sglang:
-    image: lmsysorg/sglang:latest
+    image: lmsysorg/sglang:latest-cu121
     container_name: aitourguide_sglang
     restart: unless-stopped
 
