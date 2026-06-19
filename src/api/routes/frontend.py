@@ -17,8 +17,9 @@ router = APIRouter(tags=["Frontend"])
 async def index(request: Request):
     """Главная страница с формой загрузки изображения."""
     return request.app.state.templates.TemplateResponse(
-        "index.html",
-        {"request": request, "use_internet": True},
+        request=request,
+        name="index.html",
+        context={"use_internet": True},
     )
 
 
@@ -56,9 +57,9 @@ async def predict_form(
             error = f"Внутренняя ошибка: {str(e)}"
 
     return request.app.state.templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+        request=request,
+        name="index.html",
+        context={
             "result": result,
             "error": error,
             "use_internet": use_internet,
