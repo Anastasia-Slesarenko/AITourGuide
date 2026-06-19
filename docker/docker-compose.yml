@@ -57,6 +57,7 @@ services:
         --mem-fraction-static 0.85
         --max-total-tokens 4096
         --dtype float16
+        --attention-backend triton
 
     ports:
       - "30000:30000"
