@@ -1,8 +1,5 @@
 # src/api/main.py
-"""
-Main FastAPI application for AITourGuide.
-Modular version with separated routes and middleware.
-"""
+"""Основное FastAPI-приложение AITourGuide."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -18,7 +15,6 @@ from src.api.middleware import RateLimiter
 from src.api.routes import predict_router, health_router, info_router, frontend_router
 from src.core.logging import setup_logging
 
-# Setup logging
 setup_logging(
     level=getattr(settings, "log_level", "INFO"),
     log_format=getattr(settings, "log_format", "text"),
@@ -28,87 +24,67 @@ setup_logging(
 logger = logging.getLogger(__name__)
 
 
-# ========================================
-# LIFESPAN MANAGEMENT
-# ========================================
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
-    # Startup
-    logger.info("Starting AI Tour Guide API...")
-    
-    # Validate configuration paths
+    """Управление жизненным циклом приложения: запуск и остановка."""
+    logger.info("Запуск AI Tour Guide API...")
+
+    # Проверяем наличие файлов индекса
     path_status = settings.validate_paths()
-    missing_paths = [path for path, exists in path_status.items() if not exists]
-    
-    if missing_paths:
-        logger.warning(f"Missing paths: {missing_paths}")
-        logger.warning("Service will start but may fail on first request")
-    
-    logger.info("Initializing AITourGuide...")
+    missing = [p for p, ok in path_status.items() if not ok]
+    if missing:
+        logger.warning(f"Отсутствуют файлы: {missing}")
+        logger.warning("Сервис запустится, но может упасть на первом запросе")
+
+    # Инициализация AITourGuide
+    logger.info("Инициализация AITourGuide...")
     try:
         guide = AITourGuide(
-            model_path=settings.model_path,
-            mmproj_path=settings.mmproj_path,
-            index_path=settings.index_path,
-            facts_db_path=settings.facts_db_path,
+            index_dir=str(settings.index_dir_abs),
+            sglang_base_url=settings.sglang_base_url,
+            sglang_model_name=settings.sglang_model_name,
+            sglang_timeout=settings.sglang_timeout,
+            sglang_max_retries=settings.sglang_max_retries,
             device=settings.device,
+            siglip_model_path=settings.siglip_model_path,
+            images_base_dir=settings.images_base_dir,
+            top_k_retrieval=settings.top_k_retrieval,
+            vlm_threshold=settings.confidence_threshold,
+            enable_internet_search=settings.enable_internet_search,
         )
         set_guide(guide)
-        logger.info("AITourGuide initialized successfully")
+        logger.info("AITourGuide инициализирован успешно")
     except Exception as e:
-        logger.error(f"Failed to initialize AITourGuide: {e}")
-        logger.warning("Service will start in degraded mode")
-    
+        logger.error(f"Ошибка инициализации AITourGuide: {e}")
+        logger.warning("Сервис запущен в деградированном режиме")
+
     yield
-    
-    # Shutdown
-    logger.info("Shutting down AITourGuide...")
+
+    # Завершение работы
+    logger.info("Остановка AITourGuide...")
     try:
-        # Access guide through the dependency module
         from src.api import dependencies
         if dependencies._guide:
-            dependencies._guide.cleanup()
-            logger.info("AITourGuide resources cleaned up")
+            await dependencies._guide.cleanup()
+            logger.info("Ресурсы AITourGuide освобождены")
     except Exception as e:
-        logger.error(f"Error during cleanup: {e}")
+        logger.error(f"Ошибка при остановке: {e}")
 
-
-# ========================================
-# APP INITIALIZATION
-# ========================================
 
 app = FastAPI(
     title="AI Tour Guide API",
-    description="""
-    🏛️ AI-powered landmark recognition and tour guide service.
-    
-    ## Features
-    
-    * **Image Recognition**: Upload an image to identify landmarks
-    * **RAG-based Retrieval**: Uses CLIP + FAISS for fast candidate retrieval
-    * **VLM Generation**: Generates detailed descriptions using vision-language model
-    * **Internet Search**: Falls back to Yandex + Wikipedia for unknown landmarks
-    * **Rate Limiting**: Protects against abuse
-    
-    ## Usage
-    
-    1. Upload an image of a landmark
-    2. Optionally enable/disable internet search
-    3. Receive landmark name, description, and confidence score
-    """,
+    description=(
+        "🏛️ Сервис распознавания достопримечательностей по фотографиям.\n\n"
+        "**Пайплайн:** SigLIP + FAISS → VLM reranking (SGLang) → "
+        "интернет-поиск при низкой уверенности."
+    ),
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# ========================================
-# MIDDLEWARE
-# ========================================
-
-# CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -117,39 +93,30 @@ app.add_middleware(
     allow_headers=settings.cors_allow_headers,
 )
 
-# Rate limiter (stored in app state for access in dependencies)
+# Rate limiter в состоянии приложения
 app.state.rate_limiter = RateLimiter(
     calls=settings.rate_limit_calls,
-    period=settings.rate_limit_period
+    period=settings.rate_limit_period,
 )
 
-app.state.templates = Jinja2Templates(directory=str(settings.templates_path_abs))
+# Шаблоны Jinja2
+app.state.templates = Jinja2Templates(
+    directory=str(settings.templates_path_abs)
+)
 
-# ========================================
-# ROUTES
-# ========================================
-
-# Include routers
-app.include_router(frontend_router) 
+# Роуты
+app.include_router(frontend_router)
 app.include_router(info_router)
 app.include_router(predict_router)
 app.include_router(health_router)
 
-# ========================================
-# STATIC FILES
-# ========================================
-
-# Монтируем статику (после роутеров, чтобы не конфликтовать)
+# Статические файлы (монтируем после роутеров)
 app.mount(
-    "/static", 
-    StaticFiles(directory=str(settings.static_path_abs)), 
-    name="static"
+    "/static",
+    StaticFiles(directory=str(settings.static_path_abs)),
+    name="static",
 )
 
-
-# ========================================
-# MAIN
-# ========================================
 
 if __name__ == "__main__":
     import uvicorn
@@ -157,5 +124,5 @@ if __name__ == "__main__":
         "src.api.main:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.reload
+        reload=settings.reload,
     )

@@ -1,7 +1,5 @@
 # src/api/routes/info.py
-"""
-Information endpoints for AITourGuide API.
-"""
+"""Информационный эндпоинт API."""
 
 from fastapi import APIRouter
 
@@ -9,12 +7,12 @@ router = APIRouter(tags=["Info"])
 
 
 @router.get(
-    "/",
-    summary="API Information",
-    description="Get basic information about the API",
+    "/api",
+    summary="Информация об API",
+    description="Возвращает базовую информацию о сервисе.",
 )
-async def root():
-    """Root endpoint with API information."""
+async def api_info():
+    """Базовая информация о сервисе и доступных эндпоинтах."""
     return {
         "service": "AI Tour Guide API",
         "version": "1.0.0",
@@ -23,6 +21,6 @@ async def root():
         "redoc": "/redoc",
         "endpoints": {
             "predict": "/v1/predict",
-            "health": "/v1/health"
-        }
+            "health": "/v1/health",
+        },
     }

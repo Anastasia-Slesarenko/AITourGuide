@@ -1,0 +1,28 @@
+{
+  "threshold": 0.4226,
+  "hard_unknown_path": "/Users/anastasiya/Documents/AITourGuide/data/processed/dataset_v1/val_super_hard_unknown.json",
+  "metrics": {
+    "production_none_accuracy": 0.2691628399858707,
+    "false_positive_rate": 0.7308371600141292,
+    "total_samples": 2831,
+    "correctly_rejected": 762,
+    "false_positives": 2069
+  },
+  "confidence_distribution": {
+    "mean": 0.6608881652249923,
+    "median": 0.810546875,
+    "std": 0.31391239906873475,
+    "min": 0.03515625,
+    "max": 0.9736328125
+  },
+  "by_retrieval_score_bin": {
+    "0.8-0.9": {
+      "total": 2497,
+      "correctly_rejected": 661
+    },
+    "0.9-1.0": {
+      "total": 334,
+      "correctly_rejected": 101
+    }
+  }
+}

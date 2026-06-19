@@ -45,31 +45,31 @@ install-dev: install
 # ========================================
 download-models:
 	@echo "📥 Downloading models..."
-	python download_clip_model.py
+	python scripts/setup/download_siglip_model.py
 	@echo "⚠️  Note: VLM models need to be downloaded manually"
 	@echo "   See README.md for instructions"
 
 build-index:
 	@echo "🔨 Building FAISS index..."
-	python rag/build_index.py
+	python scripts/data_preparation/step6_setup_dataset.py
 
 # ========================================
 # DEVELOPMENT
 # ========================================
 run:
 	@echo "🚀 Starting development server..."
-	uvicorn main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 run-prod:
 	@echo "🚀 Starting production server..."
-	uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+	uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 1
 
 # ========================================
 # TESTING
 # ========================================
 test:
 	@echo "🧪 Running all tests..."
-	pytest tests/ -v --cov=services --cov=rag --cov-report=term-missing --cov-report=html
+	pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=html
 
 test-unit:
 	@echo "🧪 Running unit tests..."
@@ -85,7 +85,7 @@ test-fast:
 
 test-coverage:
 	@echo "📊 Generating coverage report..."
-	pytest tests/ --cov=services --cov=rag --cov-report=html --cov-report=term
+	pytest tests/ --cov=src --cov-report=html --cov-report=term
 	@echo "Coverage report generated in htmlcov/index.html"
 
 # ========================================
@@ -94,24 +94,24 @@ test-coverage:
 lint:
 	@echo "🔍 Running linters..."
 	@echo "  → flake8..."
-	flake8 services/ rag/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+	flake8 src/ tests/ --max-line-length=88 --extend-ignore=E203,W503
 	@echo "  → mypy..."
-	mypy services/ rag/ --ignore-missing-imports
+	mypy src/ --ignore-missing-imports
 	@echo "  → pylint..."
-	pylint services/ rag/ --disable=C0111,R0903,R0913,W0212
+	pylint src/ --disable=C0111,R0903,R0913,W0212
 
 format:
 	@echo "✨ Formatting code..."
 	@echo "  → isort..."
-	isort services/ rag/ tests/ config.py main.py
+	isort src/ tests/
 	@echo "  → black..."
-	black services/ rag/ tests/ config.py main.py
+	black src/ tests/
 	@echo "✅ Code formatted!"
 
 format-check:
 	@echo "🔍 Checking code formatting..."
-	black --check services/ rag/ tests/ config.py main.py
-	isort --check-only services/ rag/ tests/ config.py main.py
+	black --check src/ tests/
+	isort --check-only src/ tests/
 
 # ========================================
 # CLEANUP

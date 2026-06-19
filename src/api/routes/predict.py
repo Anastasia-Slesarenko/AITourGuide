@@ -1,7 +1,5 @@
 # src/api/routes/predict.py
-"""
-Prediction endpoints for AITourGuide API.
-"""
+"""Эндпоинт предсказания достопримечательности по изображению."""
 
 import asyncio
 import logging
@@ -20,109 +18,78 @@ router = APIRouter(prefix="/v1", tags=["Prediction"])
 
 
 class PredictionResponse(BaseModel):
-    """Response model for landmark prediction."""
-    name: str = Field(
-        ...,
-        description="Name of the identified landmark",
-        example="Эйфелева башня"
-    )
-    description: str = Field(
-        ...,
-        description="Detailed description of the landmark",
-        example="Металлическая башня в Париже, построенная в 1889 году..."
-    )
-    confidence: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description="Confidence score of the prediction (0.0 to 1.0)",
-        example=0.95
-    )
+    """Ответ с результатом распознавания достопримечательности."""
+
+    name: str = Field(..., description="Название достопримечательности")
+    description: str = Field(..., description="Описание достопримечательности")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Уверенность (0–1)")
     source: str = Field(
-        ...,
-        description="Source of the prediction (retrieval/internet/fallback)",
-        example="retrieval"
+        ..., description="Источник: retrieval / internet / fallback"
     )
     timing: Dict[str, float] = Field(
-        ...,
-        description="Performance timing breakdown in seconds",
-        example={
-            "retrieval": 0.15,
-            "generation": 2.3,
-            "total": 2.45
-        }
+        ..., description="Время выполнения этапов в секундах"
     )
 
 
 @router.post(
     "/predict",
     response_model=PredictionResponse,
-    summary="Predict landmark from image",
-    description=f"""
-    Upload an image to identify the landmark and get detailed information.
-    
-    **Rate Limit**: {settings.rate_limit_calls} requests per {settings.rate_limit_period} seconds per IP.
-    
-    **Max File Size**: {settings.max_file_size_mb} MB
-    
-    **Supported Formats**: JPEG, PNG, GIF, WEBP
-    """,
+    summary="Распознать достопримечательность",
+    description=(
+        "Загрузите фотографию для определения достопримечательности. "
+        f"Лимит: {settings.rate_limit_calls} запросов "
+        f"за {settings.rate_limit_period} сек. "
+        f"Макс. размер файла: {settings.max_file_size_mb} МБ."
+    ),
 )
 async def predict(
-    image: UploadFile = File(
-        ...,
-        description="Image file of the landmark"
-    ),
+    image: UploadFile = File(..., description="Фотография достопримечательности"),
     use_internet_search: bool = Form(
-        True,
-        description="Enable internet search for unknown landmarks"
+        True, description="Включить поиск в интернете при низкой уверенности"
     ),
     guide: AITourGuide = Depends(get_guide),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
     request: Request = None,
 ):
     """
-    Predict landmark from uploaded image.
-    
-    This endpoint:
-    1. Validates the uploaded image
-    2. Uses CLIP+FAISS for candidate retrieval
-    3. Generates description using VLM
-    4. Falls back to internet search if confidence is low
+    Распознаёт достопримечательность на фотографии.
+
+    Пайплайн:
+    1. Валидация файла
+    2. SigLIP + FAISS — поиск кандидатов
+    3. VLM reranking через SGLang — выбор лучшего кандидата
+    4. Интернет-поиск при низкой уверенности
     """
-    # Check rate limit
     await check_rate_limit(request, rate_limiter)
-    
-    # Validate file size
+
     content = await image.read()
     if len(content) > settings.max_file_size_bytes:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Maximum size: {settings.max_file_size_mb} MB"
+            detail=f"Файл слишком большой. Максимум: {settings.max_file_size_mb} МБ",
         )
-    
-    # Perform prediction
+
     try:
         result = await asyncio.wait_for(
             guide.predict(
                 image_input=content,
-                use_internet_search=use_internet_search
+                use_internet_search=use_internet_search,
             ),
-            timeout=settings.predict_timeout
+            timeout=settings.predict_timeout,
         )
     except asyncio.TimeoutError:
-        logger.error("Prediction timeout")
+        logger.error("Таймаут предсказания")
         raise HTTPException(
             status_code=504,
-            detail=f"Prediction timeout after {settings.predict_timeout} seconds"
+            detail=f"Таймаут после {settings.predict_timeout} секунд",
         )
-    except Exception as e:
-        logger.exception("Prediction failed")
+    except Exception:
+        logger.exception("Ошибка предсказания")
         raise HTTPException(
             status_code=500,
-            detail="Internal server error during prediction"
+            detail="Внутренняя ошибка сервера",
         )
-    
+
     return PredictionResponse(
         name=result.get("name", ""),
         description=result.get("description", ""),

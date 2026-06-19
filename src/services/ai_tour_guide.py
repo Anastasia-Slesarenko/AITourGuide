@@ -1,24 +1,25 @@
-# services/ai_tour_guide.py
+# src/services/ai_tour_guide.py
 # -*- coding: utf-8 -*-
 """
-AI Tour Guide — сервис для распознавания достопримечательностей.
+Сервис распознавания достопримечательностей.
 
 Пайплайн:
-  1. CLIP + FAISS Retrieval (top-10 кандидатов)
-  2. VLM Генерация ответа (LoRA r=16 модель)
-  3. Расчёт уверенности (улучшенная формула)
+  1. SigLIP + FAISS — поиск top-K кандидатов
+  2. VLM Reranking через SGLang (попарное сравнение, P(yes))
+  3. Расчёт уверенности
   4. Интернет-поиск при низкой уверенности (Yandex + Wikipedia)
-  5. Переформулирование ответа в стиль гида
 """
 
-import torch
-import json
+import math
 import os
 import re
 import time
 import logging
 import asyncio
 import base64
+import uuid
+import traceback
+import httpx
 from io import BytesIO
 from pathlib import Path
 from PIL import Image
@@ -27,10 +28,8 @@ from enum import Enum
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from dotenv import load_dotenv
-from src.rag.retriever import RAGRetriever
-from llama_cpp import Llama
+from src.rag.landmark_retriever import LandmarkRetriever, LandmarkRetrievalResult
 
-# Импорты для интернет-поиска
 from .yandex_search import YandexSearchService, WikipediaService
 from .translator import YandexTranslator
 
@@ -40,7 +39,7 @@ load_dotenv()
 
 
 class PredictionSource(Enum):
-    """Источник предсказания."""
+    """Источник итогового предсказания."""
     RETRIEVAL = "retrieval"
     INTERNET = "internet"
     FALLBACK = "fallback"
@@ -48,36 +47,55 @@ class PredictionSource(Enum):
 
 @dataclass
 class AITourGuideConfig:
-    """Конфигурация для AITourGuide."""
-    model_path: str
-    index_path: str
-    facts_db_path: str
-    mmproj_path: str
-    n_ctx: int = 32768
-    device: str = "cuda"
+    """Конфигурация сервиса AITourGuide."""
+
+    # Обязательный параметр — путь к индексу
+    index_dir: str
+
+    # SGLang сервер
+    sglang_base_url: str = "http://localhost:30000/v1"
+    sglang_model_name: str = "qwen2-vl-2b-r16"
+    sglang_timeout: float = 30.0
+    sglang_max_retries: int = 3
+
+    # Локальный путь к SigLIP модели (пустая строка = загрузка с HuggingFace)
+    siglip_model_path: str = ""
+
+    # Базовая директория изображений галереи.
+    # image_path в gallery_metadata.json — просто имя файла (photo.jpg),
+    # полный путь = images_base_dir / image_path
+    images_base_dir: str = ""
+
+    # Retrieval
     top_k_retrieval: int = 10
-    confidence_threshold: float = 0.78
+    faiss_k: int = 100
+
+    # VLM параметры
+    caption_max_length: int = 300
     max_new_tokens: int = 256
+    temperature: float = 0.0
+
+    # Уверенность
+    # vlm_threshold — порог на p_yes от VLM для решения об интернет-поиске.
+    # Берётся из experiments/find_th_and_recompute_metrics.py (opt_t).
+    # confidence в result["confidence"] == p_yes напрямую.
+    vlm_threshold: float = 0.5
+
+    # Интернет-поиск
     enable_internet_search: bool = True
-    
-    # Параметры расчета confidence
-    gap_multiplier: float = 10.0
-    position_decay: float = 0.15
-    confidence_weights: Dict[str, float] = field(default_factory=lambda: {
-        "clip_score": 0.25,
-        "gap": 0.20,
-        "name_match": 0.35,
-        "position": 0.20,
-    })
-    
+
+    # Устройство (не используется с SGLang, для совместимости)
+    device: str = "cuda"
+
     def to_dict(self) -> Dict:
-        """Конвертация в словарь."""
+        """Конвертирует конфигурацию в словарь."""
         return asdict(self)
 
 
 @dataclass
 class PerformanceMetrics:
     """Метрики производительности сервиса."""
+
     total_requests: int = 0
     successful_requests: int = 0
     failed_requests: int = 0
@@ -87,62 +105,56 @@ class PerformanceMetrics:
     avg_generation_time: float = 0.0
     avg_total_time: float = 0.0
     last_updated: Optional[str] = None
-    
-    # Накопительные суммы для расчёта средних
+
+    # Накопительные суммы (не отображаются в repr)
     _sum_confidence: float = field(default=0.0, repr=False)
     _sum_retrieval_time: float = field(default=0.0, repr=False)
     _sum_generation_time: float = field(default=0.0, repr=False)
     _sum_total_time: float = field(default=0.0, repr=False)
     _internet_searches: int = field(default=0, repr=False)
-    
+
     def update(self, result: Dict):
-        """Обновление метрик на основе результата предсказания."""
+        """Обновляет метрики на основе результата предсказания."""
         self.total_requests += 1
-        
+
         if result.get("error"):
             self.failed_requests += 1
         else:
             self.successful_requests += 1
-            
-            # Обновление confidence
+
             conf = result.get("confidence", 0.0)
             self._sum_confidence += conf
-            self.avg_confidence = (
-                self._sum_confidence / self.successful_requests
-            )
-            
-            # Обновление времени
+            self.avg_confidence = self._sum_confidence / self.successful_requests
+
             timing = result.get("timing", {})
             if "retrieval" in timing:
                 self._sum_retrieval_time += timing["retrieval"]
                 self.avg_retrieval_time = (
                     self._sum_retrieval_time / self.successful_requests
                 )
-            
+
             if "vlm_generation" in timing:
                 self._sum_generation_time += timing["vlm_generation"]
                 self.avg_generation_time = (
                     self._sum_generation_time / self.successful_requests
                 )
-            
-            # Общее время
+
             total_time = sum(timing.values())
             self._sum_total_time += total_time
             self.avg_total_time = (
                 self._sum_total_time / self.successful_requests
             )
-            
-            # Internet search rate
+
             if result.get("source") == PredictionSource.INTERNET.value:
                 self._internet_searches += 1
             self.internet_search_rate = (
                 self._internet_searches / self.successful_requests
             )
-        
+
         self.last_updated = datetime.now().isoformat()
-    
+
     def to_dict(self) -> Dict:
-        """Конвертация в словарь (без приватных полей)."""
+        """Возвращает метрики в виде словаря (без приватных полей)."""
         return {
             "total_requests": self.total_requests,
             "successful_requests": self.successful_requests,
@@ -160,562 +172,343 @@ class PerformanceMetrics:
         }
 
 
+class SGLangClient:
+    """HTTP-клиент для SGLang сервера (совместимый с OpenAI API)."""
+
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        timeout: float = 30.0,
+        max_retries: int = 3,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.model_name = model_name
+        self.timeout = timeout
+        self.max_retries = max_retries
+
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout),
+            limits=httpx.Limits(
+                max_keepalive_connections=10, max_connections=20
+            ),
+        )
+        logger.info(f"SGLang клиент инициализирован: {base_url}")
+
+    async def health_check(self) -> bool:
+        """Проверяет доступность SGLang сервера."""
+        try:
+            response = await self.client.get(f"{self.base_url}/health")
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"SGLang health check failed: {e}")
+            return False
+
+    async def chat_completion(
+        self,
+        messages: List[Dict],
+        max_tokens: int = 256,
+        temperature: float = 0.0,
+        logprobs: bool = False,
+        top_logprobs: Optional[int] = None,
+    ) -> Dict:
+        """
+        Отправляет запрос к SGLang серверу через OpenAI API.
+
+        Args:
+            messages: Список сообщений в формате OpenAI
+            max_tokens: Максимум новых токенов
+            temperature: Температура генерации
+            logprobs: Возвращать ли logprobs
+            top_logprobs: Количество top logprobs
+
+        Returns:
+            Ответ от SGLang сервера
+        """
+        payload: Dict[str, Any] = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+
+        if logprobs:
+            payload["logprobs"] = True
+            if top_logprobs:
+                payload["top_logprobs"] = top_logprobs
+
+        last_exception: Optional[Exception] = None
+        for attempt in range(self.max_retries):
+            try:
+                response = await self.client.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()
+
+            except httpx.HTTPStatusError as e:
+                last_exception = e
+                logger.warning(
+                    f"SGLang HTTP ошибка "
+                    f"(попытка {attempt + 1}/{self.max_retries}): "
+                    f"{e.response.status_code}"
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+
+            except httpx.RequestError as e:
+                last_exception = e
+                logger.warning(
+                    f"SGLang ошибка запроса "
+                    f"(попытка {attempt + 1}/{self.max_retries}): {e}"
+                )
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+
+        raise RuntimeError(
+            f"SGLang запрос не выполнен после {self.max_retries} попыток: "
+            f"{last_exception}"
+        )
+
+    async def close(self):
+        """Закрывает HTTP-клиент."""
+        await self.client.aclose()
+
+
 class AITourGuide:
     """
     Сервис распознавания достопримечательностей по изображениям.
-    Использует VLM (Vision Language Model) с LoRA адаптером.
+
+    Использует SGLang сервер для VLM reranking через OpenAI API.
     """
-    
+
     MAX_CONTEXT_LENGTH = 200
     DEFAULT_MAX_RESULTS = 5
-    
-    def __init__(self, config: Union[AITourGuideConfig, Dict, None] = None,
-                 **kwargs):
+
+    # Варианты токенов Yes/No для парсинга logprobs
+    _YES_VARIANTS: frozenset = frozenset({"yes", "Yes", "YES", " yes", " Yes"})
+    _NO_VARIANTS: frozenset = frozenset({"no", "No", "NO", " no", " No"})
+
+    def __init__(
+        self,
+        config: Union["AITourGuideConfig", Dict, None] = None,
+        **kwargs,
+    ):
         """
-        Инициализация сервиса.
-        
         Args:
-            config: Конфигурация (AITourGuideConfig или dict) или None
+            config: Конфигурация (AITourGuideConfig, dict или None)
             **kwargs: Параметры конфигурации (если config=None)
-        
-        Examples:
-            # Вариант 1: через config объект
-            config = AITourGuideConfig(
-                model_path="path/to/model",
-                index_path="path/to/index",
-                facts_db_path="path/to/facts.pkl"
-            )
-            guide = AITourGuide(config)
-            
-            # Вариант 2: через kwargs (обратная совместимость)
-            guide = AITourGuide(
-                model_path="path/to/model",
-                index_path="path/to/index",
-                facts_db_path="path/to/facts.pkl"
-            )
         """
-        # Обработка конфигурации
         if config is None:
-            # Создаём из kwargs (обратная совместимость)
             config = AITourGuideConfig(**kwargs)
         elif isinstance(config, dict):
             config = AITourGuideConfig(**config)
-        
+
         self.config = config
-        self.device = config.device
-        self.confidence_threshold = config.confidence_threshold
+        self.vlm_threshold = config.vlm_threshold
         self.top_k_retrieval = config.top_k_retrieval
-        
-        # API ключи из конфигурации окружения
-        self.yc_folder_id = os.getenv('YC_FOLDER_ID')
-        self.yc_api_key = os.getenv('YC_API_KEY')
-        
-        # Инициализация переводчика
+        self.faiss_k = config.faiss_k
+        self.caption_max_length = config.caption_max_length
+        # Базовая директория изображений галереи (может быть пустой строкой)
+        self.images_base_dir = Path(config.images_base_dir) if config.images_base_dir else None
+
+        self.yc_folder_id = os.getenv("YC_FOLDER_ID")
+        self.yc_api_key = os.getenv("YC_API_KEY")
+
         self.translator = YandexTranslator(
             yc_folder_id=self.yc_folder_id,
-            yc_api_key=self.yc_api_key
+            yc_api_key=self.yc_api_key,
         )
-        
-        # Метрики производительности
+
         self.metrics = PerformanceMetrics()
-        
-        # Флаг готовности сервиса
         self._is_ready = False
-        
-        # 1. Загрузка retriever (CLIP + FAISS)
-        logger.info("Загрузка RAGRetriever...")
-        self.retriever = RAGRetriever(
-            index_path=config.index_path,
-            facts_db_path=config.facts_db_path,
-            top_k=config.top_k_retrieval,
-            use_multimodal_reranker=False,  # Отключено для скорости
+
+        logger.info("Загрузка LandmarkRetriever...")
+        from src.rag.indexing_v2 import IndexConfig
+        index_config = IndexConfig(
+            model_name=config.siglip_model_path or "",
+            embedder_type="siglip",
+            device=config.device,
         )
-        
-        # 2. Загрузка VLM (Vision Language Model с LoRA)
-        logger.info("Загрузка VLM модели...")
-       
-        self.model = Llama(
-            model_path=config.model_path,
-            n_ctx=config.n_ctx,
-            verbose=False,
-            mmproj_path=config.mmproj_path,
+        self.retriever = LandmarkRetriever.from_index_dir(
+            index_dir=config.index_dir,
+            index_config=index_config,
         )
-        
-        # 3. Паттерн для парсинга JSON
-        self.json_pattern = re.compile(r'\{.*\}', re.DOTALL)
-        
-        # Сервис готов
+
+        logger.info("Инициализация SGLang клиента...")
+        self.sglang_client = SGLangClient(
+            base_url=config.sglang_base_url,
+            model_name=config.sglang_model_name,
+            timeout=config.sglang_timeout,
+            max_retries=config.sglang_max_retries,
+        )
+
         self._is_ready = True
-        
         logger.info("AITourGuide готов")
-        logger.info(f"  Устройство: {config.device}")
-        logger.info(f"  Порог уверенности: {config.confidence_threshold}")
-        logger.info(f"  Top-K retrieval: {config.top_k_retrieval}")
-        logger.info("  Модель: VLM с LoRA адаптером")
-    
-    # ========================================
-    # HEALTH CHECK И МЕТРИКИ
-    # ========================================
-    
-    def health_check(self) -> Dict[str, Union[bool, str, Dict]]:
-        """
-        Проверка состояния сервиса.
-        
-        Returns:
-            Dict с информацией о состоянии сервиса
-        """
-        health = {
+        logger.info(f"  SGLang: {config.sglang_base_url}")
+        logger.info(f"  Модель: {config.sglang_model_name}")
+        logger.info(f"  VLM порог (p_yes): {config.vlm_threshold}")
+
+    # ------------------------------------------------------------------
+    # Health check и метрики
+    # ------------------------------------------------------------------
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Проверяет состояние сервиса и его компонентов."""
+        safe_config = {
+            k: v for k, v in self.config.to_dict().items()
+            if k != "index_dir"
+        }
+        health: Dict[str, Any] = {
             "status": "healthy" if self._is_ready else "not_ready",
             "ready": self._is_ready,
             "timestamp": datetime.now().isoformat(),
             "components": {},
-            "config": self.config.to_dict(),
+            "config": safe_config,
             "metrics": self.metrics.to_dict(),
         }
-        
-        # Проверка компонентов
+
         try:
-            # Проверка retriever
             health["components"]["retriever"] = {
-                "status": "ok" if hasattr(self, 'retriever') else "error",
+                "status": "ok" if hasattr(self, "retriever") else "error",
                 "index_size": (
-                    len(self.retriever.facts_db)
-                    if hasattr(self, 'retriever') else 0
-                )
+                    len(self.retriever.gallery_metadata)
+                    if hasattr(self, "retriever") else 0
+                ),
             }
-            
-            # Проверка модели
-            health["components"]["model"] = {
-                "status": "ok" if hasattr(self, 'model') else "error",
-                "device": str(self.device),
+
+            sglang_ok = await self.sglang_client.health_check()
+            health["components"]["sglang"] = {
+                "status": "ok" if sglang_ok else "error",
+                "base_url": self.config.sglang_base_url,
+                "model": self.config.sglang_model_name,
             }
-            
-            # Проверка GPU
-            if torch.cuda.is_available():
-                health["components"]["gpu"] = {
-                    "status": "ok",
-                    "device_name": torch.cuda.get_device_name(0),
-                    "memory_allocated": (
-                        f"{torch.cuda.memory_allocated(0) / 1e9:.2f} GB"
-                    ),
-                    "memory_reserved": (
-                        f"{torch.cuda.memory_reserved(0) / 1e9:.2f} GB"
-                    ),
-                }
-            else:
-                health["components"]["gpu"] = {
-                    "status": "unavailable",
-                    "message": "CUDA not available"
-                }
-            
+
+            if not sglang_ok:
+                health["status"] = "degraded"
+                health["error"] = "SGLang сервер недоступен"
+
         except Exception as e:
             health["status"] = "degraded"
             health["error"] = str(e)
-        
+
         return health
-    
+
     def get_metrics(self) -> Dict:
-        """
-        Получение метрик производительности.
-        
-        Returns:
-            Dict с метриками
-        """
+        """Возвращает метрики производительности."""
         return self.metrics.to_dict()
-    
+
     def reset_metrics(self):
-        """Сброс метрик производительности."""
+        """Сбрасывает метрики производительности."""
         self.metrics = PerformanceMetrics()
         logger.info("Метрики сброшены")
-    
-    # ========================================
-    # УЛУЧШЕННАЯ ФОРМУЛА CONFIDENCE
-    # ========================================
-    
-    def _calculate_confidence(
-        self,
-        retrieved_scores: List[float],
-        retrieved_names: List[str],
-        pred_name: str,
-    ) -> float:
-        """
-        Улучшенная формула расчёта уверенности.
-        
-        Учитывает:
-        1. CLIP score (top-1)
-        2. Gap между 1-м и 2-м кандидатом
-        3. Совпадение имени (exact/partial)
-        4. Позиция совпадения в retrieved
-        
-        Args:
-            retrieved_scores: Список CLIP scores из retrieval
-            retrieved_names: Список названий кандидатов из retrieval
-            pred_name: Предсказанное моделью название
-        
-        Returns:
-            Confidence score в диапазоне [0, 1]
-        """
-        if not pred_name or not retrieved_scores:
-            return 0.0
-        
-        # 1. CLIP score (уже в [0, 1])
-        top_score = retrieved_scores[0]
-        
-        # 2. Gap между 1-м и 2-м
-        if len(retrieved_scores) > 1:
-            gap = retrieved_scores[0] - retrieved_scores[1]
-            gap_conf = min(max(gap * self.config.gap_multiplier, 0.0), 1.0)
-        else:
-            gap_conf = 0.5
-        
-        # 3. Совпадение имени
-        pred_lower = pred_name.lower().strip()
-        
-        if retrieved_names:
-            names_clean = [n.lower().strip() for n in retrieved_names if n]
-            
-            exact_match = any(pred_lower == name for name in names_clean)
-            partial_match = any(
-                pred_lower in name or name in pred_lower 
-                for name in names_clean
-            )
-            name_match_score = 1.0 if exact_match else (0.7 if partial_match else 0.0)
-        else:
-            name_match_score = 0.0
-        
-        # 4. Позиция совпадения
-        position_score = 0.0
-        if retrieved_names:
-            names_clean = [n.lower().strip() for n in retrieved_names if n]
-            for i, name in enumerate(names_clean[:5]):
-                if name and (pred_lower == name or pred_lower in name):
-                    position_score = 1.0 - (i * self.config.position_decay)
-                    break
-        
-        # 5. Комбинация (веса подобраны по анализу)
-        weights = self.config.confidence_weights
-        confidence = (
-            weights["clip_score"] * top_score +
-            weights["gap"] * gap_conf +
-            weights["name_match"] * name_match_score +
-            weights["position"] * position_score
-        )
-        
-        return float(min(max(confidence, 0.0), 1.0))
-    
-    # ========================================
-    # ПАРСИНГ ОТВЕТА МОДЕЛИ (из train_rag_lora.py)
-    # ========================================
-    
-    def _parse_json_response(self, text: str) -> Dict[str, str]:
-        """
-        Извлекает JSON из текста ответа.
-        Возвращает dict с ключами 'name' и 'description'.
-        
-        Args:
-            text: Текст для парсинга
-        
-        Returns:
-            Dict с ключами 'name' и 'description'
-        """
-        text = text.strip()
 
-        # Убираем маркеры кода
-        text = re.sub(r'^```(?:json)?\s*', '', text)
-        text = re.sub(r'\s*```$', '', text)
-        text = text.strip()
+    # ------------------------------------------------------------------
+    # VLM через SGLang
+    # ------------------------------------------------------------------
 
-        # Извлекаем JSON-объект
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            text = match.group(0)
-        
-        # Если JSON обрезан, пытаемся найти последнюю валидную закрывающую скобку
-        # и обрезать до неё
-        if text.count('{') > text.count('}'):
-            # JSON не закрыт, обрезаем до последней валидной позиции
-            last_quote = text.rfind('"')
-            if last_quote > 0:
-                text = text[:last_quote] + '"}'
-        
-        try:
-            data = json.loads(text)
-            if not isinstance(data, dict):
-                return {"name": "", "description": ""}
-            return {
-                "name": str(data.get("name", "")).strip(),
-                "description": str(data.get("description", "")).strip(),
-            }
-        except json.JSONDecodeError as e:
-            # Fallback: извлекаем через regex (более гибкий паттерн)
-            # Ищем name и description, учитывая возможные переносы строк
-            name_match = re.search(
-                r'"name"\s*:\s*"([^"]*(?:\\"[^"]*)*)"',
-                text,
-                re.DOTALL
-            )
-            desc_match = re.search(
-                r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"',
-                text,
-                re.DOTALL
-            )
-            if name_match and desc_match:
-                logger.debug("JSON parse failed, used regex fallback")
-                return {
-                    "name": name_match.group(1).strip(),
-                    "description": desc_match.group(1).strip(),
-                }
-            logger.warning(
-                f"Failed to parse JSON response: {e}. "
-                f"Full text: {text}"
-            )
-            return {"name": "", "description": ""}
-    
-    # ========================================
-    # ПРОМПТ ДЛЯ VLM (из train_rag_lora.py)
-    # ========================================
-    
-    def _make_rag_prompt(self, retrieved_context: str) -> str:
-        """
-        Создаёт промпт с retrieved контекстом для RAG.
-        Логика идентична make_rag_prompt из train_rag_lora.py
-        """
-        return f"""Ты — профессиональный гид. Вот справочная информация о возможных достопримечательностях:
+    def _image_to_base64_data_uri(self, image: Image.Image) -> str:
+        """Конвертирует PIL Image в base64 data URI для OpenAI API."""
+        with BytesIO() as buf:
+            image.save(buf, format="JPEG", quality=95)
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return f"data:image/jpeg;base64,{b64}"
 
-{retrieved_context}
-
-ЗАДАЧА:
-1. Определи, какая достопримечательность из списка на фотографии.
-2. Верни описание в формате JSON, используя ТОЛЬКО факты из справочной информации выше.
-
-Ответ должен быть строго в формате JSON:
-{{
-    "name": "Название на русском",
-    "description": "Описание (3-5 предложений)"
-}}
-
-Не добавляй никакой текст до или после JSON!"""
-    
-    def _make_wiki_summary_prompt(self, retrieved_context: str) -> str:
-        return f"""СПРАВОЧНАЯ ИНФОРМАЦИЯ (несколько вариантов):
-{retrieved_context}
-
-ЗАДАЧА:
-1. Посмотри на изображение и определи, какая достопримечательность на фото
-2. Выбери ОДИН самый подходящий вариант из справочной информации
-3. Используй ТОЛЬКО описание выбранного варианта, НЕ смешивай информацию из разных вариантов
-4. Верни JSON с названием и описанием ТОЛЬКО выбранного варианта
-
-ВАЖНО: В описании должна быть информация ТОЛЬКО об одной достопримечательности!"""
-    
-    # ========================================
-    # VLM ГЕНЕРАЦИЯ (изображение + текст)
-    # ========================================
-    def _image_to_base64(self, image: Image.Image) -> str:
-        """
-        Конвертирует PIL Image в base64 строку.
-        
-        Args:
-            image: PIL изображение
-        
-        Returns:
-            Base64 строка изображения
-        """
-        with BytesIO() as buffered:
-            image.save(buffered, format="JPEG")
-            img_bytes = buffered.getvalue()
-            return base64.b64encode(img_bytes).decode('utf-8')
-    
     def prepare_vlm_messages(
         self,
-        prompt: str,
-        image: Union[Image.Image, str, bytes],
-        reformulate: bool = False
+        query_image: Union[Image.Image, str, bytes],
+        candidate_image: str,
+        candidate_caption: str,
+        candidate_name: str,
     ) -> List[Dict[str, Any]]:
         """
-        Формирует сообщения в формате для Qwen2-VL с изображениями.
-        Изображение кодируется в base64.
-        
+        Формирует сообщения в формате OpenAI API для VLM reranking.
+
         Args:
-            prompt: Текстовый промпт
-            image: PIL Image, путь к изображению или bytes
-        
+            query_image: Запросное изображение (PIL, путь или bytes)
+            candidate_image: Путь к изображению кандидата
+            candidate_caption: Описание кандидата
+            candidate_name: Название кандидата
+
         Returns:
-            Список сообщений для модели
+            Список сообщений для OpenAI API
         """
-        if reformulate:
-            sys_prompt = """Ты — профессиональный русскоязычный гид.
-
-КРИТИЧЕСКИ ВАЖНО: ЗАПРЕЩЕНО придумывать любые факты! Используй ТОЛЬКО информацию из справочного текста!
-
-ЗАДАЧА:
-1. Тебе дано изображение и справочная информация (может быть несколько пунктов).
-2. Выбери ОДИН пункт, который соответствует изображению.
-3. Перефразируй ТОЛЬКО факты из выбранного пункта в стиле гида.
-
-АЛГОРИТМ:
-1. Посмотри на изображение → определи, что это (собор, дворец, памятник и т.д.)
-2. Найди в справке пункт с подходящим названием
-3. Возьми ВСЕ факты ТОЛЬКО из этого пункта
-4. Перефразируй их в стиле гида (начни с «Перед вами...»)
-
-АБСОЛЮТНЫЕ ЗАПРЕТЫ:
-- ЗАПРЕЩЕНО смешивать информацию из разных пунктов
-- ЗАПРЕЩЕНО добавлять даты, если их нет в выбранном пункте
-- ЗАПРЕЩЕНО добавлять имена, если их нет в выбранном пункте
-- ЗАПРЕЩЕНО добавлять числа, если их нет в выбранном пункте
-- ЗАПРЕЩЕНО использовать слова «самый», «крупнейший», «один из», если их нет в источнике
-- ЗАПРЕЩЕНО придумывать архитектурные детали (арки, колонны, купола), если их нет в источнике
-- ЗАПРЕЩЕНО придумывать исторические события
-- ЗАПРЕЩЕНО добавлять любую информацию, которой нет в выбранном пункте
-
-ПРАВИЛО: Если факта нет в справке — его НЕТ в ответе!
-
-Формат ответа (только JSON):
-{"name": "<название из выбранного пункта>", "description": "<перефразированные факты ТОЛЬКО из выбранного пункта>"}
-"""
+        # Загружаем query-изображение
+        if isinstance(query_image, Image.Image):
+            query_img = query_image.convert("RGB")
+        elif isinstance(query_image, str):
+            with Image.open(query_image) as img:
+                query_img = img.convert("RGB")
+        elif isinstance(query_image, bytes):
+            query_img = Image.open(BytesIO(query_image)).convert("RGB")
         else:
-            sys_prompt = "Ты — профессиональный русскоязычный гид. Отвечай в формате JSON."
+            raise ValueError(
+                f"Неподдерживаемый тип query_image: {type(query_image)}"
+            )
 
-        system_msg = {
-            "role": "system",
-            "content": [{
-                "type": "text",
-                "text": sys_prompt
-                }]
-        }
-        
-        content_items = []
-        
-        # Добавляем изображение с base64 кодированием
-        if image:
-            if isinstance(image, Image.Image):
-                # PIL Image - конвертируем в base64
-                image_data = self._image_to_base64(image)
-                
-            elif isinstance(image, str):
-                # Путь к файлу - загружаем и конвертируем
-                pil_image = Image.open(image).convert("RGB")
-                image_data = self._image_to_base64(pil_image)
+        # Загружаем изображение кандидата
+        # image_path в метаданных — просто имя файла (photo.jpg),
+        # поэтому добавляем images_base_dir если он задан
+        candidate_path = candidate_image
+        if self.images_base_dir is not None:
+            candidate_path = str(self.images_base_dir / candidate_image)
+        with Image.open(candidate_path) as img:
+            candidate_img = img.convert("RGB")
 
-            elif isinstance(image, bytes):
-                # Bytes - конвертируем в base64 напрямую
-                image_data = base64.b64encode(image).decode('utf-8')
-                
-            content_items.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_data}"
-                    }
-            })
-        
-        # Текст промпта
-        content_items.append({
-            "type": "text",
-            "text": prompt
-        })
-        
-        user_msg = {
-            "role": "user",
-            "content": content_items,
-        }
-    
-        return [system_msg, user_msg]
+        query_uri = self._image_to_base64_data_uri(query_img)
+        candidate_uri = self._image_to_base64_data_uri(candidate_img)
+        caption = candidate_caption[:self.caption_max_length]
 
-    def _generate_with_vlm(
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Query Photo:"},
+                    {"type": "image_url", "image_url": {"url": query_uri}},
+                    {"type": "text", "text": "Candidate Photo:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": candidate_uri},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Question: Are these photos showing the same "
+                            f"landmark: \"{candidate_name}\"?\n"
+                            f"Candidate details: {caption}\n"
+                            f"Answer only with Yes or No."
+                        ),
+                    },
+                ],
+            }
+        ]
+
+    async def _generate_with_vlm(
         self,
         image: Image.Image,
-        prompt: str,
+        candidate_image: str,
+        candidate_caption: str,
+        candidate_name: str,
         max_new_tokens: int = 256,
         temperature: float = 0.0,
-        reformulate: bool = False,
     ) -> str:
-        """
-        Генерация ответа через VLM (изображение + текст).
-        
-        Args:
-            image: PIL изображение
-            prompt: Текстовый промпт
-            max_new_tokens: Максимум новых токенов
-            temperature: Температура генерации
-            reformulate: Использовать специальный промпт для переформулирования
-        
-        Returns:
-            Сгенерированный текст
-        """
-        try:
-            messages = self.prepare_vlm_messages(prompt, image, reformulate)
-            # Для VLM нужны и изображение, и текст
-            response = self.model.create_chat_completion(
-                messages=messages,
-                max_tokens=max_new_tokens,
-                temperature=temperature,
-                stream=False,
-            )
-            
-            # Извлекаем текст из ответа
-            generated_text = response['choices'][0]['message']['content']
-            
-            return generated_text.strip()
-            
-        except torch.cuda.OutOfMemoryError:
-            logger.error("GPU out of memory during generation")
-            torch.cuda.empty_cache()
-            raise RuntimeError("GPU out of memory")
-        except Exception as e:
-            logger.error(f"Generation error: {e}")
-            raise
-    
-    # ========================================
-    # ПЕРЕФОРМУЛИРОВАНИЕ В СТИЛЬ ГИДА (с изображением!)
-    # ========================================
-    
-    def _reformulate_as_tour_guide(
-        self,
-        image: Image.Image,
-        names: List[str],
-        summaries: List[str]
-    ) -> Dict[str, str]:
-        """
-        Переводит Wikipedia описание на русский язык.
-        ВРЕМЕННО: Переформулирование через VLM отключено из-за галлюцинаций.
-        
-        Args:
-            image: PIL изображение достопримечательности (не используется)
-            names: Названия достопримечательности
-            summaries: Исходное описания из Wikipedia
-        
-        Returns:
-            Dict с ключами 'name' и 'description'
-        """
-        # Переводим только первый (самый релевантный) результат
-        logger.info("Translating Wikipedia content to Russian...")
-        
-        if not names or not summaries:
-            logger.warning("No names or summaries provided")
-            return {"name": "", "description": ""}
-        
-        # Переводим название
-        translated_name = self.translator.translate(names[0])
-        if not translated_name:
-            translated_name = names[0]
-        
-        # Переводим описание
-        translated_summary = self.translator.translate(summaries[0])
-        if not translated_summary:
-            translated_summary = summaries[0]
-        
-        logger.info(f"Translation successful: {translated_name[:50]}...")
-        
-        return {
-            "name": translated_name,
-            "description": translated_summary
-        }
-    
-    # ========================================
-    # ИНТЕРНЕТ-ПОИСК (YANDEX + WIKIPEDIA)
-    # ========================================
-    
+        """Генерирует ответ VLM для одного кандидата."""
+        messages = self.prepare_vlm_messages(
+            image, candidate_image, candidate_caption, candidate_name
+        )
+        response = await self.sglang_client.chat_completion(
+            messages=messages,
+            max_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+        return str(response["choices"][0]["message"]["content"]).strip()
+
+    # ------------------------------------------------------------------
+    # Интернет-поиск
+    # ------------------------------------------------------------------
+
     async def _search_internet(
         self,
         image: Union[Image.Image, str, bytes],
@@ -723,26 +516,13 @@ class AITourGuide:
         retrieved_descs: List[str],
         retrieved_names: List[str],
         fallback_name: str,
-        image_path: Union[str, bytes],
         timeout: float = 90.0,
     ) -> Dict:
         """
-        Интернет-поиск при низкой уверенности с таймаутом.
-        Использует Yandex Image Search + Wikipedia.
-        
-        Args:
-            image: PIL изображение, путь к файлу или байты для Yandex поиска
-            retrieved_scores: CLIP scores из retrieval
-            retrieved_descs: Описания кандидатов из retrieval
-            retrieved_names: Названия кандидатов из retrieval
-            fallback_name: Название по умолчанию
-            image_path: Путь к изображению для логирования
-            timeout: Таймаут в секундах
-        
-        Returns:
-            Dict с результатами поиска
+        Ищет информацию о достопримечательности через Yandex + Wikipedia.
+
+        Возвращает словарь с полями: found, name, description, confidence.
         """
-        
         result = {
             "found": False,
             "name": fallback_name,
@@ -750,125 +530,103 @@ class AITourGuide:
             "query": None,
             "confidence": 0.5,
         }
-        
-        # Проверка API ключей
+
         if not self.yc_folder_id or not self.yc_api_key:
-            logger.warning("Yandex API keys not configured, skipping search")
+            logger.warning("Yandex API ключи не настроены, поиск пропущен")
             return result
-        
+
         try:
-            # Оборачиваем в таймаут
             async with asyncio.timeout(timeout):
-                # 1. Yandex Image Search (блокирующий вызов в thread)
+                # Yandex Image Search (синхронный вызов в отдельном потоке)
                 landmark_names = await asyncio.to_thread(
-                    self._yandex_search_sync,
-                    image
+                    self._yandex_search_sync, image
                 )
-                
+
                 if landmark_names:
                     result["query"] = list(landmark_names)
-                    async with WikipediaService(
-                        language="ru",
-                    ) as wiki_service:
-                        wiki_result = (
-                            await wiki_service.get_landmark_info_async(
-                                landmark_names
-                            )
+                    async with WikipediaService(language="ru") as wiki:
+                        wiki_result = await wiki.get_landmark_info_async(
+                            landmark_names
                         )
+
                     if any(wiki_result.values()):
-                        # Фильтруем нерелевантные результаты
-                        # 1. Исключаем названия фото и общие статьи
-                        filtered_results = {
-                            name: desc for name, desc in wiki_result.items()
+                        _noise = {
+                            ".jpg", "panoramio", "georama",
+                            "honeymoon", "travel", "lgbtq",
+                            "religious beliefs", "religion in",
+                        }
+                        _arch = {
+                            "cathedral", "church", "temple",
+                            "mosque", "synagogue", "palace",
+                            "castle", "fortress", "tower",
+                            "monument", "memorial", "museum",
+                        }
+
+                        filtered = {
+                            name: desc
+                            for name, desc in wiki_result.items()
                             if desc and not any(
-                                x in name.lower()
-                                for x in ['.jpg', 'panoramio', 'georama',
-                                         'honeymoon', 'travel', 'lgbtq',
-                                         'religious beliefs', 'religion in']
+                                x in name.lower() for x in _noise
                             )
                         }
-                        
-                        # 2. Приоритизируем архитектурные объекты
-                        priority_results = {
-                            name: desc for name, desc in filtered_results.items()
-                            if any(
-                                x in name.lower()
-                                for x in ['cathedral', 'church', 'temple',
-                                         'mosque', 'synagogue', 'palace',
-                                         'castle', 'fortress', 'tower',
-                                         'monument', 'memorial', 'museum']
-                            )
+
+                        # Приоритет архитектурным объектам
+                        priority = {
+                            name: desc
+                            for name, desc in filtered.items()
+                            if any(x in name.lower() for x in _arch)
                         }
-                        
-                        # Используем приоритетные, если есть, иначе все отфильтрованные
-                        if priority_results:
-                            filtered_results = priority_results
-                        elif not filtered_results:
-                            filtered_results = wiki_result
-                        
-                        # Переформулирование в thread
-                        pred_landmark = await asyncio.to_thread(
-                            self._reformulate_as_tour_guide,
-                            image,
-                            list(filtered_results.keys()),
-                            list(filtered_results.values()),
-                        )
-                        # Возвращаем только если есть описание
-                        if pred_landmark.get("description"):
+                        if priority:
+                            filtered = priority
+                        elif not filtered:
+                            filtered = wiki_result
+
+                        if filtered:
+                            best_name = next(iter(filtered))
                             result["found"] = True
-                            result["name"] = pred_landmark["name"]
-                            result["description"] = pred_landmark["description"]
+                            result["name"] = best_name
+                            result["description"] = filtered[best_name]
                             result["confidence"] = 0.8
                             return result
-        
+
         except asyncio.TimeoutError:
-            logger.warning(f"Internet search timeout after {timeout}s")
+            logger.warning(f"Таймаут интернет-поиска ({timeout}с)")
         except Exception as e:
-            logger.error(f"Internet search error: {e}")
-        
-        # Fallback: отдаем top-1 retrieved name
+            logger.error(f"Ошибка интернет-поиска: {e}")
+
+        # Fallback: возвращаем top-1 из retrieval
         if retrieved_names and retrieved_names[0]:
             result["found"] = True
             result["name"] = retrieved_names[0]
             result["query"] = [retrieved_names[0]]
-            result["description"] = retrieved_descs[0]
+            result["description"] = (
+                retrieved_descs[0] if retrieved_descs else ""
+            )
             result["confidence"] = 0.75
-        
+
         return result
-    
+
     def _yandex_search_sync(
-        self,
-        image_path: Union[str, bytes]
+        self, image_path: Union[str, bytes]
     ) -> Optional[set]:
-        """
-        Синхронный wrapper для Yandex поиска.
-        
-        Args:
-            image_path: Путь к изображению
-        
-        Returns:
-            Set названий достопримечательностей или None
-        """
-        # Проверка наличия API ключей
+        """Синхронный wrapper для Yandex Image Search."""
         if not self.yc_folder_id or not self.yc_api_key:
-            logger.warning("Yandex API keys not configured")
             return None
-            
+
         with YandexSearchService(
             yc_folder_id=self.yc_folder_id,
             yc_api_key=self.yc_api_key,
-        ) as yandex_service:
-            return yandex_service.search_by_image(
-                image_path,
-                num_results=self.DEFAULT_MAX_RESULTS
+        ) as yandex:
+            return yandex.search_by_image(
+                image_path, num_results=self.DEFAULT_MAX_RESULTS
             )
-    
-    # ========================================
-    # ОСНОВНОЙ МЕТОД ПРЕДСКАЗАНИЯ (VLM)
-    # ========================================
-    
+
+    # ------------------------------------------------------------------
+    # Основной пайплайн предсказания
+    # ------------------------------------------------------------------
+
     def _init_result(self) -> Dict:
-        """Инициализация структуры результата."""
+        """Возвращает пустую структуру результата."""
         return {
             "name": "",
             "description": "",
@@ -876,240 +634,305 @@ class AITourGuide:
             "source": PredictionSource.RETRIEVAL.value,
             "retrieved_names": [],
             "retrieved_scores": [],
+            "retrieved_images": [],
+            "retrieved_captions": [],
             "search_query": None,
             "error": None,
             "timing": {},
         }
-    
+
     async def _validate_and_load_image(
         self,
         image_input: Union[str, Path, bytes],
-        timing: Dict[str, float]
-    ) -> Tuple[Union[Path, str, bytes], Image.Image]:
-        """
-        Валидация и загрузка изображения из пути или байтов.
-        
-        Args:
-            image_input: Путь к изображению или байты
-            timing: Словарь для записи времени выполнения
-        
-        Returns:
-            Tuple из пути/идентификатора и загруженного изображения
-        
-        Raises:
-            ValueError: Если данные невалидны
-            FileNotFoundError: Если файл не найден
-            RuntimeError: Если не удалось загрузить изображение
-        """
+        timing: Dict[str, float],
+    ) -> Tuple[Union[Path, str], Image.Image]:
+        """Загружает изображение из пути или байтов."""
         t0 = time.time()
-        
-        # Если байты - загружаем напрямую
+
         if isinstance(image_input, bytes):
             try:
                 image = Image.open(BytesIO(image_input)).convert("RGB")
                 timing["image_load"] = round(time.time() - t0, 3)
                 return "bytes_image", image
             except Exception as e:
-                raise RuntimeError(f"Failed to load image from bytes: {e}")
-        
-        # Если путь - валидируем и загружаем
+                raise RuntimeError(f"Не удалось загрузить изображение: {e}")
+
         image_path = Path(image_input)
-        
-        # resolve() автоматически обрабатывает path traversal и симлинки
         try:
             image_path = image_path.resolve(strict=True)
         except (ValueError, OSError, RuntimeError) as e:
-            raise ValueError(f"Invalid or inaccessible path: {e}")
-        
+            raise ValueError(f"Недоступный путь: {e}")
+
         if not image_path.is_file():
-            raise ValueError(f"Not a file: {image_path}")
-        
-        # Загрузка изображения
+            raise ValueError(f"Не является файлом: {image_path}")
+
         try:
             image = Image.open(image_path).convert("RGB")
         except Exception as e:
-            raise RuntimeError(f"Failed to load image: {e}")
-        
+            raise RuntimeError(f"Не удалось открыть изображение: {e}")
+
         timing["image_load"] = round(time.time() - t0, 3)
         return image_path, image
-    
+
     async def _retrieve_candidates(
         self,
         image: Image.Image,
-        timing: Dict[str, float]
-    ) -> List[Dict]:
-        """
-        Поиск кандидатов через CLIP + FAISS.
-        
-        Args:
-            image: PIL изображение
-            timing: Словарь для записи времени выполнения
-        
-        Returns:
-            Список кандидатов из retrieval
-        
-        Raises:
-            RuntimeError: Если retrieval не вернул кандидатов
-        """
+        timing: Dict[str, float],
+    ) -> List[LandmarkRetrievalResult]:
+        """Ищет кандидатов через SigLIP + FAISS."""
         t0 = time.time()
         retrieved = await asyncio.to_thread(
-            self.retriever.search,
+            self.retriever.retrieve,
             image,
-            top_k=self.top_k_retrieval
+            top_k=self.top_k_retrieval,
+            faiss_k=self.faiss_k,
         )
         timing["retrieval"] = round(time.time() - t0, 3)
-        
+
         if not retrieved:
-            raise RuntimeError("No candidates found in retrieval")
-        
+            raise RuntimeError("Кандидаты не найдены")
+
         return retrieved
-    
+
     async def _generate_vlm_prediction(
         self,
         image: Image.Image,
-        retrieved: List[Dict],
-        timing: Dict[str, float]
-    ) -> Dict[str, str]:
+        retrieved: List[LandmarkRetrievalResult],
+        timing: Dict[str, float],
+    ) -> Dict[str, Any]:
         """
-        Генерация предсказания через VLM.
-        
-        Args:
-            image: PIL изображение
-            retrieved: Список кандидатов из retrieval
-            timing: Словарь для записи времени выполнения
-        
-        Returns:
-            Dict с ключами 'name' и 'description'
+        Выбирает лучшего кандидата через VLM reranking.
+
+        Для каждого кандидата вычисляет P(yes) через SGLang logprobs,
+        возвращает кандидата с максимальной вероятностью.
         """
         t0 = time.time()
-        context_text = self.retriever.format_context(retrieved)
-        prompt = self._make_rag_prompt(context_text)
-        response = await asyncio.to_thread(
-            self._generate_with_vlm,
-            image,
-            prompt,
-            max_new_tokens=256
+
+        # Собираем кандидатов с изображениями
+        candidates = []
+        for cand in retrieved:
+            top_image = cand.get_top_image()
+            if top_image:
+                # Предпочитаем guide_description, затем caption_landmark
+                description = (
+                    top_image.guide_description
+                    or top_image.caption_landmark
+                    or top_image.caption
+                )
+                candidates.append({
+                    "landmark_id": cand.landmark_id,
+                    "landmark_name": cand.landmark_name,
+                    "image_path": top_image.image_path,
+                    "caption": top_image.caption,
+                    "description": description,
+                })
+
+        if not candidates:
+            raise RuntimeError("Нет кандидатов для VLM reranking")
+
+        async def _score_candidate(cand: Dict) -> Dict:
+            """Вычисляет P(yes) для одного кандидата."""
+            try:
+                messages = self.prepare_vlm_messages(
+                    image,
+                    cand["image_path"],
+                    cand["caption"],
+                    cand["landmark_name"],
+                )
+                response = await self.sglang_client.chat_completion(
+                    messages=messages,
+                    max_tokens=1,
+                    temperature=0.0,
+                    logprobs=True,
+                    top_logprobs=20,
+                )
+
+                logprobs_data = (
+                    response.get("choices", [{}])[0].get("logprobs", {})
+                )
+                if not logprobs_data or not logprobs_data.get("content"):
+                    return {**cand, "p_yes": 0.0}
+
+                top_lp = logprobs_data["content"][0].get("top_logprobs", [])
+
+                logit_yes = None
+                logit_no = None
+                for item in top_lp:
+                    token = item.get("token", "")
+                    logprob = item.get("logprob", -100)
+                    if logit_yes is None and token in self._YES_VARIANTS:
+                        logit_yes = logprob
+                    elif logit_no is None and token in self._NO_VARIANTS:
+                        logit_no = logprob
+
+                if logit_yes is not None and logit_no is not None:
+                    max_logit = max(logit_yes, logit_no)
+                    exp_yes = math.exp(logit_yes - max_logit)
+                    exp_no = math.exp(logit_no - max_logit)
+                    p_yes = exp_yes / (exp_yes + exp_no)
+                elif logit_yes is not None:
+                    p_yes = 1.0
+                elif logit_no is not None:
+                    p_yes = 0.0
+                else:
+                    p_yes = 0.0
+
+                return {**cand, "p_yes": p_yes}
+
+            except Exception as e:
+                logger.warning(
+                    f"Ошибка VLM reranking для {cand['landmark_id']}: {e}"
+                )
+                return {**cand, "p_yes": 0.0}
+
+        # Параллельные запросы ко всем кандидатам
+        scored = await asyncio.gather(
+            *[_score_candidate(c) for c in candidates]
         )
+        results = list(scored)
+
+        # Выбираем кандидата с максимальным P(yes)
+        results.sort(key=lambda x: x["p_yes"], reverse=True)
+        best = results[0]
+
         timing["vlm_generation"] = round(time.time() - t0, 3)
-        
-        return self._parse_json_response(response)
-    
+
+        return {
+            "name": best["landmark_name"],
+            "description": best["description"],
+            "p_yes": best["p_yes"],
+        }
+
     async def _enhance_with_internet_search(
         self,
         image: Image.Image,
-        image_path: Union[Path, str, bytes],
-        retrieved: List[Dict],
+        image_path: Union[Path, str],
+        retrieved_scores: List[float],
+        retrieved_names: List[str],
+        retrieved_descs: List[str],
         result: Dict,
-        timing: Dict[str, float]
+        timing: Dict[str, float],
     ):
-        """
-        Улучшение результата через интернет-поиск.
-        
-        Args:
-            image: PIL изображение
-            image_path: Путь к изображению или "bytes_image" для байтов
-            retrieved: Список кандидатов из retrieval
-            result: Словарь результата для обновления
-            timing: Словарь для записи времени выполнения
-        """
-        retrieved_scores = [r.get("score", 0.0) for r in retrieved]
-        retrieved_names = [r.get("name", "") for r in retrieved]
-        retrieved_descs = [r.get("description", "") for r in retrieved]
-        
-        # Для bytes используем само изображение, для путей - строку пути
-        search_image_input = image if image_path == "bytes_image" else str(image_path)
-        
+        """Улучшает результат через интернет-поиск."""
+        search_input = (
+            image if image_path == "bytes_image" else str(image_path)
+        )
+
         t0 = time.time()
         search_result = await self._search_internet(
-            image=search_image_input,
+            image=search_input,
             retrieved_scores=retrieved_scores,
             retrieved_descs=retrieved_descs,
             retrieved_names=retrieved_names,
             fallback_name=result["name"],
-            image_path=str(image_path),
         )
         timing["internet_search"] = round(time.time() - t0, 3)
-        
+
         if search_result.get("found"):
             result["source"] = PredictionSource.INTERNET.value
-            result["name"] = search_result["name"]
-            result["description"] = search_result["description"]
             result["search_query"] = search_result["query"]
             result["confidence"] = round(search_result["confidence"], 4)
-    
+
+            # Переводим название и описание на русский язык,
+            # только если текст не содержит кириллицы (т.е. на английском)
+            name = search_result["name"]
+            description = search_result["description"]
+            t_translate = time.time()
+            try:
+                if not re.search(r'[а-яА-ЯёЁ]', name):
+                    translated_name = self.translator.translate(
+                        name, target_language="ru", source_language="en"
+                    )
+                    if translated_name:
+                        name = translated_name
+
+                if description and not re.search(r'[а-яА-ЯёЁ]', description):
+                    translated_desc = self.translator.translate(
+                        description, target_language="ru", source_language="en"
+                    )
+                    if translated_desc:
+                        description = translated_desc
+            except Exception as e:
+                logger.warning(f"Ошибка перевода: {e}")
+            timing["translation"] = round(time.time() - t_translate, 3)
+
+            result["name"] = name
+            result["description"] = description
+
     async def predict(
         self,
         image_input: Union[str, Path, bytes],
         use_internet_search: bool = True,
     ) -> Dict:
         """
-        Предсказание для одного изображения через VLM.
-        
+        Распознаёт достопримечательность на изображении.
+
         Args:
-            image_input: Путь к изображению или байты изображения
-            use_internet_search: Включить интернет-поиск при низкой уверенности
-        
+            image_input: Путь к изображению или байты
+            use_internet_search: Включить поиск при низкой уверенности
+
         Returns:
-            {
-                "name": "...",
-                "description": "...",
-                "confidence": 0.85,
-                "source": "retrieval" | "internet",
-                "retrieved_names": [...],
-                "retrieved_scores": [...],
-                "search_query": "...",
-                "timing": {...},
-                "error": None,
-            }
+            Словарь с name, description, confidence, source, timing
         """
         timing: Dict[str, float] = {}
         result = self._init_result()
-        
-        # Генерируем correlation ID для трейсинга
-        import uuid
         correlation_id = str(uuid.uuid4())[:8]
-        
-        # Определяем идентификатор для логирования
-        if isinstance(image_input, bytes):
-            input_id = f"bytes ({len(image_input)} bytes)"
-        else:
-            input_id = str(image_input)
-        
-        logger.info(f"[{correlation_id}] Starting prediction for {input_id}")
-        
+
+        input_id = (
+            f"bytes ({len(image_input)} bytes)"
+            if isinstance(image_input, bytes)
+            else str(image_input)
+        )
+        logger.info(f"[{correlation_id}] Предсказание для {input_id}")
+
         try:
-            # 1. Валидация и загрузка изображения
+            # 1. Загрузка изображения
             try:
                 image_path, image = await self._validate_and_load_image(
                     image_input, timing
                 )
                 logger.info(
-                    f"[{correlation_id}] Image loaded: {image.size}"
+                    f"[{correlation_id}] Изображение загружено: {image.size}"
                 )
             except (ValueError, FileNotFoundError, RuntimeError) as e:
                 result["error"] = str(e)
                 result["timing"] = timing
-                logger.error(f"[{correlation_id}] Validation error: {e}")
+                logger.error(f"[{correlation_id}] Ошибка загрузки: {e}")
                 return result
-            
+
             # 2. Retrieval кандидатов
             try:
                 retrieved = await self._retrieve_candidates(image, timing)
-                retrieved_scores = [r.get("score", 0.0) for r in retrieved]
-                retrieved_names = [r.get("name", "") for r in retrieved]
+                retrieved_scores = []
+                retrieved_names = []
+                retrieved_images = []
+                retrieved_captions = []
+
+                for candidate in retrieved:
+                    top_image = candidate.get_top_image()
+                    if not top_image:
+                        continue
+                    retrieved_scores.append(candidate.aggregated_score)
+                    retrieved_names.append(candidate.landmark_name)
+                    retrieved_images.append(top_image.image_path)
+                    retrieved_captions.append(top_image.caption)
+
                 result["retrieved_scores"] = retrieved_scores
                 result["retrieved_names"] = retrieved_names
+                result["retrieved_images"] = retrieved_images
+                result["retrieved_captions"] = retrieved_captions
+
                 logger.info(
-                    f"[{correlation_id}] Retrieved {len(retrieved)} candidates, "
+                    f"[{correlation_id}] Найдено {len(retrieved)} кандидатов, "
                     f"top score: {retrieved_scores[0]:.4f}"
                 )
             except RuntimeError as e:
                 result["error"] = str(e)
                 result["timing"] = timing
-                logger.error(f"[{correlation_id}] Retrieval error: {e}")
+                logger.error(f"[{correlation_id}] Ошибка retrieval: {e}")
                 return result
-            
-            # 3. VLM генерация предсказания
+
+            # 3. VLM reranking
             try:
                 parsed = await self._generate_vlm_prediction(
                     image, retrieved, timing
@@ -1117,137 +940,112 @@ class AITourGuide:
                 result["name"] = parsed["name"]
                 result["description"] = parsed["description"]
                 logger.info(
-                    f"[{correlation_id}] VLM predicted: {parsed['name']}"
+                    f"[{correlation_id}] VLM выбрал: {parsed['name']} "
+                    f"(P(yes)={parsed.get('p_yes', 0):.4f})"
                 )
             except Exception as e:
-                result["error"] = f"VLM generation failed: {e}"
+                result["error"] = f"VLM ошибка: {e}"
                 result["timing"] = timing
-                logger.error(f"[{correlation_id}] VLM error: {e}")
+                logger.error(f"[{correlation_id}] VLM ошибка: {e}")
                 return result
-            
-            # 4. Расчёт уверенности
-            confidence = self._calculate_confidence(
-                retrieved_scores=retrieved_scores,
-                retrieved_names=retrieved_names,
-                pred_name=parsed["name"],
-            )
-            result["confidence"] = round(confidence, 4)
+
+            # 4. Уверенность = p_yes напрямую
+            p_yes_val = parsed.get("p_yes", 0.0)
+            result["confidence"] = round(p_yes_val, 4)
             logger.info(
-                f"[{correlation_id}] Confidence: {confidence:.4f}"
+                f"[{correlation_id}] P(yes)={p_yes_val:.4f}"
             )
-            
-            # 5. Интернет-поиск при низкой уверенности
-            if use_internet_search and confidence < self.confidence_threshold:
+
+            # 5. Интернет-поиск при низком P(yes) от VLM
+            if use_internet_search and p_yes_val < self.vlm_threshold:
                 logger.info(
-                    f"[{correlation_id}] Low confidence, "
-                    f"triggering internet search"
+                    f"[{correlation_id}] P(yes)={p_yes_val:.4f} "
+                    f"< vlm_threshold={self.vlm_threshold}, "
+                    f"запускаем интернет-поиск"
                 )
                 await self._enhance_with_internet_search(
-                    image, image_path, retrieved, result, timing
+                    image=image,
+                    image_path=image_path,
+                    retrieved_scores=retrieved_scores,
+                    retrieved_names=retrieved_names,
+                    retrieved_descs=retrieved_captions,
+                    result=result,
+                    timing=timing,
                 )
-                logger.info(
-                    f"[{correlation_id}] After search - "
-                    f"source: {result['source']}, "
-                    f"confidence: {result['confidence']}"
-                )
-            
+
             result["timing"] = timing
-            
-            # Обновление метрик
             self.metrics.update(result)
-            
+
             logger.info(
-                f"[{correlation_id}] Prediction completed successfully, "
-                f"total time: {sum(timing.values()):.3f}s"
+                f"[{correlation_id}] Готово за "
+                f"{sum(timing.values()):.3f}с"
             )
-            
             return result
-            
+
         except Exception as e:
-            result["error"] = "Internal error occurred"
+            result["error"] = "Внутренняя ошибка"
             result["timing"] = timing
-            
-            # Логируем полную ошибку внутренне
-            import traceback
-            error_details = traceback.format_exc()
             logger.error(
-                f"[{correlation_id}] Unexpected error: {e}\n{error_details}"
+                f"[{correlation_id}] Неожиданная ошибка: {e}\n"
+                f"{traceback.format_exc()}"
             )
-            
-            # Обновление метрик (ошибка)
             self.metrics.update(result)
-            
             return result
-    
-    # ========================================
-    # ПАКЕТНАЯ ОБРАБОТКА
-    # ========================================
-    
+
+    # ------------------------------------------------------------------
+    # Пакетная обработка
+    # ------------------------------------------------------------------
+
     async def predict_batch(
         self,
         image_paths: List[Union[str, Path]],
         use_internet_search: bool = True,
+        max_concurrency: int = 4,
     ) -> List[Dict]:
         """
-        Пакетная обработка изображений.
-        
-        Note: Текущая реализация обрабатывает последовательно.
-        Для production рекомендуется реализовать батчинг на GPU.
-        
+        Пакетная обработка изображений с ограниченным параллелизмом.
+
         Args:
             image_paths: Список путей к изображениям
-            use_internet_search: Включить ли интернет-поиск
-        
-        Returns:
-            Список результатов предсказаний
+            use_internet_search: Включить интернет-поиск
+            max_concurrency: Максимум одновременных запросов
         """
-        results = []
         total = len(image_paths)
-        
-        for i, path in enumerate(image_paths):
-            logger.info(f"Прогресс: {i+1}/{total}")
-            result = await self.predict(path, use_internet_search)
-            results.append(result)
-        
-        return results
-    
-    # ========================================
-    # CLEANUP
-    # ========================================
-    
-    def cleanup(self):
-        """Публичный метод для очистки ресурсов."""
-        self._cleanup_resources()
-    
-    def _cleanup_resources(self):
-        """Очистка ресурсов."""
-        logger.info("Cleaning up resources...")
-        if hasattr(self, 'model'):
-            del self.model
-        if hasattr(self, 'retriever'):
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _predict_with_sem(i: int, path: Union[str, Path]) -> Dict:
+            async with semaphore:
+                logger.info(f"Прогресс: {i + 1}/{total}")
+                return await self.predict(path, use_internet_search)
+
+        tasks = [
+            _predict_with_sem(i, path)
+            for i, path in enumerate(image_paths)
+        ]
+        return list(await asyncio.gather(*tasks))
+
+    # ------------------------------------------------------------------
+    # Очистка ресурсов
+    # ------------------------------------------------------------------
+
+    async def cleanup(self):
+        """Освобождает ресурсы сервиса."""
+        await self._cleanup_resources()
+
+    async def _cleanup_resources(self):
+        """Закрывает HTTP-клиент и удаляет retriever."""
+        logger.info("Освобождение ресурсов...")
+        if hasattr(self, "sglang_client"):
+            await self.sglang_client.close()
+        if hasattr(self, "retriever"):
             del self.retriever
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    
-    # ========================================
-    # CONTEXT MANAGER SUPPORT
-    # ========================================
-    
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit with cleanup."""
-        self._cleanup_resources()
-    
+
     async def __aenter__(self):
-        """Async context manager entry."""
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit with cleanup."""
-        self._cleanup_resources()
+        await self._cleanup_resources()
+
 
 if __name__ == "__main__":
     pass

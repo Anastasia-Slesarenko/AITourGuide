@@ -1,0 +1,133 @@
+version: "3.9"
+
+# ============================================================
+# AI Tour Guide — production stack
+#
+# Сервисы:
+#   sglang   — VLM-сервер (Qwen2-VL-2B через SGLang, порт 30000)
+#   api      — FastAPI-приложение (SigLIP+FAISS retrieval, порт 8000)
+#
+# Запуск:
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# Структура бакета S3 (монтируется через s3fs в /mnt/s3-aitourguide):
+#   landmarks/                          — изображения галереи
+#   dataset/index/siglip/               — FAISS-индекс
+#   models/qwen2-vl-2b-r16/             — VLM модель для SGLang
+#   models/siglip-base-patch16-224/     — SigLIP модель
+#
+# Переменные окружения (.env):
+#   S3_MOUNT=/mnt/s3-aitourguide        — точка монтирования s3fs
+#   LOG_DIR=./logs                      — директория логов
+#
+# Требования к хосту:
+#   - GPU: NVIDIA T4 с CUDA 12.x + nvidia-container-toolkit
+#   - s3fs смонтирован в S3_MOUNT до запуска compose
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # SGLang VLM-сервер
+  # ----------------------------------------------------------
+  sglang:
+    image: lmsysorg/sglang:latest-cu121
+    container_name: aitourguide_sglang
+    restart: unless-stopped
+
+    # GPU-доступ (убрать если нет GPU)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    volumes:
+      # VLM модель — читается целиком при старте, монтируем напрямую из s3fs
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16:/models/qwen2-vl-2b-r16:ro
+
+    command: >
+      python -m sglang.launch_server
+        --model-path /models/qwen2-vl-2b-r16
+        --served-model-name qwen2-vl-2b-r16
+        --port 30000
+        --host 0.0.0.0
+        --mem-fraction-static 0.85
+        --max-total-tokens 4096
+        --dtype float16
+
+    ports:
+      - "30000:30000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:30000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # FastAPI-приложение
+  # ----------------------------------------------------------
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: aitourguide_api:latest
+    container_name: aitourguide_api
+    restart: unless-stopped
+
+    depends_on:
+      sglang:
+        condition: service_healthy
+
+    env_file:
+      - ../.env
+
+    environment:
+      # Переопределяем адрес SGLang внутри docker-сети
+      SGLANG_BASE_URL: "http://sglang:30000/v1"
+      # Должно совпадать с --served-model-name в sglang
+      SGLANG_MODEL_NAME: "qwen2-vl-2b-r16"
+      # Пути внутри контейнера (совпадают с точками монтирования volumes ниже)
+      INDEX_DIR: "/data/index/siglip"
+      SIGLIP_MODEL_PATH: "/data/models/siglip-base-patch16-224"
+      # Базовая директория изображений галереи внутри контейнера.
+      # image_path в gallery_metadata.json — просто имя файла (photo.jpg),
+      # полный путь = IMAGES_BASE_DIR/photo.jpg
+      IMAGES_BASE_DIR: "/data/images"
+      DEVICE: "cpu"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+    volumes:
+      # FAISS-индекс (в бакете: dataset/index/siglip/)
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/dataset/index/siglip:/data/index/siglip:ro
+      # Изображения галереи (в бакете: landmarks/)
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/landmarks:/data/images:ro
+      # SigLIP модель (в бакете: models/siglip-base-patch16-224/)
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/siglip-base-patch16-224:/data/models/siglip-base-patch16-224:ro
+      # Логи — локальная директория на хосте
+      - ${LOG_DIR:-./logs}:/app/logs
+
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+    networks:
+      - aitourguide_net
+
+networks:
+  aitourguide_net:
+    driver: bridge

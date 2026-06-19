@@ -1,0 +1,30 @@
+{
+  "query_image": "/Users/anastasiya/Documents/AITourGuide/images/132993_2.jpg",
+  "true_landmark_id": "132993",
+  "hit_at_1": false,
+  "is_unknown": false,
+  "rerank_threshold": 0.5,
+  "total_time_sec": 222.18,
+  "model": "model-f16.gguf",
+  "mmproj_used": true,
+  "results": [
+    {
+      "rank": 1,
+      "landmark_id": 7046,
+      "p_yes": 0.6983,
+      "status": "success"
+    },
+    {
+      "rank": 2,
+      "landmark_id": 132993,
+      "p_yes": 0.6808,
+      "status": "success"
+    },
+    {
+      "rank": 3,
+      "landmark_id": 72135,
+      "p_yes": 0.6193,
+      "status": "success"
+    }
+  ]
+}

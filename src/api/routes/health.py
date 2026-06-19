@@ -1,12 +1,10 @@
 # src/api/routes/health.py
-"""
-Health check endpoints for AITourGuide API.
-"""
+"""Эндпоинт проверки состояния сервиса."""
 
 import logging
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
-from typing import Dict
+from pydantic import BaseModel
+from typing import Dict, Any
 
 from src.services.ai_tour_guide import AITourGuide
 from src.api.dependencies import get_guide
@@ -17,49 +15,33 @@ router = APIRouter(prefix="/v1", tags=["Health"])
 
 
 class HealthResponse(BaseModel):
-    """Response model for health check."""
-    status: str = Field(
-        ...,
-        description="Overall service status",
-        example="healthy"
-    )
-    service: str = Field(
-        ...,
-        description="Service name",
-        example="AITourGuide"
-    )
-    components: Dict = Field(
-        default_factory=dict,
-        description="Status of individual components",
-        example={
-            "model": True,
-            "retriever": True,
-            "internet_search": True
-        }
-    )
+    """Ответ на запрос проверки состояния."""
+
+    status: str
+    service: str
+    components: Dict[str, Any]
 
 
 @router.get(
     "/health",
     response_model=HealthResponse,
-    summary="Health check",
-    description="Check the health status of the service and its components",
+    summary="Проверка состояния",
+    description="Проверяет доступность сервиса и его компонентов.",
 )
 async def health_check(guide: AITourGuide = Depends(get_guide)):
-    """
-    Check service health.
-    
-    Returns the status of the service and all its components.
-    """
+    """Возвращает статус сервиса и всех его компонентов."""
     try:
-        health = guide.health_check()
+        health = await guide.health_check()
+        components = health.get("components", {})
+        if not isinstance(components, dict):
+            components = {}
         return HealthResponse(
             status="healthy" if health.get("ready") else "degraded",
             service="AITourGuide",
-            components=health.get("components", {}),
+            components=components,
         )
     except Exception as e:
-        logger.exception("Health check failed")
+        logger.exception("Ошибка при проверке состояния")
         return HealthResponse(
             status="unhealthy",
             service="AITourGuide",

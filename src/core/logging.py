@@ -1,21 +1,19 @@
 # src/core/logging.py
-"""
-Centralized logging configuration for AITourGuide.
-"""
+"""Настройка логирования для AITourGuide."""
 
+import json
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-import json
-from datetime import datetime
 
 
 class JSONFormatter(logging.Formatter):
-    """Custom JSON formatter for structured logging."""
-    
+    """Форматтер для структурированного JSON-логирования."""
+
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record as JSON."""
+        """Форматирует запись лога в JSON."""
         log_data = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "level": record.levelname,
@@ -25,36 +23,30 @@ class JSONFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno,
         }
-        
-        # Add exception info if present
+
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
-        
-        # Add extra fields
+
         if hasattr(record, "correlation_id"):
             log_data["correlation_id"] = record.correlation_id
-        
-        if hasattr(record, "user_id"):
-            log_data["user_id"] = record.user_id
-        
+
         return json.dumps(log_data)
 
 
 class ColoredFormatter(logging.Formatter):
-    """Colored formatter for console output."""
-    
-    # ANSI color codes
+    """Форматтер с цветным выводом для консоли."""
+
     COLORS = {
-        "DEBUG": "\033[36m",      # Cyan
-        "INFO": "\033[32m",       # Green
-        "WARNING": "\033[33m",    # Yellow
-        "ERROR": "\033[31m",      # Red
-        "CRITICAL": "\033[35m",   # Magenta
+        "DEBUG": "\033[36m",     # Голубой
+        "INFO": "\033[32m",      # Зелёный
+        "WARNING": "\033[33m",   # Жёлтый
+        "ERROR": "\033[31m",     # Красный
+        "CRITICAL": "\033[35m",  # Пурпурный
     }
     RESET = "\033[0m"
-    
+
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record with colors."""
+        """Форматирует запись лога с цветом уровня."""
         color = self.COLORS.get(record.levelname, self.RESET)
         record.levelname = f"{color}{record.levelname}{self.RESET}"
         return super().format(record)
@@ -67,100 +59,72 @@ def setup_logging(
     enable_colors: bool = True,
 ) -> None:
     """
-    Setup centralized logging configuration.
-    
+    Настраивает логирование приложения.
+
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_format: Format type ("text" or "json")
-        log_file: Optional path to log file
-        enable_colors: Enable colored output for console (text format only)
+        level: Уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        log_format: Формат вывода ("text" или "json")
+        log_file: Путь к файлу лога (опционально)
+        enable_colors: Цветной вывод в консоль (только для text-формата)
     """
-    # Convert string level to logging constant
     numeric_level = getattr(logging, level.upper(), logging.INFO)
-    
-    # Create root logger
+
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
-    
-    # Remove existing handlers
     root_logger.handlers.clear()
-    
-    # Console handler
+
+    # Консольный обработчик
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(numeric_level)
-    
+
+    fmt = (
+        "%(asctime)s - %(name)s - %(levelname)s - "
+        "%(message)s [%(filename)s:%(lineno)d]"
+    )
     if log_format == "json":
-        console_formatter = JSONFormatter()
+        console_handler.setFormatter(JSONFormatter())
+    elif enable_colors and sys.stdout.isatty():
+        console_handler.setFormatter(ColoredFormatter(fmt))
     else:
-        format_string = (
-            "%(asctime)s - %(name)s - %(levelname)s - "
-            "%(message)s [%(filename)s:%(lineno)d]"
-        )
-        if enable_colors and sys.stdout.isatty():
-            console_formatter = ColoredFormatter(format_string)
-        else:
-            console_formatter = logging.Formatter(format_string)
-    
-    console_handler.setFormatter(console_formatter)
+        console_handler.setFormatter(logging.Formatter(fmt))
+
     root_logger.addHandler(console_handler)
-    
-    # File handler (if specified)
+
+    # Файловый обработчик (если указан путь)
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(numeric_level)
-        
+
         if log_format == "json":
-            file_formatter = JSONFormatter()
+            file_handler.setFormatter(JSONFormatter())
         else:
-            file_formatter = logging.Formatter(
+            file_handler.setFormatter(logging.Formatter(
                 "%(asctime)s - %(name)s - %(levelname)s - "
                 "%(message)s [%(filename)s:%(lineno)d]"
-            )
-        
-        file_handler.setFormatter(file_formatter)
+            ))
+
         root_logger.addHandler(file_handler)
-    
-    # Set levels for third-party loggers
+
+    # Снижаем шум от сторонних библиотек
     logging.getLogger("uvicorn").setLevel(logging.INFO)
     logging.getLogger("fastapi").setLevel(logging.INFO)
     logging.getLogger("transformers").setLevel(logging.WARNING)
     logging.getLogger("torch").setLevel(logging.WARNING)
-    
+
     root_logger.info(
-        f"Logging configured: level={level}, format={log_format}, "
-        f"file={log_file or 'None'}"
+        f"Логирование настроено: level={level}, "
+        f"format={log_format}, file={log_file or 'None'}"
     )
 
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Get a logger instance with the specified name.
-    
+    Возвращает логгер с указанным именем.
+
     Args:
-        name: Logger name (typically __name__)
-    
-    Returns:
-        Logger instance
+        name: Имя логгера (обычно __name__)
     """
     return logging.getLogger(name)
-
-
-class LoggerAdapter(logging.LoggerAdapter):
-    """
-    Custom logger adapter for adding contextual information.
-    
-    Usage:
-        logger = LoggerAdapter(logging.getLogger(__name__), {"correlation_id": "123"})
-        logger.info("Processing request")
-    """
-    
-    def process(self, msg, kwargs):
-        """Add extra fields to log record."""
-        # Add context from self.extra
-        for key, value in self.extra.items():
-            if key not in kwargs.get("extra", {}):
-                kwargs.setdefault("extra", {})[key] = value
-        return msg, kwargs
