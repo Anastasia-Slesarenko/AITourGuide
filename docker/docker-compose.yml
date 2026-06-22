@@ -58,6 +58,7 @@ services:
         --max-total-tokens 4096
         --dtype float16
         --attention-backend triton
+        --disable-log-requests
 
     ports:
       - "30000:30000"

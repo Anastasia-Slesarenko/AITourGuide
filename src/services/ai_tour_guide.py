@@ -198,7 +198,11 @@ class SGLangClient:
     async def health_check(self) -> bool:
         """Проверяет доступность SGLang сервера."""
         try:
-            response = await self.client.get(f"{self.base_url}/health")
+            # SGLang healthcheck на /health (без /v1 префикса)
+            base = self.base_url.rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            response = await self.client.get(f"{base}/health")
             return response.status_code == 200
         except Exception as e:
             logger.error(f"SGLang health check failed: {e}")
@@ -816,9 +820,16 @@ class AITourGuide:
                 )
                 return {**cand, "p_yes": 0.0}
 
-        # Параллельные запросы ко всем кандидатам
+        # Параллельные запросы с ограничением параллелизма
+        # (SGLang T4 не справляется с 10 одновременными запросами с изображениями)
+        semaphore = asyncio.Semaphore(3)
+
+        async def _score_with_sem(cand: Dict) -> Dict:
+            async with semaphore:
+                return await _score_candidate(cand)
+
         scored = await asyncio.gather(
-            *[_score_candidate(c) for c in candidates]
+            *[_score_with_sem(c) for c in candidates]
         )
         results = list(scored)
 
