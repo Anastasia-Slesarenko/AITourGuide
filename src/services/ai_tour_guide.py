@@ -575,12 +575,24 @@ class AITourGuide:
                             ".jpg", "panoramio", "georama",
                             "honeymoon", "travel", "lgbtq",
                             "religious beliefs", "religion in",
+                            "youtube", "слайд-шоу", "гимн",
+                            "генеральный план", "администрации",
+                            "туризм в", "города и страны",
                         }
                         _arch = {
+                            # Английские
                             "cathedral", "church", "temple",
                             "mosque", "synagogue", "palace",
                             "castle", "fortress", "tower",
                             "monument", "memorial", "museum",
+                            "bridge", "gate", "basilica",
+                            # Русские
+                            "собор", "церковь", "храм", "мечеть",
+                            "синагога", "дворец", "замок",
+                            "крепость", "башня", "мост",
+                            "памятник", "мемориал", "музей",
+                            "монастырь", "часовня", "ворота",
+                            "площадь", "кремль", "цитадель",
                         }
 
                         filtered = {

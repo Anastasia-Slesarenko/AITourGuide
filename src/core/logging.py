@@ -113,6 +113,7 @@ def setup_logging(
     logging.getLogger("fastapi").setLevel(logging.INFO)
     logging.getLogger("transformers").setLevel(logging.WARNING)
     logging.getLogger("torch").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     root_logger.info(
         f"Логирование настроено: level={level}, "
