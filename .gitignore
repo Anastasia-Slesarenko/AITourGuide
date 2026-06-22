@@ -8,6 +8,8 @@ venv/
 data/
 artifacts/
 images/
+!src/api/static/images/
+!src/api/static/images/**
 logs/
 *.xlsx
 .DS_Store

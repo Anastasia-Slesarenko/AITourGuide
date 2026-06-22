@@ -30,7 +30,7 @@ class JSONFormatter(logging.Formatter):
         if hasattr(record, "correlation_id"):
             log_data["correlation_id"] = record.correlation_id
 
-        return json.dumps(log_data)
+        return json.dumps(log_data, ensure_ascii=False)
 
 
 class ColoredFormatter(logging.Formatter):

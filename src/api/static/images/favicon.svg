@@ -1,0 +1,43 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <circle cx="16" cy="16" r="15" fill="#1E9FD8"/>
+  
+  <!-- Robot Head -->
+  <line x1="16" y1="6" x2="16" y2="9" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="16" cy="6" r="1.5" fill="white"/>
+  
+  <!-- Robot Face -->
+  <rect x="10" y="10" width="12" height="8" rx="4" fill="white"/>
+  <rect x="11" y="11.5" width="10" height="5.5" rx="2.75" fill="#0F2942"/>
+  
+  <!-- Robot Eyes -->
+  <circle cx="13.5" cy="14" r="1.5" fill="#1E9FD8"/>
+  <circle cx="18.5" cy="14" r="1.5" fill="#1E9FD8"/>
+  
+  <!-- Robot Smile -->
+  <path d="M 14 16 Q 16 17 18 16" stroke="#1E9FD8" stroke-width="1" stroke-linecap="round" fill="none"/>
+  
+  <!-- Robot Ears -->
+  <rect x="8.5" y="12.5" width="1.5" height="3" rx="0.75" fill="white"/>
+  <rect x="22" y="12.5" width="1.5" height="3" rx="0.75" fill="white"/>
+  
+  <!-- Landmarks Silhouette -->
+  <g transform="translate(6, 19)">
+    <!-- Colosseum -->
+    <path d="M 1 6 L 1 2.5 Q 1 1.5 2 1.5 L 4 1.5 Q 5 1.5 5 2.5 L 5 6" fill="#0F2942"/>
+    <rect x="1.5" y="3" width="0.8" height="1.5" fill="#1E9FD8"/>
+    <rect x="2.5" y="3" width="0.8" height="1.5" fill="#1E9FD8"/>
+    <rect x="3.5" y="3" width="0.8" height="1.5" fill="#1E9FD8"/>
+    
+    <!-- Eiffel Tower -->
+    <path d="M 9 6 L 7.5 2.5 L 8 2.5 L 9 1 L 10 2.5 L 10.5 2.5 L 9 6" fill="#0F2942"/>
+    
+    <!-- Big Ben -->
+    <rect x="13" y="3.5" width="2" height="2.5" fill="#0F2942"/>
+    <path d="M 13 3.5 L 14 1.5 L 15 3.5" fill="#0F2942"/>
+    <rect x="13.5" y="4" width="1" height="0.8" fill="#1E9FD8"/>
+    
+    <!-- Mountain -->
+    <path d="M 18 6 L 16.5 3.5 L 17.5 1.5 L 18.5 3.5 L 20 6" fill="#0F2942"/>
+  </g>
+</svg>
