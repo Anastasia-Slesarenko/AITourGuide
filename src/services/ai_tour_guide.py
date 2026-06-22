@@ -409,10 +409,27 @@ class AITourGuide:
     # VLM через SGLang
     # ------------------------------------------------------------------
 
-    def _image_to_base64_data_uri(self, image: Image.Image) -> str:
-        """Конвертирует PIL Image в base64 data URI для OpenAI API."""
+    def _image_to_base64_data_uri(
+        self,
+        image: Image.Image,
+        max_size: int = 448,
+        quality: int = 85,
+    ) -> str:
+        """Конвертирует PIL Image в base64 data URI для OpenAI API.
+
+        Ресайзит до max_size px по большей стороне чтобы не превышать
+        лимит payload SGLang.
+        """
+        # Ресайз с сохранением пропорций
+        w, h = image.size
+        if max(w, h) > max_size:
+            scale = max_size / max(w, h)
+            new_w = max(1, int(w * scale))
+            new_h = max(1, int(h * scale))
+            image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
+
         with BytesIO() as buf:
-            image.save(buf, format="JPEG", quality=95)
+            image.save(buf, format="JPEG", quality=quality)
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return f"data:image/jpeg;base64,{b64}"
 
