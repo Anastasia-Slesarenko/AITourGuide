@@ -750,11 +750,11 @@ class AITourGuide:
                 logprobs_data = (
                     response.get("choices", [{}])[0].get("logprobs", {})
                 )
-                # DEBUG: логируем ответ SGLang для диагностики
-                logger.debug(
-                    f"SGLang response choice[0]: "
-                    f"content={response.get('choices',[{}])[0].get('message',{}).get('content','')!r} "
-                    f"logprobs_data={logprobs_data}"
+                # Временный INFO-лог для диагностики logprobs
+                _choice = response.get("choices", [{}])[0]
+                logger.info(
+                    f"SGLang raw: content={_choice.get('message',{}).get('content','')!r} "
+                    f"logprobs_keys={list(logprobs_data.keys()) if logprobs_data else None}"
                 )
                 if not logprobs_data or not logprobs_data.get("content"):
                     # logprobs не вернулись — используем текстовый ответ как fallback
@@ -774,6 +774,10 @@ class AITourGuide:
                     return {**cand, "p_yes": 0.0}
 
                 top_lp = logprobs_data["content"][0].get("top_logprobs", [])
+                logger.info(
+                    f"top_logprobs ({len(top_lp)} items): "
+                    f"{[(i.get('token'), round(i.get('logprob',-100),3)) for i in top_lp[:5]]}"
+                )
 
                 logit_yes = None
                 logit_no = None
