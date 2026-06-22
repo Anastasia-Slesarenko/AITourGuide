@@ -12,6 +12,7 @@ torchvision==0.17.2   # Зафиксировано: >=0.17.2 могло подт
 transformers==4.40.0
 numpy<2.0.0          # NumPy 2.x incompatible with PyTorch 2.2.2
 sentencepiece>=0.1.99 # Required by SiglipTokenizer
+protobuf>=3.20.0      # Required by SiglipTokenizer (alongside sentencepiece)
 
 # ── Vision ───────────────────────────────────────────────────
 Pillow==11.3.0
