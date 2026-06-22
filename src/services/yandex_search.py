@@ -259,7 +259,7 @@ class YandexSearchService:
 
     def _clean_landmark_name(self, name: str) -> str:
         """Очищает название достопримечательности от лишнего текста."""
-        
+
         # Удаляем префиксы File:, Image:, Category: и т.д.
         name = re.sub(
             r"^(File|Image|Category|Template):",
@@ -267,7 +267,7 @@ class YandexSearchService:
             name,
             flags=re.IGNORECASE
         )
-        
+
         # Удаляем расширения файлов
         name = re.sub(
             r"\.(jpg|jpeg|png|gif|svg|webp)$",
@@ -275,7 +275,7 @@ class YandexSearchService:
             name,
             flags=re.IGNORECASE
         )
-        
+
         # Удаляем "Wikimedia Commons", "Wikipedia", и подобное
         name = re.sub(
             r"\s*[-–—]\s*(Wikimedia Commons|Wikipedia|Wiki).*$",
@@ -283,11 +283,11 @@ class YandexSearchService:
             name,
             flags=re.IGNORECASE
         )
-        
+
         # Удаляем содержимое в скобках в конце
         name = re.sub(r"\s*\([^)]*\)\s*$", "", name)
-        
-        # Удаляем типичные хвосты
+
+        # Удаляем типичные хвосты (после тире, пайпа, скобок)
         name = re.sub(
             r"\s*(—.*?|\|\s*.*?|\s*\[(.*?)\]|\s*—.*)$",
             "",
@@ -296,6 +296,15 @@ class YandexSearchService:
 
         # Удаляем лишние пробелы и подчеркивания
         name = re.sub(r"[_\s]+", " ", name).strip()
+
+        # Убираем дублирующиеся части: "A A, B A" → "A"
+        # Берём первую часть до запятой если она повторяется
+        if "," in name:
+            parts = [p.strip() for p in name.split(",")]
+            first = parts[0]
+            # Если первая часть встречается в других частях — берём только её
+            if any(first.lower() in p.lower() for p in parts[1:]):
+                name = first
 
         return name
     
@@ -698,24 +707,46 @@ class WikipediaService:
     def _is_relevant(self, query: str, extract: str) -> bool:
         """
         Проверяет релевантность найденного описания запросу.
-        
+
         Args:
             query: Поисковый запрос
             extract: Найденное описание
-            
+
         Returns:
             True если описание релевантно запросу
         """
+        extract_lower = extract.lower()
+
+        # Проверяем что имя собственное из запроса есть в первом предложении
+        # описания. Это отсекает случаи когда Wikipedia находит статью
+        # по одному общему слову (напр. "башня" → "Вавилонская башня")
+        first_sentence = extract_lower.split(".")[0]
+        # Берём первые 1-2 значимых слова запроса (имя собственное)
+        query_words_all = query.split()
+        proper_words = [
+            w.lower() for w in query_words_all[:2]
+            if len(w) >= MIN_WORD_LENGTH_FOR_RELEVANCE
+        ]
+        if proper_words:
+            found_in_first = any(
+                w in first_sentence for w in proper_words
+            )
+            if not found_in_first:
+                logger.debug(
+                    f"Отклонено '{query}': имя '{proper_words}' "
+                    f"не найдено в первом предложении: "
+                    f"'{first_sentence[:100]}'"
+                )
+                return False
+
         # Извлекаем значимые слова из запроса
         pattern = rf'\b[a-zа-я]{{{MIN_WORD_LENGTH_FOR_RELEVANCE},}}\b'
         query_words = set(re.findall(pattern, query.lower()))
         query_words = query_words - STOPWORDS
-        
+
         if not query_words:
             return True  # Если нет значимых слов, считаем релевантным
-        
-        extract_lower = extract.lower()
-        
+
         # Специальные слова, которые должны присутствовать если есть в запросе
         special_keywords = {
             'cathedral', 'church', 'temple', 'mosque', 'synagogue',
@@ -723,11 +754,10 @@ class WikipediaService:
             'собор', 'церковь', 'храм', 'мечеть', 'синагога',
             'дворец', 'замок', 'крепость', 'башня', 'мост'
         }
-        
+
         # Проверяем специальные ключевые слова
         query_special = query_words & special_keywords
         if query_special:
-            # Если в запросе есть специальные слова, они должны быть в описании
             special_found = [w for w in query_special if w in extract_lower]
             if not special_found:
                 logger.debug(
@@ -736,26 +766,22 @@ class WikipediaService:
                     f"Описание начинается: {extract[:100]}..."
                 )
                 return False
-            else:
-                logger.debug(
-                    f"Специальные слова найдены: {special_found}"
-                )
-        
+
         # Подсчитываем долю совпадающих слов
         matching_words = sum(
             1 for word in query_words if word in extract_lower
         )
         relevance_ratio = matching_words / len(query_words)
-        
+
         is_relevant = relevance_ratio >= MIN_RELEVANCE_RATIO
-        
+
         if not is_relevant:
             logger.debug(
                 f"Отклонено: релевантность {relevance_ratio:.2f} < "
                 f"{MIN_RELEVANCE_RATIO} "
                 f"({matching_words}/{len(query_words)} слов)"
             )
-        
+
         return is_relevant
     
     def _generate_search_variants(self, query: str) -> list[str]:
