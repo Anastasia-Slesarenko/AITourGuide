@@ -19,7 +19,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements-prod.txt .
 
 # Устанавливаем Python-зависимости (только продакшен-пакеты)
+# torch/torchvision ставим отдельно с PyTorch-индексом (cu121 совместим с CUDA 12.x)
+# чтобы получить GPU-сборку, а не CPU-only колесо с PyPI
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.2.2 torchvision==0.17.2 && \
     pip install --no-cache-dir -r requirements-prod.txt
 
 # ============================================================
