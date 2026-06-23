@@ -588,13 +588,15 @@ class WikipediaService:
                     logger.error(f"Ошибка при обработке '{query}': {result}")
                     continue
 
-                description, lang_used = result
+                wiki_title, description, lang_used = result
                 if description:
-                    results[query] = description
-                    cache_key = f"{query}:{lang_used}"
+                    # Используем wiki_title как ключ если он отличается от query
+                    key = wiki_title if wiki_title else query
+                    results[key] = description
+                    cache_key = f"{key}:{lang_used}"
                     self._cache[cache_key] = description
                     logger.info(
-                        f"Описание найдено для '{query}' ({lang_used})"
+                        f"Описание найдено для '{key}' ({lang_used})"
                     )
                 else:
                     logger.warning(f"Не найдено описание для '{query}'")
@@ -609,28 +611,30 @@ class WikipediaService:
     async def _fetch_single_landmark_async(
         self,
         query: str
-    ) -> tuple[Optional[str], str]:
+    ) -> tuple[Optional[str], Optional[str], str]:
         """
         Асинхронно получает описание для одной достопримечательности.
-        Возвращает (описание, использованный_язык).
+        Возвращает (wiki_title, описание, использованный_язык).
+        wiki_title — название статьи Wikipedia (может отличаться от query).
         """
         async with self._semaphore:
             lang = self._detect_language(query)
-            # Первичный язык
+            # Первичный язык — сначала пробуем прямой поиск по query
             description = await self._try_get_summary_async(
                 query, lang
             )
             if description:
-                return description, lang
+                # Прямое совпадение — wiki_title == query
+                return query, description, lang
 
             # Запасной язык
             desc_fallback = await self._try_get_summary_async(
                 query, self.fallback_lang
             )
             if desc_fallback:
-                return desc_fallback, self.fallback_lang
+                return query, desc_fallback, self.fallback_lang
 
-            return None, self.language
+            return None, None, self.language
 
     async def _try_get_summary_async(
         self,
@@ -694,7 +698,7 @@ class WikipediaService:
                 if try_search:
                     logger.debug(f"Пробуем поиск для: '{query}'")
                     return await self._search_and_get_async(query, lang)
-                
+
                 return None
 
         except aiohttp.ClientError as e:
