@@ -557,21 +557,43 @@ class AITourGuide:
             image, num_results=self.DEFAULT_MAX_RESULTS
         )
 
+    # Шумовые подстроки для фильтрации по первому предложению описания.
+    # Отсекают статьи Wikipedia которые не являются достопримечательностями.
+    _DESC_NOISE_PREFIXES: frozenset = frozenset({
+        "туризм", "tourism", "путешестви", "travel",
+        "экономик", "economy", "отрасль", "industry",
+        "список", "list of", "категория", "category",
+        "история ", "history of",
+    })
+
     def _filter_wiki_results(
         self, wiki_result: Dict[str, str]
     ) -> Dict[str, str]:
         """
         Фильтрует результаты Wikipedia:
         - убирает шумовые названия (SEARCH_NOISE_TOKENS)
+        - убирает описания которые явно не про достопримечательность
         - даёт приоритет архитектурным объектам (ARCHITECTURAL_TERMS)
         """
-        filtered = {
-            name: desc
-            for name, desc in wiki_result.items()
-            if desc and not any(
-                x in name.lower() for x in SEARCH_NOISE_TOKENS
-            )
-        }
+        filtered = {}
+        for name, desc in wiki_result.items():
+            if not desc:
+                continue
+            # Фильтр по названию
+            if any(x in name.lower() for x in SEARCH_NOISE_TOKENS):
+                logger.debug(f"Отфильтровано по названию: '{name}'")
+                continue
+            # Фильтр по первому предложению описания
+            first_sentence = desc.split(".")[0].lower()
+            if any(
+                x in first_sentence for x in self._DESC_NOISE_PREFIXES
+            ):
+                logger.debug(
+                    f"Отфильтровано по описанию: '{name}' → "
+                    f"'{first_sentence[:80]}'"
+                )
+                continue
+            filtered[name] = desc
 
         # Приоритет архитектурным объектам
         priority = {
@@ -676,9 +698,10 @@ class AITourGuide:
             # (Qwen иногда повторяет pageTitle вместо названия)
             _vlm_noise = {
                 "экскурси", "тур ", "туры", "посетить", "visit",
-                "tour ", "tours", "tickets", "билет", "расписание",
-                "schedule", "opening", "hours", "как добраться",
-                "getting there", "отзыв", "review",
+                "tour ", "tours", "tickets", "билет", "билеты",
+                "расписание", "schedule", "opening", "hours",
+                "как добраться", "getting there", "отзыв", "review",
+                "купить", "buy ", "price", "цена", "стоимость",
             }
             answer_lower = answer.lower()
             if any(noise in answer_lower for noise in _vlm_noise):
