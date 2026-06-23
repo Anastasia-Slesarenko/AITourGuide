@@ -28,13 +28,22 @@ from enum import Enum
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from dotenv import load_dotenv
-from src.rag.landmark_retriever import LandmarkRetriever, LandmarkRetrievalResult
+from src.rag.landmark_retriever import (
+    LandmarkRetriever,
+    LandmarkRetrievalResult,
+)
 
 from .yandex_search import (
     YandexSearchService,
     WikipediaService,
+)
+from .search_filters import (
     SEARCH_NOISE_TOKENS,
     ARCHITECTURAL_TERMS,
+    DESC_NOISE_PREFIXES,
+    VLM_RESPONSE_NOISE,
+    SITE_INDICATORS,
+    TAIL_NOISE_RE,
 )
 from .translator import YandexTranslator
 
@@ -86,6 +95,17 @@ class AITourGuideConfig:
     # confidence в result["confidence"] == p_yes напрямую.
     vlm_threshold: float = 0.5
 
+    # Confidence-уровни интернет-поиска:
+    #   exact   — vlm_name точно совпал с ключом Wikipedia
+    #   partial — vlm_name частично совпал с ключом Wikipedia
+    #   fallback_wiki — выбран ключ с минимальным числом слов
+    #   fallback_retrieval — интернет-поиск полностью провалился,
+    #                        возвращаем top-1 из retrieval
+    internet_confidence_exact: float = 0.90
+    internet_confidence_partial: float = 0.80
+    internet_confidence_fallback_wiki: float = 0.70
+    internet_confidence_fallback_retrieval: float = 0.65
+
     # Интернет-поиск
     enable_internet_search: bool = True
     # Пропустить этап 1 VLM (без подсказок) — полезно для слабых моделей
@@ -132,7 +152,9 @@ class PerformanceMetrics:
 
             conf = result.get("confidence", 0.0)
             self._sum_confidence += conf
-            self.avg_confidence = self._sum_confidence / self.successful_requests
+            self.avg_confidence = (
+                self._sum_confidence / self.successful_requests
+            )
 
             timing = result.get("timing", {})
             if "retrieval" in timing:
@@ -324,7 +346,10 @@ class AITourGuide:
         self.faiss_k = config.faiss_k
         self.caption_max_length = config.caption_max_length
         # Базовая директория изображений галереи (может быть пустой строкой)
-        self.images_base_dir = Path(config.images_base_dir) if config.images_base_dir else None
+        self.images_base_dir = (
+            Path(config.images_base_dir)
+            if config.images_base_dir else None
+        )
 
         self.yc_folder_id = os.getenv("YC_FOLDER_ID")
         self.yc_api_key = os.getenv("YC_API_KEY")
@@ -560,54 +585,34 @@ class AITourGuide:
             image, num_results=self.DEFAULT_MAX_RESULTS
         )
 
-    # Шумовые подстроки для фильтрации по первому предложению описания.
-    # Отсекают статьи Wikipedia которые не являются достопримечательностями.
-    _DESC_NOISE_PREFIXES: frozenset = frozenset({
-        "туризм", "tourism", "путешестви", "travel",
-        "экономик", "economy", "отрасль", "industry",
-        "список", "list of", "категория", "category",
-        "история ", "history of",
-    })
-
-    # Мусорные слова в ответе VLM — туристические фразы вместо названия.
-    # Вынесены в константу класса чтобы не создавать при каждом вызове.
-    _VLM_RESPONSE_NOISE: frozenset = frozenset({
-        "экскурси", "тур ", "туры", "посетить", "visit",
-        "tour ", "tours", "tickets", "билет", "билеты",
-        "расписание", "schedule", "opening", "hours",
-        "как добраться", "getting there", "отзыв", "review",
-        "купить", "buy ", "price", "цена", "стоимость",
-    })
-
-    # Индикаторы сайтов/агрегаторов в суффиксах названий.
-    # Вынесены в константу класса чтобы не создавать при каждом вызове.
-    _SITE_INDICATORS: frozenset = frozenset({
-        "klook", "viator", "getyourguide", "tripadvisor",
-        "wikipedia", "wikimedia", "youtube", "instagram",
-        "australia", "russia", "turkey", "france", "italy",
-        "россия", "турция", "франция", "италия",
-    })
-
-    # Regex для удаления мусорных хвостов из названий (компилируем один раз)
-    _TAIL_NOISE_RE: re.Pattern = re.compile(
-        r'\s+(ticket|tickets|билет|билеты|tour|tours|'
-        r'тур|туры|visit|посетить|купить|buy|price|цена).*$',
-        re.IGNORECASE
-    )
-
     def _filter_wiki_results(
-        self, wiki_result: Dict[str, str]
+        self,
+        wiki_result: Dict[str, str],
+        query_hints: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
         Фильтрует результаты Wikipedia:
         - убирает шумовые названия (SEARCH_NOISE_TOKENS)
         - убирает описания которые явно не про достопримечательность
+        - если переданы query_hints — отбрасывает статьи чьё название
+          не имеет ни одного общего значимого слова с подсказками
+          (защита от нерелевантных fulltext-результатов)
         - даёт приоритет архитектурным объектам (ARCHITECTURAL_TERMS)
 
-        Возвращает пустой словарь если все результаты отфильтрованы
-        (не возвращает исходный wiki_result как fallback — это скрывало
-        мусорные результаты типа "Туризм в России").
+        Возвращает пустой словарь если все результаты отфильтрованы.
+
+        Args:
+            wiki_result: Результаты Wikipedia {название: описание}
+            query_hints: Список pageTitle/vlm_name для проверки релевантности
         """
+        # Собираем значимые слова из подсказок (длина >= 4, не стоп-слова)
+        hint_words: set = set()
+        if query_hints:
+            for hint in query_hints:
+                for w in hint.lower().split():
+                    if len(w) >= 4:
+                        hint_words.add(w.strip(".,!?;:\"'"))
+
         filtered = {}
         for name, desc in wiki_result.items():
             if not desc:
@@ -619,13 +624,28 @@ class AITourGuide:
             # Фильтр по первому предложению описания
             first_sentence = desc.split(".")[0].lower()
             if any(
-                x in first_sentence for x in self._DESC_NOISE_PREFIXES
+                x in first_sentence for x in DESC_NOISE_PREFIXES
             ):
                 logger.debug(
                     f"Отфильтровано по описанию: '{name}' → "
                     f"'{first_sentence[:80]}'"
                 )
                 continue
+            # Фильтр по релевантности к подсказкам:
+            # название статьи должно иметь хотя бы одно общее слово
+            # с pageTitle/vlm_name (защита от нерелевантных fulltext)
+            if hint_words:
+                name_words = {
+                    w.strip(".,!?;:\"'")
+                    for w in name.lower().split()
+                    if len(w) >= 4
+                }
+                if name_words and not name_words & hint_words:
+                    logger.debug(
+                        f"Отфильтровано по релевантности: '{name}' "
+                        f"(нет общих слов с подсказками)"
+                    )
+                    continue
             filtered[name] = desc
 
         # Приоритет архитектурным объектам
@@ -639,6 +659,34 @@ class AITourGuide:
         # Возвращаем filtered (может быть пустым) — не откатываемся к
         # нефильтрованному wiki_result чтобы не пропустить мусор
         return filtered
+
+    def _needs_translation(self, text: str) -> bool:
+        """
+        Определяет нужен ли перевод текста на русский.
+
+        Считает долю кириллических букв среди всех букв.
+        Если < 30% — текст считается английским и требует перевода.
+
+        Простая проверка "есть ли хоть одна кириллица" не работает:
+        Wikipedia EN может содержать транслитерацию в скобках
+        (напр. "Saint Isaac's Cathedral (Russian: Исаакиевский собор)").
+
+        Args:
+            text: Текст для проверки
+
+        Returns:
+            True если текст нужно переводить на русский
+        """
+        if not text:
+            return False
+        letters = [c for c in text if c.isalpha()]
+        if not letters:
+            return False
+        cyrillic = sum(
+            1 for c in letters if '\u0400' <= c <= '\u04ff'
+        )
+        ratio = cyrillic / len(letters)
+        return ratio < 0.3
 
     def _extract_clean_name(self, raw_name: str) -> str:
         """
@@ -663,13 +711,13 @@ class AITourGuide:
         if len(parts) > 1:
             first = parts[0].strip()
             second = parts[1].strip().lower()
-            if any(s in second for s in self._SITE_INDICATORS):
+            if any(s in second for s in SITE_INDICATORS):
                 name = first
             elif any(t in first.lower() for t in ARCHITECTURAL_TERMS):
                 name = first
 
         # 4. Убираем слова-мусор в конце (ticket, билет, tour и т.д.)
-        name = self._TAIL_NOISE_RE.sub("", name).strip()
+        name = TAIL_NOISE_RE.sub("", name).strip()
 
         # 5. Если есть архитектурный термин — берём контекст вокруг него.
         #    Берём до 2 слов до термина + сам термин (без слова после —
@@ -703,7 +751,7 @@ class AITourGuide:
             return None
         # Фильтр туристического мусора
         answer_lower = answer.lower()
-        if any(noise in answer_lower for noise in self._VLM_RESPONSE_NOISE):
+        if any(noise in answer_lower for noise in VLM_RESPONSE_NOISE):
             logger.warning(
                 f"VLM вернул туристический мусор: {answer!r}"
             )
@@ -931,19 +979,26 @@ class AITourGuide:
             if not any(wiki_result.values()):
                 return None
 
-            filtered = self._filter_wiki_results(wiki_result)
+            # Передаём все подсказки для фильтрации нерелевантных статей
+            hints = (
+                [vlm_name] + page_titles if vlm_name else page_titles
+            )
+            filtered = self._filter_wiki_results(
+                wiki_result, query_hints=hints
+            )
             if not filtered:
                 return None
 
             # Выбираем лучший ключ из filtered с дифференцированным confidence:
-            # 1. Точное совпадение с vlm_name → confidence 0.90
-            # 2. Частичное совпадение с vlm_name → confidence 0.80
-            # 3. Ключ с минимальным числом слов (fallback) → confidence 0.70
+            # 1. Точное совпадение с vlm_name → internet_confidence_exact
+            # 2. Частичное совпадение с vlm_name → internet_confidence_partial
+            # 3. Ключ с минимальным числом слов →
+            #    internet_confidence_fallback_wiki
             best_key: str
             match_confidence: float
             if vlm_name and vlm_name in filtered:
                 best_key = vlm_name
-                match_confidence = 0.90
+                match_confidence = self.config.internet_confidence_exact
             else:
                 partial_match: Optional[str] = None
                 if vlm_name:
@@ -955,13 +1010,17 @@ class AITourGuide:
                             break
                 if partial_match is not None:
                     best_key = partial_match
-                    match_confidence = 0.80
+                    match_confidence = (
+                        self.config.internet_confidence_partial
+                    )
                 else:
                     best_key = min(
                         filtered.keys(),
                         key=lambda n: len(n.split())
                     )
-                    match_confidence = 0.70
+                    match_confidence = (
+                        self.config.internet_confidence_fallback_wiki
+                    )
                     logger.debug(
                         f"Fallback к min(len): выбран '{best_key}' "
                         f"из {list(filtered.keys())}"
@@ -1005,9 +1064,11 @@ class AITourGuide:
             result["description"] = (
                 retrieved_descs[0] if retrieved_descs else ""
             )
-            # confidence ниже чем при слабом интернет-результате (0.70)
+            # confidence ниже чем при слабом интернет-результате
             # т.к. retrieval-fallback означает полный провал интернет-поиска
-            result["confidence"] = 0.65
+            result["confidence"] = (
+                self.config.internet_confidence_fallback_retrieval
+            )
 
         return result
 
@@ -1190,7 +1251,8 @@ class AITourGuide:
                 return {**cand, "p_yes": 0.0}
 
         # Параллельные запросы с ограничением параллелизма
-        # (SGLang T4 не справляется с 10 одновременными запросами с изображениями)
+        # (SGLang T4 не справляется с 10 одновременными запросами
+        #  с изображениями)
         semaphore = asyncio.Semaphore(3)
 
         async def _score_with_sem(cand: Dict) -> Dict:
@@ -1242,20 +1304,24 @@ class AITourGuide:
             result["search_query"] = search_result["query"]
             result["confidence"] = round(search_result["confidence"], 4)
 
-            # Переводим название и описание на русский язык,
-            # только если текст не содержит кириллицы (т.е. на английском)
+            # Переводим название и описание на русский язык если нужно.
+            # Используем долю кириллицы: если < 30% букв кириллические —
+            # считаем текст английским и переводим.
+            # Простая проверка "есть ли хоть одна кириллица" не работает
+            # т.к. Wikipedia EN может содержать транслитерацию в скобках
+            # (напр. "Saint Isaac's Cathedral (Russian: Исаакиевский собор)")
             name = search_result["name"]
             description = search_result["description"]
             t_translate = time.time()
             try:
-                if not re.search(r'[а-яА-ЯёЁ]', name):
+                if self._needs_translation(name):
                     translated_name = self.translator.translate(
                         name, target_language="ru", source_language="en"
                     )
                     if translated_name:
                         name = translated_name
 
-                if description and not re.search(r'[а-яА-ЯёЁ]', description):
+                if description and self._needs_translation(description):
                     translated_desc = self.translator.translate(
                         description, target_language="ru", source_language="en"
                     )
