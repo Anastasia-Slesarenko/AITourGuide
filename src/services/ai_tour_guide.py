@@ -1119,6 +1119,7 @@ class AITourGuide:
             "name": "",
             "description": "",
             "confidence": 0.0,
+            "unknown": False,
             "source": PredictionSource.RETRIEVAL.value,
             "retrieved_names": [],
             "retrieved_scores": [],
@@ -1482,6 +1483,18 @@ class AITourGuide:
                     retrieved_descs=retrieved_captions,
                     result=result,
                     timing=timing,
+                )
+
+            # 6. Определяем флаг unknown:
+            # достопримечательность не распознана если confidence
+            # всё ещё ниже порога после всех этапов
+            if result["confidence"] < self.vlm_threshold:
+                result["unknown"] = True
+                logger.info(
+                    f"[{correlation_id}] Достопримечательность "
+                    f"не распознана (confidence="
+                    f"{result['confidence']:.4f} < "
+                    f"{self.vlm_threshold})"
                 )
 
             result["timing"] = timing

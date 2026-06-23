@@ -111,7 +111,23 @@
                 {% if result and not error %}
                 <div class="result-section">
                     <div id="resultImageContainer" class="result-image-wrapper"></div>
-                    
+
+                    {% if result.unknown %}
+                    <div class="alert alert-warning">
+                        <div class="alert-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                        </div>
+                        <div class="alert-content">
+                            <h3>Достопримечательность не распознана</h3>
+                            <p>Не удалось определить объект на фотографии. Попробуйте сделать более чёткий снимок или убедитесь, что на фото изображена известная достопримечательность.</p>
+                        </div>
+                        <button class="alert-btn" onclick="location.href='/'">Попробовать снова</button>
+                    </div>
+                    {% else %}
                     <div class="result-card glass-card">
                         <div class="result-header">
                             <div class="result-title-group">
@@ -188,6 +204,7 @@
                             Распознать другое изображение
                         </button>
                     </div>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>

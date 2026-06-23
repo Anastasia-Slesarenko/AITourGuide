@@ -482,6 +482,23 @@ body {
     border-color: var(--error);
 }
 
+.alert-warning {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: var(--warning);
+}
+
+.alert-warning .alert-icon {
+    color: var(--warning);
+}
+
+.alert-warning .alert-content h3 {
+    color: var(--warning);
+}
+
+.alert-warning .alert-btn {
+    background: var(--warning);
+}
+
 .alert-icon {
     flex-shrink: 0;
     width: 24px;
