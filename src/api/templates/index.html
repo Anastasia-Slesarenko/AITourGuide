@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/styles.css?v=5">
+    <link rel="stylesheet" href="/static/css/styles.css?v=6">
 </head>
 <body>
     <div class="animated-background">
@@ -204,6 +204,44 @@
                             Распознать другое изображение
                         </button>
                     </div>
+
+                    {% if result.retrieved_images %}
+                    <div class="candidates-section glass-card">
+                        <div class="candidates-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                            <h3>Похожие из базы данных</h3>
+                        </div>
+                        <div class="candidates-grid">
+                            {% for i in range(result.retrieved_images | length) %}
+                            <div class="candidate-card glass-card">
+                                <div class="candidate-img-wrapper">
+                                    <img
+                                        src="/gallery-image/{{ result.retrieved_images[i] }}"
+                                        alt="{{ result.retrieved_names[i] if result.retrieved_names and result.retrieved_names[i] else 'Кандидат' }}"
+                                        loading="lazy"
+                                        onerror="this.parentElement.style.display='none'"
+                                    >
+                                </div>
+                                <div class="candidate-info">
+                                    <span class="candidate-name">
+                                        {{ result.retrieved_names[i] if result.retrieved_names and result.retrieved_names[i] else '—' }}
+                                    </span>
+                                    {% if result.retrieved_scores and result.retrieved_scores[i] is defined %}
+                                    <span class="candidate-score">
+                                        {{ (result.retrieved_scores[i] * 100) | round(1) }}%
+                                    </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
                     {% endif %}
                 </div>
                 {% endif %}

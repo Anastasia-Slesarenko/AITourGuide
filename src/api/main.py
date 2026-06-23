@@ -12,7 +12,13 @@ from src.core.config import settings
 from src.services.ai_tour_guide import AITourGuide
 from src.api.dependencies import set_guide
 from src.api.middleware import RateLimiter
-from src.api.routes import predict_router, health_router, info_router, frontend_router
+from src.api.routes import (
+    predict_router,
+    health_router,
+    info_router,
+    frontend_router,
+    gallery_router,
+)
 from src.core.logging import setup_logging
 
 setup_logging(
@@ -109,6 +115,7 @@ app.include_router(frontend_router)
 app.include_router(info_router)
 app.include_router(predict_router)
 app.include_router(health_router)
+app.include_router(gallery_router)
 
 # Статические файлы (монтируем после роутеров)
 app.mount(
