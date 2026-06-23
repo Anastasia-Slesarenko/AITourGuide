@@ -23,7 +23,7 @@ import httpx
 from io import BytesIO
 from pathlib import Path
 from PIL import Image
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Union, Any, Tuple, cast
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -280,7 +280,7 @@ class SGLangClient:
                     json=payload,
                 )
                 response.raise_for_status()
-                return response.json()
+                return cast(Dict, response.json())
 
             except httpx.HTTPStatusError as e:
                 last_exception = e
@@ -589,6 +589,7 @@ class AITourGuide:
         self,
         wiki_result: Dict[str, str],
         query_hints: Optional[List[str]] = None,
+        vlm_name: Optional[str] = None,
     ) -> Dict[str, str]:
         """
         Фильтрует результаты Wikipedia:
@@ -597,13 +598,16 @@ class AITourGuide:
         - если переданы query_hints — отбрасывает статьи чьё название
           не имеет ни одного общего значимого слова с подсказками
           (защита от нерелевантных fulltext-результатов)
+        - статья с именем vlm_name всегда проходит hint_words фильтр
+          (VLM уже подтвердил релевантность)
         - даёт приоритет архитектурным объектам (ARCHITECTURAL_TERMS)
 
         Возвращает пустой словарь если все результаты отфильтрованы.
 
         Args:
             wiki_result: Результаты Wikipedia {название: описание}
-            query_hints: Список pageTitle/vlm_name для проверки релевантности
+            query_hints: Список pageTitle для проверки релевантности
+            vlm_name: Название от VLM — пропускает hint_words фильтр
         """
         # Собираем значимые слова из подсказок (длина >= 4, не стоп-слова)
         hint_words: set = set()
@@ -612,6 +616,9 @@ class AITourGuide:
                 for w in hint.lower().split():
                     if len(w) >= 4:
                         hint_words.add(w.strip(".,!?;:\"'"))
+
+        # Нормализованное vlm_name для сравнения
+        vlm_name_lower = vlm_name.lower().strip() if vlm_name else None
 
         filtered = {}
         for name, desc in wiki_result.items():
@@ -633,8 +640,14 @@ class AITourGuide:
                 continue
             # Фильтр по релевантности к подсказкам:
             # название статьи должно иметь хотя бы одно общее слово
-            # с pageTitle/vlm_name (защита от нерелевантных fulltext)
-            if hint_words:
+            # с pageTitle (защита от нерелевантных fulltext-результатов).
+            # Исключение: статья с именем от VLM всегда проходит —
+            # VLM уже подтвердил её релевантность визуально.
+            is_vlm_match = (
+                vlm_name_lower is not None
+                and name.lower().strip() == vlm_name_lower
+            )
+            if hint_words and not is_vlm_match:
                 name_words = {
                     w.strip(".,!?;:\"'")
                     for w in name.lower().split()
@@ -979,12 +992,12 @@ class AITourGuide:
             if not any(wiki_result.values()):
                 return None
 
-            # Передаём все подсказки для фильтрации нерелевантных статей
-            hints = (
-                [vlm_name] + page_titles if vlm_name else page_titles
-            )
+            # Передаём pageTitle как подсказки для фильтрации нерелевантных
+            # статей. vlm_name передаём отдельно — он пропускает hint-фильтр.
             filtered = self._filter_wiki_results(
-                wiki_result, query_hints=hints
+                wiki_result,
+                query_hints=page_titles,
+                vlm_name=vlm_name,
             )
             if not filtered:
                 return None
