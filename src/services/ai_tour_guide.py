@@ -620,13 +620,23 @@ class AITourGuide:
                                 filtered.keys(),
                                 key=lambda n: len(n.split())
                             )
-                            best_desc = filtered[best_key]
                             # Обрезаем мусорные хвосты после - :: | —
                             import re as _re
                             clean = _re.split(
                                 r'\s*[-–—::|]\s*', best_key
                             )[0].strip()
                             best_name = clean if len(clean) >= 3 else best_key
+
+                            # Получаем описание напрямую из Wikipedia
+                            # по очищенному названию (не по Yandex pageTitle)
+                            best_desc = filtered[best_key]
+                            async with WikipediaService(language="ru") as w:
+                                direct = await w.get_landmark_info_async(
+                                    {best_name}
+                                )
+                                if direct.get(best_name):
+                                    best_desc = direct[best_name]
+
                             result["found"] = True
                             result["name"] = best_name
                             result["description"] = best_desc
