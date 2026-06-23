@@ -566,6 +566,32 @@ class AITourGuide:
         "история ", "history of",
     })
 
+    # Мусорные слова в ответе VLM — туристические фразы вместо названия.
+    # Вынесены в константу класса чтобы не создавать при каждом вызове.
+    _VLM_RESPONSE_NOISE: frozenset = frozenset({
+        "экскурси", "тур ", "туры", "посетить", "visit",
+        "tour ", "tours", "tickets", "билет", "билеты",
+        "расписание", "schedule", "opening", "hours",
+        "как добраться", "getting there", "отзыв", "review",
+        "купить", "buy ", "price", "цена", "стоимость",
+    })
+
+    # Индикаторы сайтов/агрегаторов в суффиксах названий.
+    # Вынесены в константу класса чтобы не создавать при каждом вызове.
+    _SITE_INDICATORS: frozenset = frozenset({
+        "klook", "viator", "getyourguide", "tripadvisor",
+        "wikipedia", "wikimedia", "youtube", "instagram",
+        "australia", "russia", "turkey", "france", "italy",
+        "россия", "турция", "франция", "италия",
+    })
+
+    # Regex для удаления мусорных хвостов из названий (компилируем один раз)
+    _TAIL_NOISE_RE: re.Pattern = re.compile(
+        r'\s+(ticket|tickets|билет|билеты|tour|tours|'
+        r'тур|туры|visit|посетить|купить|buy|price|цена).*$',
+        re.IGNORECASE
+    )
+
     def _filter_wiki_results(
         self, wiki_result: Dict[str, str]
     ) -> Dict[str, str]:
@@ -574,6 +600,10 @@ class AITourGuide:
         - убирает шумовые названия (SEARCH_NOISE_TOKENS)
         - убирает описания которые явно не про достопримечательность
         - даёт приоритет архитектурным объектам (ARCHITECTURAL_TERMS)
+
+        Возвращает пустой словарь если все результаты отфильтрованы
+        (не возвращает исходный wiki_result как fallback — это скрывало
+        мусорные результаты типа "Туризм в России").
         """
         filtered = {}
         for name, desc in wiki_result.items():
@@ -603,7 +633,9 @@ class AITourGuide:
         }
         if priority:
             return priority
-        return filtered if filtered else wiki_result
+        # Возвращаем filtered (может быть пустым) — не откатываемся к
+        # нефильтрованному wiki_result чтобы не пропустить мусор
+        return filtered
 
     def _extract_clean_name(self, raw_name: str) -> str:
         """
@@ -622,45 +654,29 @@ class AITourGuide:
         name = re.split(r'\s*\|\s*', name)[0].strip()
 
         # 3. Убираем суффиксы после - (агрегаторы, сайты, страны)
-        #    Но только если после тире идёт заглавная буква или цифра
-        #    (чтобы не обрезать "Notre-Dame")
+        #    Но только если вторая часть — сайт/страна или первая содержит
+        #    архитектурный термин (чтобы не обрезать "Notre-Dame")
         parts = re.split(r'\s+[-–—]\s+', name)
         if len(parts) > 1:
-            # Берём первую часть если она содержит архитектурный термин
-            # или если вторая часть похожа на название сайта/страны
             first = parts[0].strip()
             second = parts[1].strip().lower()
-            site_indicators = {
-                "klook", "viator", "getyourguide", "tripadvisor",
-                "wikipedia", "wikimedia", "youtube", "instagram",
-                "australia", "russia", "turkey", "france", "italy",
-                "россия", "турция", "франция", "италия",
-            }
-            if any(s in second for s in site_indicators):
+            if any(s in second for s in self._SITE_INDICATORS):
                 name = first
-            elif any(
-                t in first.lower() for t in ARCHITECTURAL_TERMS
-            ):
+            elif any(t in first.lower() for t in ARCHITECTURAL_TERMS):
                 name = first
 
         # 4. Убираем слова-мусор в конце (ticket, билет, tour и т.д.)
-        _tail_noise = re.compile(
-            r'\s+(ticket|tickets|билет|билеты|tour|tours|'
-            r'тур|туры|visit|посетить|купить|buy|price|цена).*$',
-            re.IGNORECASE
-        )
-        name = _tail_noise.sub("", name).strip()
+        name = self._TAIL_NOISE_RE.sub("", name).strip()
 
         # 5. Если есть архитектурный термин — берём контекст вокруг него.
-        #    Для русского: "Исаакиевский собор" — термин после имени.
-        #    Для английского: "Notre-Dame Cathedral" — термин после имени.
-        #    Берём до 2 слов до термина + сам термин + до 1 слова после.
+        #    Берём до 2 слов до термина + сам термин (без слова после —
+        #    чтобы не захватить лишнее: "Hagia Sophia Grand Mosque" → "Sophia
+        #    Grand Mosque" вместо "Hagia Sophia").
         words = name.split()
         for i, w in enumerate(words):
             if w.lower() in ARCHITECTURAL_TERMS:
                 start = max(0, i - 2)
-                end = min(len(words), i + 2)
-                arch_name = " ".join(words[start:end]).strip()
+                arch_name = " ".join(words[start:i + 1]).strip()
                 return arch_name if len(arch_name) >= 3 else name
 
         return name
@@ -671,12 +687,14 @@ class AITourGuide:
         page_titles: List[str],
     ) -> Optional[str]:
         """
-        Использует Qwen (через SGLang) для извлечения точного названия
-        достопримечательности из изображения и списка pageTitle от Yandex.
+        Двухэтапное извлечение названия достопримечательности через Qwen.
 
-        pageTitle может содержать мусор ("Лучшие места Парижа", "File:..."),
-        поэтому просим модель сгенерировать чистое название, пригодное
-        для поиска в Wikipedia, а не выбирать из списка.
+        Этап 1: спрашиваем Qwen без pageTitle — модель использует
+        собственные визуальные знания без риска быть сбитой мусорными
+        заголовками страниц.
+
+        Этап 2: если Qwen не смог определить — даём pageTitle как
+        подсказки (они могут содержать мусор, но иногда помогают).
 
         Args:
             image: PIL-изображение запроса
@@ -685,87 +703,112 @@ class AITourGuide:
         Returns:
             Чистое название достопримечательности или None если не удалось.
         """
-        if not page_titles:
-            return None
+        image_uri = self._image_to_base64_data_uri(image)
 
-        titles_str = "\n".join(
-            f"- {t}" for t in page_titles[:10]  # не более 10 подсказок
-        )
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Photo:"},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": self._image_to_base64_data_uri(image)
+        def _make_messages(hint: Optional[str]) -> List[Dict]:
+            """Формирует промпт с подсказкой или без."""
+            if hint:
+                extra = (
+                    f"Hint — reverse image search page titles "
+                    f"(may contain noise):\n{hint}\n\n"
+                )
+            else:
+                extra = ""
+            return [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Photo:"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_uri},
                         },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Reverse image search returned these page titles "
-                            "(may contain noise):\n"
-                            f"{titles_str}\n\n"
-                            "What is the exact name of the landmark shown "
-                            "in the photo? Reply with a short, precise name "
-                            "suitable for a Wikipedia search "
-                            "(e.g. 'Notre-Dame de Paris'). "
-                            "If you cannot identify the landmark, "
-                            "reply with 'unknown'."
-                        ),
-                    },
-                ],
-            }
-        ]
-        try:
-            response = await self.sglang_client.chat_completion(
-                messages=messages,
-                max_tokens=48,
-                temperature=0.0,
-            )
-            answer = str(
-                response["choices"][0]["message"]["content"]
-            ).strip()
-            logger.debug(f"VLM landmark name extraction: {answer!r}")
+                        {
+                            "type": "text",
+                            "text": (
+                                f"{extra}"
+                                "What is the exact name of the landmark "
+                                "shown in the photo? Reply with a short, "
+                                "precise name suitable for a Wikipedia "
+                                "search (e.g. 'Notre-Dame de Paris'). "
+                                "If you cannot identify the landmark, "
+                                "reply with 'unknown'."
+                            ),
+                        },
+                    ],
+                }
+            ]
 
-            if not answer or answer.lower() in ("unknown", "none", ""):
-                logger.info(
-                    "VLM не смог определить название достопримечательности"
-                )
-                return None
-
-            # Убираем кавычки если модель их добавила
+        def _validate_answer(answer: str) -> Optional[str]:
+            """Проверяет и очищает ответ VLM. Возвращает None если мусор."""
             answer = answer.strip("\"'«»").strip()
-
-            # Проверяем что ответ не является туристическим мусором
-            # (Qwen иногда повторяет pageTitle вместо названия)
-            _vlm_noise = {
-                "экскурси", "тур ", "туры", "посетить", "visit",
-                "tour ", "tours", "tickets", "билет", "билеты",
-                "расписание", "schedule", "opening", "hours",
-                "как добраться", "getting there", "отзыв", "review",
-                "купить", "buy ", "price", "цена", "стоимость",
-            }
+            if not answer or answer.lower() in ("unknown", "none", ""):
+                return None
+            # Фильтр туристического мусора (используем константу класса)
             answer_lower = answer.lower()
-            if any(noise in answer_lower for noise in _vlm_noise):
+            if any(
+                noise in answer_lower
+                for noise in self._VLM_RESPONSE_NOISE
+            ):
                 logger.warning(
-                    f"VLM вернул туристический мусор: {answer!r}, "
-                    f"пропускаем"
+                    f"VLM вернул туристический мусор: {answer!r}"
                 )
                 return None
-
             # Слишком длинный ответ — скорее всего не название
             if len(answer.split()) > 8:
                 logger.warning(
-                    f"VLM вернул слишком длинный ответ ({len(answer.split())} "
-                    f"слов): {answer!r}, пропускаем"
+                    f"VLM вернул слишком длинный ответ "
+                    f"({len(answer.split())} слов): {answer!r}"
+                )
+                return None
+            return answer
+
+        try:
+            # Этап 1: без pageTitle — Qwen использует собственные знания
+            response = await self.sglang_client.chat_completion(
+                messages=_make_messages(hint=None),
+                max_tokens=48,
+                temperature=0.0,
+            )
+            raw = str(
+                response["choices"][0]["message"]["content"]
+            ).strip()
+            logger.debug(f"VLM этап 1 (без подсказок): {raw!r}")
+            result = _validate_answer(raw)
+            if result:
+                logger.info(f"VLM извлёк название (этап 1): {result!r}")
+                return result
+
+            # Этап 2: с pageTitle как подсказками
+            if not page_titles:
+                logger.info(
+                    "VLM не смог определить название (нет pageTitle)"
                 )
                 return None
 
-            logger.info(f"VLM извлёк название: {answer!r}")
-            return answer
+            titles_str = "\n".join(
+                f"- {t}" for t in page_titles[:10]
+            )
+            response2 = await self.sglang_client.chat_completion(
+                messages=_make_messages(hint=titles_str),
+                max_tokens=48,
+                temperature=0.0,
+            )
+            raw2 = str(
+                response2["choices"][0]["message"]["content"]
+            ).strip()
+            logger.debug(f"VLM этап 2 (с подсказками): {raw2!r}")
+            result2 = _validate_answer(raw2)
+            if result2:
+                logger.info(
+                    f"VLM извлёк название (этап 2): {result2!r}"
+                )
+                return result2
+
+            logger.info(
+                "VLM не смог определить название достопримечательности"
+            )
+            return None
 
         except Exception as e:
             logger.warning(f"Ошибка VLM извлечения названия: {e}")
@@ -774,7 +817,6 @@ class AITourGuide:
     async def _search_internet(
         self,
         image: Union[Image.Image, str, bytes],
-        retrieved_scores: List[float],
         retrieved_descs: List[str],
         retrieved_names: List[str],
         fallback_name: str,
@@ -785,9 +827,9 @@ class AITourGuide:
 
         Пайплайн:
           1. Yandex Image Search → список pageTitle
-          2. Qwen извлекает чистое название из изображения + pageTitle
-          3. Wikipedia ищет по чистому названию от Qwen
-          4. Если Qwen не смог — Wikipedia ищет по всем pageTitle (fallback)
+          2. Qwen (этап 1 без подсказок, этап 2 с pageTitle) → чистое название
+          3. Wikipedia ищет по названию от Qwen + pageTitle как запасные
+          4. Выбор best_key с дифференцированным confidence
 
         Возвращает словарь с полями: found, name, description, confidence.
         """
@@ -842,34 +884,17 @@ class AITourGuide:
                     pil_image, page_titles
                 )
 
-            # 3. Wikipedia-поиск
-            # Если Qwen дал название — ищем сначала только по нему.
-            # pageTitle используем как fallback если Qwen-запрос пустой.
-            if vlm_name:
-                async with WikipediaService(language="ru") as wiki:
-                    wiki_result = await wiki.get_landmark_info_async(
-                        {vlm_name}
-                    )
-                # Если по названию от Qwen ничего не нашли —
-                # добавляем pageTitle как fallback
-                if not any(wiki_result.values()):
-                    logger.debug(
-                        f"Wikipedia не нашла '{vlm_name}', "
-                        f"добавляем pageTitle как fallback"
-                    )
-                    async with WikipediaService(language="ru") as wiki:
-                        extra = await wiki.get_landmark_info_async(
-                            set(page_titles)
-                        )
-                    # Фильтруем None-ключи перед merge (mypy)
-                    wiki_result.update(
-                        {k: v for k, v in extra.items() if k is not None}
-                    )
-            else:
-                async with WikipediaService(language="ru") as wiki:
-                    wiki_result = await wiki.get_landmark_info_async(
-                        set(page_titles)
-                    )
+            # 3. Wikipedia-поиск — один вызов для всех кандидатов.
+            # Если Qwen дал название — добавляем его первым (приоритет
+            # при выборе best_key ниже), pageTitle идут как запасные.
+            search_names: set = (
+                {vlm_name} | set(page_titles)
+                if vlm_name else set(page_titles)
+            )
+            async with WikipediaService(language="ru") as wiki:
+                wiki_result = await wiki.get_landmark_info_async(
+                    search_names
+                )
 
             if not any(wiki_result.values()):
                 return None
@@ -878,39 +903,52 @@ class AITourGuide:
             if not filtered:
                 return None
 
-            # Приоритет: название от Qwen если есть в filtered
+            # Выбираем лучший ключ из filtered с дифференцированным confidence:
+            # 1. Точное совпадение с vlm_name → confidence 0.90
+            # 2. Частичное совпадение с vlm_name → confidence 0.80
+            # 3. Ключ с минимальным числом слов (fallback) → confidence 0.70
+            best_key: str
+            match_confidence: float
             if vlm_name and vlm_name in filtered:
                 best_key = vlm_name
-                best_name = vlm_name
+                match_confidence = 0.90
             else:
-                # Ищем частичное совпадение с vlm_name
-                best_key = None
+                partial_match: Optional[str] = None
                 if vlm_name:
                     for key in filtered:
                         vl = vlm_name.lower()
                         kl = key.lower()
                         if vl in kl or kl in vl:
-                            best_key = key
+                            partial_match = key
                             break
-                # Если не нашли — берём по минимальной длине
-                if best_key is None:
+                if partial_match is not None:
+                    best_key = partial_match
+                    match_confidence = 0.80
+                else:
                     best_key = min(
                         filtered.keys(),
                         key=lambda n: len(n.split())
                     )
+                    match_confidence = 0.70
                     logger.debug(
                         f"Fallback к min(len): выбран '{best_key}' "
                         f"из {list(filtered.keys())}"
                     )
-                # best_key гарантированно str после min() выше
-                assert isinstance(best_key, str)
-                best_name = self._extract_clean_name(best_key)
+
+            # Всегда прогоняем через _extract_clean_name —
+            # даже vlm_name может содержать мусорные суффиксы
+            best_name = self._extract_clean_name(best_key)
+            logger.info(
+                f"Интернет-поиск: best_key='{best_key}' → "
+                f"best_name='{best_name}' (confidence={match_confidence})"
+            )
 
             # query возвращаем в словаре — не мутируем result внутри замыкания
             return {
                 "name": best_name,
                 "description": filtered[best_key],
                 "query": page_titles,
+                "confidence": match_confidence,
             }
 
         try:
@@ -920,7 +958,7 @@ class AITourGuide:
                 result["name"] = found["name"]
                 result["description"] = found["description"]
                 result["query"] = found["query"]
-                result["confidence"] = 0.85
+                result["confidence"] = found["confidence"]
                 return result
         except asyncio.TimeoutError:
             logger.warning(f"Таймаут интернет-поиска ({timeout}с)")
@@ -1146,7 +1184,6 @@ class AITourGuide:
         self,
         image: Image.Image,
         image_path: Union[Path, str],
-        retrieved_scores: List[float],
         retrieved_names: List[str],
         retrieved_descs: List[str],
         result: Dict,
@@ -1160,7 +1197,6 @@ class AITourGuide:
         t0 = time.time()
         search_result = await self._search_internet(
             image=search_input,
-            retrieved_scores=retrieved_scores,
             retrieved_descs=retrieved_descs,
             retrieved_names=retrieved_names,
             fallback_name=result["name"],
@@ -1305,7 +1341,6 @@ class AITourGuide:
                 await self._enhance_with_internet_search(
                     image=image,
                     image_path=image_path,
-                    retrieved_scores=retrieved_scores,
                     retrieved_names=retrieved_names,
                     retrieved_descs=retrieved_captions,
                     result=result,
