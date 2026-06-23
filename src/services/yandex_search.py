@@ -46,17 +46,30 @@ STOPWORDS = STOPWORDS_EN | STOPWORDS_RU
 
 # Шумовые слова/фразы — результаты с такими подстроками в названии отбрасываются
 SEARCH_NOISE_TOKENS: frozenset = frozenset({
-    ".jpg", "panoramio", "georama",
-    "honeymoon", "travel", "lgbtq",
-    "religious beliefs", "religion in",
-    "youtube", "слайд-шоу", "гимн",
+    # Файлы и медиа
+    ".jpg", ".jpeg", ".png",
+    # Агрегаторы и сервисы
+    "panoramio", "georama", "greekreporter",
+    "youtube", "cnn ",
+    # Туристический мусор
+    "honeymoon", "travel", "tourist",
+    "туризм в", "экскурси", "экскурсии",
+    "opening time", "when i can visit",
+    "amazing ancient cities",
+    "города и страны",
+    # Политика, религия, абстракции
+    "lgbtq", "religious beliefs", "religion in",
     "генеральный план", "администрации",
-    "туризм в", "города и страны",
+    # Медиа-контент
+    "слайд-шоу", "гимн",
     "background for slides", "фон для слайдов",
     "time period", "период времени",
-    "cnn ", "greekreporter", "opening time",
-    "when i can visit", "tourist",
-    "amazing ancient cities",
+    # Книги, романы, фильмы, игры
+    "роман", "novel", "фантастический",
+    "science fiction", "фильм", "сериал",
+    "video game", "игра", "альбом", "album",
+    "песня", "song", "симфония", "symphony",
+    "опера", "opera no", "концерт", "concerto",
 })
 
 # Архитектурные термины — результаты с такими словами получают приоритет

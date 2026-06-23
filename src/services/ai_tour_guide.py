@@ -670,7 +670,32 @@ class AITourGuide:
                 return None
 
             # Убираем кавычки если модель их добавила
-            answer = answer.strip("\"'«»")
+            answer = answer.strip("\"'«»").strip()
+
+            # Проверяем что ответ не является туристическим мусором
+            # (Qwen иногда повторяет pageTitle вместо названия)
+            _vlm_noise = {
+                "экскурси", "тур ", "туры", "посетить", "visit",
+                "tour ", "tours", "tickets", "билет", "расписание",
+                "schedule", "opening", "hours", "как добраться",
+                "getting there", "отзыв", "review",
+            }
+            answer_lower = answer.lower()
+            if any(noise in answer_lower for noise in _vlm_noise):
+                logger.warning(
+                    f"VLM вернул туристический мусор: {answer!r}, "
+                    f"пропускаем"
+                )
+                return None
+
+            # Слишком длинный ответ — скорее всего не название
+            if len(answer.split()) > 8:
+                logger.warning(
+                    f"VLM вернул слишком длинный ответ ({len(answer.split())} "
+                    f"слов): {answer!r}, пропускаем"
+                )
+                return None
+
             logger.info(f"VLM извлёк название: {answer!r}")
             return answer
 
