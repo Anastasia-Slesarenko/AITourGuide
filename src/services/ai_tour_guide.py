@@ -1121,6 +1121,8 @@ class AITourGuide:
             "confidence": 0.0,
             "unknown": False,
             "source": PredictionSource.RETRIEVAL.value,
+            "winner_images": [],  # все изображения победителя из базы
+            "winner_landmark_id": "",  # landmark_id победителя
             "retrieved_names": [],
             "retrieved_scores": [],
             "retrieved_images": [],
@@ -1434,6 +1436,19 @@ class AITourGuide:
                 result["retrieved_names"] = retrieved_names
                 result["retrieved_images"] = retrieved_images
                 result["retrieved_captions"] = retrieved_captions
+
+                # Все изображения top-1 кандидата для слайдера
+                if retrieved:
+                    winner = retrieved[0]
+                    result["winner_landmark_id"] = winner.landmark_id
+                    result["winner_images"] = [
+                        img.image_path
+                        for _, img in sorted(
+                            winner.gallery_images,
+                            key=lambda x: x[0],
+                            reverse=True,
+                        )
+                    ]
 
                 logger.info(
                     f"[{correlation_id}] Найдено {len(retrieved)} кандидатов, "

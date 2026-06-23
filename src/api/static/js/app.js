@@ -407,3 +407,64 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+// ── Слайдер галереи ────────────────────────────────────────────────────
+(function initGallerySlider() {
+    const slider = document.getElementById('gallerySlider');
+    if (!slider) return;
+
+    const track = document.getElementById('galleryTrack');
+    const prevBtn = document.getElementById('sliderPrev');
+    const nextBtn = document.getElementById('sliderNext');
+    const dotsContainer = document.getElementById('sliderDots');
+
+    // Собираем только видимые слайды
+    const slides = Array.from(track.querySelectorAll('.gallery-slide'))
+        .filter(s => s.style.display !== 'none');
+
+    if (slides.length <= 1) {
+        // Один слайд — кнопки и точки не нужны
+        if (prevBtn) prevBtn.style.display = 'none';
+        if (nextBtn) nextBtn.style.display = 'none';
+        return;
+    }
+
+    let current = 0;
+
+    // Создаём точки
+    slides.forEach((_, i) => {
+        const dot = document.createElement('button');
+        dot.className = 'slider-dot' + (i === 0 ? ' active' : '');
+        dot.setAttribute('aria-label', `Слайд ${i + 1}`);
+        dot.addEventListener('click', () => goTo(i));
+        dotsContainer.appendChild(dot);
+    });
+
+    function goTo(index) {
+        current = (index + slides.length) % slides.length;
+        track.style.transform = `translateX(-${current * 100}%)`;
+        dotsContainer.querySelectorAll('.slider-dot').forEach((d, i) => {
+            d.classList.toggle('active', i === current);
+        });
+    }
+
+    prevBtn.addEventListener('click', () => goTo(current - 1));
+    nextBtn.addEventListener('click', () => goTo(current + 1));
+
+    // Свайп на тач-устройствах
+    let touchStartX = 0;
+    slider.addEventListener('touchstart', e => {
+        touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    slider.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(dx) > 40) goTo(dx < 0 ? current + 1 : current - 1);
+    }, { passive: true });
+
+    // Клавиши ← →
+    document.addEventListener('keydown', e => {
+        if (!slider) return;
+        if (e.key === 'ArrowLeft') goTo(current - 1);
+        if (e.key === 'ArrowRight') goTo(current + 1);
+    });
+}());

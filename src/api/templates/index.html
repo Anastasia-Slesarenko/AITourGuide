@@ -110,7 +110,34 @@
 
                 {% if result and not error %}
                 <div class="result-section">
-                    <div id="resultImageContainer" class="result-image-wrapper"></div>
+
+                    {# Слайдер: фото пользователя + изображения победителя из базы #}
+                    <div class="gallery-slider" id="gallerySlider">
+                        <div class="gallery-track" id="galleryTrack">
+                            {# Слайд 0: фото пользователя #}
+                            <div class="gallery-slide" id="userPhotoSlide">
+                                <div id="resultImageContainer" class="result-image-wrapper"></div>
+                                <span class="slide-label">Ваше фото</span>
+                            </div>
+                            {# Слайды 1…N: изображения победителя из базы #}
+                            {% if result.winner_images %}
+                            {% for img_path in result.winner_images %}
+                            <div class="gallery-slide">
+                                <img
+                                    src="/gallery-image/{{ img_path }}"
+                                    alt="{{ result.name }}"
+                                    loading="lazy"
+                                    onerror="this.closest('.gallery-slide').style.display='none'"
+                                >
+                                <span class="slide-label">Из базы данных</span>
+                            </div>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                        <button class="slider-btn slider-prev" id="sliderPrev" aria-label="Назад">&#8249;</button>
+                        <button class="slider-btn slider-next" id="sliderNext" aria-label="Вперёд">&#8250;</button>
+                        <div class="slider-dots" id="sliderDots"></div>
+                    </div>
 
                     {% if result.unknown %}
                     <div class="alert alert-warning">
@@ -205,7 +232,8 @@
                         </button>
                     </div>
 
-                    {% if result.retrieved_images %}
+                    {# Секция «Похожие» — все кандидаты кроме победителя (index 0) #}
+                    {% if result.retrieved_images and result.retrieved_images | length > 1 %}
                     <div class="candidates-section glass-card">
                         <div class="candidates-header">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -213,17 +241,17 @@
                                 <circle cx="8.5" cy="8.5" r="1.5"></circle>
                                 <polyline points="21 15 16 10 5 21"></polyline>
                             </svg>
-                            <h3>Похожие из базы данных</h3>
+                            <h3>Другие кандидаты из базы</h3>
                         </div>
                         <div class="candidates-grid">
-                            {% for i in range(result.retrieved_images | length) %}
+                            {% for i in range(1, result.retrieved_images | length) %}
                             <div class="candidate-card glass-card">
                                 <div class="candidate-img-wrapper">
                                     <img
                                         src="/gallery-image/{{ result.retrieved_images[i] }}"
                                         alt="{{ result.retrieved_names[i] if result.retrieved_names and result.retrieved_names[i] else 'Кандидат' }}"
                                         loading="lazy"
-                                        onerror="this.parentElement.style.display='none'"
+                                        onerror="this.closest('.candidate-card').style.display='none'"
                                     >
                                 </div>
                                 <div class="candidate-info">
@@ -257,6 +285,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>
