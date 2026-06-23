@@ -578,6 +578,11 @@ class AITourGuide:
                             "youtube", "слайд-шоу", "гимн",
                             "генеральный план", "администрации",
                             "туризм в", "города и страны",
+                            "background for slides", "фон для слайдов",
+                            "time period", "период времени",
+                            "cnn ", "greekReporter", "opening time",
+                            "when i can visit", "tourist",
+                            "amazing ancient cities",
                         }
                         _arch = {
                             # Английские
@@ -586,6 +591,9 @@ class AITourGuide:
                             "castle", "fortress", "tower",
                             "monument", "memorial", "museum",
                             "bridge", "gate", "basilica",
+                            "colosseum", "amphitheater", "amphitheatre",
+                            "arena", "forum", "pantheon",
+                            "acropolis", "parthenon", "pyramid",
                             # Русские
                             "собор", "церковь", "храм", "мечеть",
                             "синагога", "дворец", "замок",
@@ -593,6 +601,8 @@ class AITourGuide:
                             "памятник", "мемориал", "музей",
                             "монастырь", "часовня", "ворота",
                             "площадь", "кремль", "цитадель",
+                            "колизей", "амфитеатр", "форум",
+                            "пантеон", "акрополь", "пирамида",
                         }
 
                         filtered = {
