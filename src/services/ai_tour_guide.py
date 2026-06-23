@@ -615,24 +615,21 @@ class AITourGuide:
                             filtered = wiki_result
 
                         if filtered:
-                            # Выбираем название с наименьшим количеством слов
-                            best_name = min(
+                            # Выбираем ключ с наименьшим числом слов
+                            best_key = min(
                                 filtered.keys(),
                                 key=lambda n: len(n.split())
                             )
+                            best_desc = filtered[best_key]
                             # Обрезаем мусорные хвосты после - :: | —
                             import re as _re
                             clean = _re.split(
-                                r'\s*[-–—::|]\s*', best_name
+                                r'\s*[-–—::|]\s*', best_key
                             )[0].strip()
-                            if len(clean) >= 3:
-                                best_name = clean
+                            best_name = clean if len(clean) >= 3 else best_key
                             result["found"] = True
                             result["name"] = best_name
-                            result["description"] = filtered[
-                                min(filtered.keys(),
-                                    key=lambda n: len(n.split()))
-                            ]
+                            result["description"] = best_desc
                             result["confidence"] = 0.8
                             return result
 
