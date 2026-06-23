@@ -51,9 +51,11 @@ SEARCH_NOISE_TOKENS: frozenset = frozenset({
     # Агрегаторы и сервисы
     "panoramio", "georama", "greekreporter",
     "youtube", "cnn ",
+    "klook", "viator", "getyourguide", "tripadvisor",
     # Туристический мусор
     "honeymoon", "travel", "tourist",
     "туризм в", "экскурси", "экскурсии",
+    "ticket", "билет", "билеты",
     "opening time", "when i can visit",
     "amazing ancient cities",
     "города и страны",
@@ -70,6 +72,9 @@ SEARCH_NOISE_TOKENS: frozenset = frozenset({
     "video game", "игра", "альбом", "album",
     "песня", "song", "симфония", "symphony",
     "опера", "opera no", "концерт", "concerto",
+    # Личные блоги и соцсети
+    ":: ", " - youtube", "yandex maps",
+    "yandex.maps", "instagram", "facebook",
 })
 
 # Архитектурные термины — результаты с такими словами получают приоритет

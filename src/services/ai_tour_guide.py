@@ -607,18 +607,63 @@ class AITourGuide:
 
     def _extract_clean_name(self, raw_name: str) -> str:
         """
-        Очищает название от мусорных хвостов (тире, пайп, двоеточие)
-        и сокращает до архитектурного термина если он есть.
+        Очищает название от мусорных хвостов и сокращает до сути.
+
+        Обрабатывает случаи когда WikipediaService возвращает исходный
+        pageTitle как ключ (например "Hagia Sophia Ticket - Klook Australia"),
+        а не реальное название Wikipedia-статьи.
         """
-        # Обрезаем хвосты после разделителей
-        clean = re.split(r'\s*[-–—::|]\s*', raw_name)[0].strip()
-        words = clean.split()
+        name = raw_name
+
+        # 1. Убираем суффиксы после :: (личные блоги, авторы)
+        name = re.split(r'\s*::\s*', name)[0].strip()
+
+        # 2. Убираем суффиксы после | (сайты, агрегаторы)
+        name = re.split(r'\s*\|\s*', name)[0].strip()
+
+        # 3. Убираем суффиксы после - (агрегаторы, сайты, страны)
+        #    Но только если после тире идёт заглавная буква или цифра
+        #    (чтобы не обрезать "Notre-Dame")
+        parts = re.split(r'\s+[-–—]\s+', name)
+        if len(parts) > 1:
+            # Берём первую часть если она содержит архитектурный термин
+            # или если вторая часть похожа на название сайта/страны
+            first = parts[0].strip()
+            second = parts[1].strip().lower()
+            site_indicators = {
+                "klook", "viator", "getyourguide", "tripadvisor",
+                "wikipedia", "wikimedia", "youtube", "instagram",
+                "australia", "russia", "turkey", "france", "italy",
+                "россия", "турция", "франция", "италия",
+            }
+            if any(s in second for s in site_indicators):
+                name = first
+            elif any(
+                t in first.lower() for t in ARCHITECTURAL_TERMS
+            ):
+                name = first
+
+        # 4. Убираем слова-мусор в конце (ticket, билет, tour и т.д.)
+        _tail_noise = re.compile(
+            r'\s+(ticket|tickets|билет|билеты|tour|tours|'
+            r'тур|туры|visit|посетить|купить|buy|price|цена).*$',
+            re.IGNORECASE
+        )
+        name = _tail_noise.sub("", name).strip()
+
+        # 5. Если есть архитектурный термин — берём контекст вокруг него.
+        #    Для русского: "Исаакиевский собор" — термин после имени.
+        #    Для английского: "Notre-Dame Cathedral" — термин после имени.
+        #    Берём до 2 слов до термина + сам термин + до 1 слова после.
+        words = name.split()
         for i, w in enumerate(words):
             if w.lower() in ARCHITECTURAL_TERMS:
-                # берём до 2 слов перед термином + сам термин
-                arch_name = " ".join(words[max(0, i - 2):i + 1]).strip()
-                return arch_name if len(arch_name) >= 3 else clean
-        return clean
+                start = max(0, i - 2)
+                end = min(len(words), i + 2)
+                arch_name = " ".join(words[start:end]).strip()
+                return arch_name if len(arch_name) >= 3 else name
+
+        return name
 
     async def _vlm_extract_landmark_name(
         self,
@@ -816,7 +861,10 @@ class AITourGuide:
                         extra = await wiki.get_landmark_info_async(
                             set(page_titles)
                         )
-                    wiki_result.update(extra)
+                    # Фильтруем None-ключи перед merge (mypy)
+                    wiki_result.update(
+                        {k: v for k, v in extra.items() if k is not None}
+                    )
             else:
                 async with WikipediaService(language="ru") as wiki:
                     wiki_result = await wiki.get_landmark_info_async(
