@@ -1,6 +1,6 @@
 import base64
 import logging
-from typing import Dict, Set, Optional, Union
+from typing import Any, Dict, Set, Optional, Union
 import hashlib
 import re
 import os
@@ -38,6 +38,48 @@ STOPWORDS_RU = {
     'было', 'есть', 'были', 'будет', 'может', 'должен'
 }
 STOPWORDS = STOPWORDS_EN | STOPWORDS_RU
+
+# ---------------------------------------------------------------------------
+# Общие константы для фильтрации результатов интернет-поиска.
+# Используются как в YandexSearchService, так и в AITourGuide._search_internet.
+# ---------------------------------------------------------------------------
+
+# Шумовые слова/фразы — результаты с такими подстроками в названии отбрасываются
+SEARCH_NOISE_TOKENS: frozenset = frozenset({
+    ".jpg", "panoramio", "georama",
+    "honeymoon", "travel", "lgbtq",
+    "religious beliefs", "religion in",
+    "youtube", "слайд-шоу", "гимн",
+    "генеральный план", "администрации",
+    "туризм в", "города и страны",
+    "background for slides", "фон для слайдов",
+    "time period", "период времени",
+    "cnn ", "greekreporter", "opening time",
+    "when i can visit", "tourist",
+    "amazing ancient cities",
+})
+
+# Архитектурные термины — результаты с такими словами получают приоритет
+ARCHITECTURAL_TERMS: frozenset = frozenset({
+    # Английские
+    "cathedral", "church", "temple",
+    "mosque", "synagogue", "palace",
+    "castle", "fortress", "tower",
+    "monument", "memorial", "museum",
+    "bridge", "gate", "basilica",
+    "colosseum", "amphitheater", "amphitheatre",
+    "arena", "forum", "pantheon",
+    "acropolis", "parthenon", "pyramid",
+    # Русские
+    "собор", "церковь", "храм", "мечеть",
+    "синагога", "дворец", "замок",
+    "крепость", "башня", "мост",
+    "памятник", "мемориал", "музей",
+    "монастырь", "часовня", "ворота",
+    "площадь", "кремль", "цитадель",
+    "колизей", "амфитеатр", "форум",
+    "пантеон", "акрополь", "пирамида",
+})
 
 
 class YandexSearchService:
@@ -103,7 +145,7 @@ class YandexSearchService:
 
     def search_by_image(
         self,
-        image: Union[str, bytes],
+        image: Union[str, bytes, Any],
         num_results: int = DEFAULT_MAX_RESULTS
     ) -> Optional[Set[str]]:
         """
@@ -111,7 +153,7 @@ class YandexSearchService:
         страниц с похожими изображениями.
 
         Args:
-            image: Путь к изображению или изображение в байтах.
+            image: Путь к изображению, байты или PIL Image.
             num_results: Ограничение на кол-во результатов
 
         Returns:

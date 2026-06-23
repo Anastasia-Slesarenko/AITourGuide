@@ -30,7 +30,12 @@ from datetime import datetime
 from dotenv import load_dotenv
 from src.rag.landmark_retriever import LandmarkRetriever, LandmarkRetrievalResult
 
-from .yandex_search import YandexSearchService, WikipediaService
+from .yandex_search import (
+    YandexSearchService,
+    WikipediaService,
+    SEARCH_NOISE_TOKENS,
+    ARCHITECTURAL_TERMS,
+)
 from .translator import YandexTranslator
 
 logger = logging.getLogger(__name__)
@@ -326,6 +331,15 @@ class AITourGuide:
             yc_api_key=self.yc_api_key,
         )
 
+        # Переиспользуемый экземпляр YandexSearchService
+        # (создаётся один раз, сессия requests.Session живёт всё время)
+        self._yandex_service: Optional[YandexSearchService] = None
+        if self.yc_folder_id and self.yc_api_key:
+            self._yandex_service = YandexSearchService(
+                yc_folder_id=self.yc_folder_id,
+                yc_api_key=self.yc_api_key,
+            )
+
         self.metrics = PerformanceMetrics()
         self._is_ready = False
 
@@ -530,6 +544,140 @@ class AITourGuide:
     # Интернет-поиск
     # ------------------------------------------------------------------
 
+    def _yandex_search_sync(
+        self, image: Union[str, bytes, Image.Image]
+    ) -> Optional[set]:
+        """
+        Синхронный wrapper для Yandex Image Search.
+        Использует переиспользуемый экземпляр _yandex_service.
+        """
+        if self._yandex_service is None:
+            return None
+        return self._yandex_service.search_by_image(
+            image, num_results=self.DEFAULT_MAX_RESULTS
+        )
+
+    def _filter_wiki_results(
+        self, wiki_result: Dict[str, str]
+    ) -> Dict[str, str]:
+        """
+        Фильтрует результаты Wikipedia:
+        - убирает шумовые названия (SEARCH_NOISE_TOKENS)
+        - даёт приоритет архитектурным объектам (ARCHITECTURAL_TERMS)
+        """
+        filtered = {
+            name: desc
+            for name, desc in wiki_result.items()
+            if desc and not any(
+                x in name.lower() for x in SEARCH_NOISE_TOKENS
+            )
+        }
+
+        # Приоритет архитектурным объектам
+        priority = {
+            name: desc
+            for name, desc in filtered.items()
+            if any(x in name.lower() for x in ARCHITECTURAL_TERMS)
+        }
+        if priority:
+            return priority
+        return filtered if filtered else wiki_result
+
+    def _extract_clean_name(self, raw_name: str) -> str:
+        """
+        Очищает название от мусорных хвостов (тире, пайп, двоеточие)
+        и сокращает до архитектурного термина если он есть.
+        """
+        # Обрезаем хвосты после разделителей
+        clean = re.split(r'\s*[-–—::|]\s*', raw_name)[0].strip()
+        words = clean.split()
+        for i, w in enumerate(words):
+            if w.lower() in ARCHITECTURAL_TERMS:
+                # берём до 2 слов перед термином + сам термин
+                arch_name = " ".join(words[max(0, i - 2):i + 1]).strip()
+                return arch_name if len(arch_name) >= 3 else clean
+        return clean
+
+    async def _vlm_extract_landmark_name(
+        self,
+        image: Image.Image,
+        page_titles: List[str],
+    ) -> Optional[str]:
+        """
+        Использует Qwen (через SGLang) для извлечения точного названия
+        достопримечательности из изображения и списка pageTitle от Yandex.
+
+        pageTitle может содержать мусор ("Лучшие места Парижа", "File:..."),
+        поэтому просим модель сгенерировать чистое название, пригодное
+        для поиска в Wikipedia, а не выбирать из списка.
+
+        Args:
+            image: PIL-изображение запроса
+            page_titles: Список pageTitle от Yandex (после базовой очистки)
+
+        Returns:
+            Чистое название достопримечательности или None если не удалось.
+        """
+        if not page_titles:
+            return None
+
+        titles_str = "\n".join(
+            f"- {t}" for t in page_titles[:10]  # не более 10 подсказок
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Photo:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": self._image_to_base64_data_uri(image)
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Reverse image search returned these page titles "
+                            "(may contain noise):\n"
+                            f"{titles_str}\n\n"
+                            "What is the exact name of the landmark shown "
+                            "in the photo? Reply with a short, precise name "
+                            "suitable for a Wikipedia search "
+                            "(e.g. 'Notre-Dame de Paris'). "
+                            "If you cannot identify the landmark, "
+                            "reply with 'unknown'."
+                        ),
+                    },
+                ],
+            }
+        ]
+        try:
+            response = await self.sglang_client.chat_completion(
+                messages=messages,
+                max_tokens=48,
+                temperature=0.0,
+            )
+            answer = str(
+                response["choices"][0]["message"]["content"]
+            ).strip()
+            logger.debug(f"VLM landmark name extraction: {answer!r}")
+
+            if not answer or answer.lower() in ("unknown", "none", ""):
+                logger.info(
+                    "VLM не смог определить название достопримечательности"
+                )
+                return None
+
+            # Убираем кавычки если модель их добавила
+            answer = answer.strip("\"'«»")
+            logger.info(f"VLM извлёк название: {answer!r}")
+            return answer
+
+        except Exception as e:
+            logger.warning(f"Ошибка VLM извлечения названия: {e}")
+            return None
+
     async def _search_internet(
         self,
         image: Union[Image.Image, str, bytes],
@@ -542,6 +690,12 @@ class AITourGuide:
         """
         Ищет информацию о достопримечательности через Yandex + Wikipedia.
 
+        Пайплайн:
+          1. Yandex Image Search → список pageTitle
+          2. Qwen извлекает чистое название из изображения + pageTitle
+          3. Wikipedia ищет по чистому названию от Qwen
+          4. Если Qwen не смог — Wikipedia ищет по всем pageTitle (fallback)
+
         Возвращает словарь с полями: found, name, description, confidence.
         """
         result = {
@@ -552,107 +706,126 @@ class AITourGuide:
             "confidence": 0.5,
         }
 
-        if not self.yc_folder_id or not self.yc_api_key:
+        if self._yandex_service is None:
             logger.warning("Yandex API ключи не настроены, поиск пропущен")
             return result
 
-        try:
-            async with asyncio.timeout(timeout):
-                # Yandex Image Search (синхронный вызов в отдельном потоке)
-                landmark_names = await asyncio.to_thread(
-                    self._yandex_search_sync, image
+        # Нормализуем image в PIL для VLM
+        pil_image: Optional[Image.Image] = None
+        if isinstance(image, Image.Image):
+            pil_image = image
+        elif isinstance(image, bytes):
+            try:
+                pil_image = Image.open(BytesIO(image)).convert("RGB")
+            except Exception:
+                pass
+        elif isinstance(image, str):
+            try:
+                pil_image = Image.open(image).convert("RGB")
+            except Exception:
+                pass
+
+        async def _do_search() -> Optional[Dict]:
+            """Внутренняя корутина — весь поиск под одним таймаутом."""
+            # 1. Yandex Image Search (синхронный вызов в потоке)
+            names = await asyncio.to_thread(
+                self._yandex_search_sync, image
+            )
+            if not names:
+                logger.info("Yandex не вернул результатов")
+                return None
+
+            page_titles = list(names)
+
+            # 2. Qwen извлекает чистое название из фото + pageTitle
+            if pil_image is None:
+                logger.warning(
+                    "pil_image недоступен, VLM-шаг пропущен — "
+                    "поиск по pageTitle без уточнения от Qwen"
+                )
+            vlm_name: Optional[str] = None
+            if pil_image is not None:
+                vlm_name = await self._vlm_extract_landmark_name(
+                    pil_image, page_titles
                 )
 
-                if landmark_names:
-                    result["query"] = list(landmark_names)
+            # 3. Wikipedia-поиск
+            # Если Qwen дал название — ищем сначала только по нему.
+            # pageTitle используем как fallback если Qwen-запрос пустой.
+            if vlm_name:
+                async with WikipediaService(language="ru") as wiki:
+                    wiki_result = await wiki.get_landmark_info_async(
+                        {vlm_name}
+                    )
+                # Если по названию от Qwen ничего не нашли —
+                # добавляем pageTitle как fallback
+                if not any(wiki_result.values()):
+                    logger.debug(
+                        f"Wikipedia не нашла '{vlm_name}', "
+                        f"добавляем pageTitle как fallback"
+                    )
                     async with WikipediaService(language="ru") as wiki:
-                        wiki_result = await wiki.get_landmark_info_async(
-                            landmark_names
+                        extra = await wiki.get_landmark_info_async(
+                            set(page_titles)
                         )
+                    wiki_result.update(extra)
+            else:
+                async with WikipediaService(language="ru") as wiki:
+                    wiki_result = await wiki.get_landmark_info_async(
+                        set(page_titles)
+                    )
 
-                    if any(wiki_result.values()):
-                        _noise = {
-                            ".jpg", "panoramio", "georama",
-                            "honeymoon", "travel", "lgbtq",
-                            "religious beliefs", "religion in",
-                            "youtube", "слайд-шоу", "гимн",
-                            "генеральный план", "администрации",
-                            "туризм в", "города и страны",
-                            "background for slides", "фон для слайдов",
-                            "time period", "период времени",
-                            "cnn ", "greekReporter", "opening time",
-                            "when i can visit", "tourist",
-                            "amazing ancient cities",
-                        }
-                        _arch = {
-                            # Английские
-                            "cathedral", "church", "temple",
-                            "mosque", "synagogue", "palace",
-                            "castle", "fortress", "tower",
-                            "monument", "memorial", "museum",
-                            "bridge", "gate", "basilica",
-                            "colosseum", "amphitheater", "amphitheatre",
-                            "arena", "forum", "pantheon",
-                            "acropolis", "parthenon", "pyramid",
-                            # Русские
-                            "собор", "церковь", "храм", "мечеть",
-                            "синагога", "дворец", "замок",
-                            "крепость", "башня", "мост",
-                            "памятник", "мемориал", "музей",
-                            "монастырь", "часовня", "ворота",
-                            "площадь", "кремль", "цитадель",
-                            "колизей", "амфитеатр", "форум",
-                            "пантеон", "акрополь", "пирамида",
-                        }
+            if not any(wiki_result.values()):
+                return None
 
-                        filtered = {
-                            name: desc
-                            for name, desc in wiki_result.items()
-                            if desc and not any(
-                                x in name.lower() for x in _noise
-                            )
-                        }
+            filtered = self._filter_wiki_results(wiki_result)
+            if not filtered:
+                return None
 
-                        # Приоритет архитектурным объектам
-                        priority = {
-                            name: desc
-                            for name, desc in filtered.items()
-                            if any(x in name.lower() for x in _arch)
-                        }
-                        if priority:
-                            filtered = priority
-                        elif not filtered:
-                            filtered = wiki_result
+            # Приоритет: название от Qwen если есть в filtered
+            if vlm_name and vlm_name in filtered:
+                best_key = vlm_name
+                best_name = vlm_name
+            else:
+                # Ищем частичное совпадение с vlm_name
+                best_key = None
+                if vlm_name:
+                    for key in filtered:
+                        vl = vlm_name.lower()
+                        kl = key.lower()
+                        if vl in kl or kl in vl:
+                            best_key = key
+                            break
+                # Если не нашли — берём по минимальной длине
+                if best_key is None:
+                    best_key = min(
+                        filtered.keys(),
+                        key=lambda n: len(n.split())
+                    )
+                    logger.debug(
+                        f"Fallback к min(len): выбран '{best_key}' "
+                        f"из {list(filtered.keys())}"
+                    )
+                # best_key гарантированно str после min() выше
+                assert isinstance(best_key, str)
+                best_name = self._extract_clean_name(best_key)
 
-                        if filtered:
-                            # Выбираем ключ с наименьшим числом слов
-                            best_key = min(
-                                filtered.keys(),
-                                key=lambda n: len(n.split())
-                            )
-                            # Обрезаем мусорные хвосты после - :: | —
-                            import re as _re
-                            clean = _re.split(
-                                r'\s*[-–—::|]\s*', best_key
-                            )[0].strip()
-                            best_name = clean if len(clean) >= 3 else best_key
+            # query возвращаем в словаре — не мутируем result внутри замыкания
+            return {
+                "name": best_name,
+                "description": filtered[best_key],
+                "query": page_titles,
+            }
 
-                            # Получаем описание напрямую из Wikipedia
-                            # по очищенному названию (не по Yandex pageTitle)
-                            best_desc = filtered[best_key]
-                            async with WikipediaService(language="ru") as w:
-                                direct = await w.get_landmark_info_async(
-                                    {best_name}
-                                )
-                                if direct.get(best_name):
-                                    best_desc = direct[best_name]
-
-                            result["found"] = True
-                            result["name"] = best_name
-                            result["description"] = best_desc
-                            result["confidence"] = 0.8
-                            return result
-
+        try:
+            found = await asyncio.wait_for(_do_search(), timeout=timeout)
+            if found:
+                result["found"] = True
+                result["name"] = found["name"]
+                result["description"] = found["description"]
+                result["query"] = found["query"]
+                result["confidence"] = 0.85
+                return result
         except asyncio.TimeoutError:
             logger.warning(f"Таймаут интернет-поиска ({timeout}с)")
         except Exception as e:
@@ -669,21 +842,6 @@ class AITourGuide:
             result["confidence"] = 0.75
 
         return result
-
-    def _yandex_search_sync(
-        self, image_path: Union[str, bytes]
-    ) -> Optional[set]:
-        """Синхронный wrapper для Yandex Image Search."""
-        if not self.yc_folder_id or not self.yc_api_key:
-            return None
-
-        with YandexSearchService(
-            yc_folder_id=self.yc_folder_id,
-            yc_api_key=self.yc_api_key,
-        ) as yandex:
-            return yandex.search_by_image(
-                image_path, num_results=self.DEFAULT_MAX_RESULTS
-            )
 
     # ------------------------------------------------------------------
     # Основной пайплайн предсказания
@@ -1118,10 +1276,13 @@ class AITourGuide:
         await self._cleanup_resources()
 
     async def _cleanup_resources(self):
-        """Закрывает HTTP-клиент и удаляет retriever."""
+        """Закрывает HTTP-клиент, YandexSearchService и удаляет retriever."""
         logger.info("Освобождение ресурсов...")
         if hasattr(self, "sglang_client"):
             await self.sglang_client.close()
+        if hasattr(self, "_yandex_service") and self._yandex_service:
+            self._yandex_service.close()
+            self._yandex_service = None
         if hasattr(self, "retriever"):
             del self.retriever
 
