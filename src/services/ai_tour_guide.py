@@ -88,6 +88,9 @@ class AITourGuideConfig:
 
     # Интернет-поиск
     enable_internet_search: bool = True
+    # Пропустить этап 1 VLM (без подсказок) — полезно для слабых моделей
+    # которые почти всегда возвращают "unknown" без контекста
+    skip_internet_search_stage1: bool = False
 
     # Устройство (не используется с SGLang, для совместимости)
     device: str = "cuda"
@@ -679,7 +682,85 @@ class AITourGuide:
                 arch_name = " ".join(words[start:i + 1]).strip()
                 return arch_name if len(arch_name) >= 3 else name
 
+        # 6. Если нет архитектурного термина но строка длинная (> 6 слов) —
+        #    берём первые 4 слова. Длинные ключи Wikipedia типа
+        #    "Istanbul meta turistica... Hagia sophia, Istanbul, Byzantine"
+        #    не должны возвращаться целиком.
+        if len(words) > 6:
+            name = " ".join(words[:4]).strip()
+
         return name
+
+    def _validate_vlm_answer(self, answer: str) -> Optional[str]:
+        """
+        Проверяет и очищает ответ VLM на запрос названия достопримечательности.
+
+        Returns:
+            Очищенное название или None если ответ является мусором.
+        """
+        answer = answer.strip("\"'«»").strip()
+        if not answer or answer.lower() in ("unknown", "none", ""):
+            return None
+        # Фильтр туристического мусора
+        answer_lower = answer.lower()
+        if any(noise in answer_lower for noise in self._VLM_RESPONSE_NOISE):
+            logger.warning(
+                f"VLM вернул туристический мусор: {answer!r}"
+            )
+            return None
+        # Слишком длинный ответ — скорее всего не название
+        if len(answer.split()) > 8:
+            logger.warning(
+                f"VLM вернул слишком длинный ответ "
+                f"({len(answer.split())} слов): {answer!r}"
+            )
+            return None
+        return answer
+
+    def _build_vlm_messages(
+        self,
+        image_uri: str,
+        hint: Optional[str] = None,
+    ) -> List[Dict]:
+        """
+        Формирует промпт для извлечения названия достопримечательности.
+
+        Args:
+            image_uri: base64 data URI изображения
+            hint: Подсказки из pageTitle (None = без подсказок)
+
+        Returns:
+            Список сообщений в формате OpenAI API
+        """
+        extra = (
+            f"Hint — reverse image search page titles "
+            f"(may contain noise):\n{hint}\n\n"
+            if hint else ""
+        )
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Photo:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_uri},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"{extra}"
+                            "What is the exact name of the landmark "
+                            "shown in the photo? Reply with a short, "
+                            "precise name suitable for a Wikipedia "
+                            "search (e.g. 'Notre-Dame de Paris'). "
+                            "If you cannot identify the landmark, "
+                            "reply with 'unknown'."
+                        ),
+                    },
+                ],
+            }
+        ]
 
     async def _vlm_extract_landmark_name(
         self,
@@ -691,93 +772,41 @@ class AITourGuide:
 
         Этап 1: спрашиваем Qwen без pageTitle — модель использует
         собственные визуальные знания без риска быть сбитой мусорными
-        заголовками страниц.
+        заголовками страниц. Пропускается если
+        skip_internet_search_stage1=True.
 
         Этап 2: если Qwen не смог определить — даём pageTitle как
         подсказки (они могут содержать мусор, но иногда помогают).
 
         Args:
             image: PIL-изображение запроса
-            page_titles: Список pageTitle от Yandex (после базовой очистки)
+            page_titles: Список pageTitle от Yandex (после базовой очистки),
+                отсортированный по длине (короткие = более точные)
 
         Returns:
             Чистое название достопримечательности или None если не удалось.
         """
         image_uri = self._image_to_base64_data_uri(image)
 
-        def _make_messages(hint: Optional[str]) -> List[Dict]:
-            """Формирует промпт с подсказкой или без."""
-            if hint:
-                extra = (
-                    f"Hint — reverse image search page titles "
-                    f"(may contain noise):\n{hint}\n\n"
-                )
-            else:
-                extra = ""
-            return [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Photo:"},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_uri},
-                        },
-                        {
-                            "type": "text",
-                            "text": (
-                                f"{extra}"
-                                "What is the exact name of the landmark "
-                                "shown in the photo? Reply with a short, "
-                                "precise name suitable for a Wikipedia "
-                                "search (e.g. 'Notre-Dame de Paris'). "
-                                "If you cannot identify the landmark, "
-                                "reply with 'unknown'."
-                            ),
-                        },
-                    ],
-                }
-            ]
-
-        def _validate_answer(answer: str) -> Optional[str]:
-            """Проверяет и очищает ответ VLM. Возвращает None если мусор."""
-            answer = answer.strip("\"'«»").strip()
-            if not answer or answer.lower() in ("unknown", "none", ""):
-                return None
-            # Фильтр туристического мусора (используем константу класса)
-            answer_lower = answer.lower()
-            if any(
-                noise in answer_lower
-                for noise in self._VLM_RESPONSE_NOISE
-            ):
-                logger.warning(
-                    f"VLM вернул туристический мусор: {answer!r}"
-                )
-                return None
-            # Слишком длинный ответ — скорее всего не название
-            if len(answer.split()) > 8:
-                logger.warning(
-                    f"VLM вернул слишком длинный ответ "
-                    f"({len(answer.split())} слов): {answer!r}"
-                )
-                return None
-            return answer
-
         try:
             # Этап 1: без pageTitle — Qwen использует собственные знания
-            response = await self.sglang_client.chat_completion(
-                messages=_make_messages(hint=None),
-                max_tokens=48,
-                temperature=0.0,
-            )
-            raw = str(
-                response["choices"][0]["message"]["content"]
-            ).strip()
-            logger.debug(f"VLM этап 1 (без подсказок): {raw!r}")
-            result = _validate_answer(raw)
-            if result:
-                logger.info(f"VLM извлёк название (этап 1): {result!r}")
-                return result
+            # (пропускаем если skip_internet_search_stage1=True)
+            if not self.config.skip_internet_search_stage1:
+                response = await self.sglang_client.chat_completion(
+                    messages=self._build_vlm_messages(image_uri, hint=None),
+                    max_tokens=48,
+                    temperature=0.0,
+                )
+                raw = str(
+                    response["choices"][0]["message"]["content"]
+                ).strip()
+                logger.debug(f"VLM этап 1 (без подсказок): {raw!r}")
+                result = self._validate_vlm_answer(raw)
+                if result:
+                    logger.info(
+                        f"VLM извлёк название (этап 1): {result!r}"
+                    )
+                    return result
 
             # Этап 2: с pageTitle как подсказками
             if not page_titles:
@@ -790,7 +819,9 @@ class AITourGuide:
                 f"- {t}" for t in page_titles[:10]
             )
             response2 = await self.sglang_client.chat_completion(
-                messages=_make_messages(hint=titles_str),
+                messages=self._build_vlm_messages(
+                    image_uri, hint=titles_str
+                ),
                 max_tokens=48,
                 temperature=0.0,
             )
@@ -798,7 +829,7 @@ class AITourGuide:
                 response2["choices"][0]["message"]["content"]
             ).strip()
             logger.debug(f"VLM этап 2 (с подсказками): {raw2!r}")
-            result2 = _validate_answer(raw2)
+            result2 = self._validate_vlm_answer(raw2)
             if result2:
                 logger.info(
                     f"VLM извлёк название (этап 2): {result2!r}"
@@ -870,7 +901,8 @@ class AITourGuide:
                 logger.info("Yandex не вернул результатов")
                 return None
 
-            page_titles = list(names)
+            # Сортируем по длине: короткие названия обычно точнее
+            page_titles = sorted(names, key=len)
 
             # 2. Qwen извлекает чистое название из фото + pageTitle
             if pil_image is None:
@@ -973,7 +1005,9 @@ class AITourGuide:
             result["description"] = (
                 retrieved_descs[0] if retrieved_descs else ""
             )
-            result["confidence"] = 0.75
+            # confidence ниже чем при слабом интернет-результате (0.70)
+            # т.к. retrieval-fallback означает полный провал интернет-поиска
+            result["confidence"] = 0.65
 
         return result
 
