@@ -661,12 +661,36 @@ class AITourGuide:
                     continue
             filtered[name] = desc
 
-        # Приоритет архитектурным объектам
-        priority = {
-            name: desc
-            for name, desc in filtered.items()
-            if any(x in name.lower() for x in ARCHITECTURAL_TERMS)
-        }
+        # Если vlm_name точно есть в filtered — возвращаем только его.
+        # Это предотвращает выбор общих статей ('National monument')
+        # вместо конкретного названия от VLM ('Statue of Liberty').
+        if vlm_name_lower:
+            vlm_exact = {
+                name: desc
+                for name, desc in filtered.items()
+                if name.lower().strip() == vlm_name_lower
+            }
+            if vlm_exact:
+                return vlm_exact
+
+        # Приоритет архитектурным объектам у которых есть собственное имя
+        # (название длиннее одного архитектурного термина).
+        # Исключаем чисто родовые названия типа 'National monument',
+        # 'Memorial', 'Museum' — они не несут конкретики.
+        priority = {}
+        for name, desc in filtered.items():
+            name_lower = name.lower()
+            for term in ARCHITECTURAL_TERMS:
+                if term in name_lower:
+                    # Проверяем что есть слова помимо самого термина
+                    other_words = name_lower.replace(term, "").split()
+                    other_words = [
+                        w.strip(".,!?;:\"'") for w in other_words
+                        if len(w.strip(".,!?;:\"'")) > 2
+                    ]
+                    if other_words:
+                        priority[name] = desc
+                    break
         if priority:
             return priority
         # Возвращаем filtered (может быть пустым) — не откатываемся к
