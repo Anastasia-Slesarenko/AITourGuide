@@ -4,8 +4,10 @@ version: "3.9"
 # AI Tour Guide — production stack
 #
 # Сервисы:
-#   sglang   — VLM-сервер (Qwen2-VL-2B через SGLang, порт 30000)
-#   api      — FastAPI-приложение (SigLIP+FAISS retrieval, порт 8000)
+#   sglang     — VLM-сервер (Qwen2-VL-2B через SGLang, порт 30000)
+#   api        — FastAPI-приложение (SigLIP+FAISS retrieval, порт 8000)
+#   prometheus — сбор метрик (порт 9090)
+#   grafana    — визуализация метрик (порт 3000)
 #
 # Запуск:
 #   docker compose -f docker/docker-compose.yml up -d
@@ -19,6 +21,7 @@ version: "3.9"
 # Переменные окружения (.env):
 #   S3_MOUNT=/mnt/s3-aitourguide        — точка монтирования s3fs
 #   LOG_DIR=./logs                      — директория логов
+#   GF_ADMIN_PASSWORD=admin             — пароль Grafana (переопределить!)
 #
 # Требования к хосту:
 #   - GPU: NVIDIA T4 с CUDA 12.x + nvidia-container-toolkit
@@ -130,6 +133,64 @@ services:
     networks:
       - aitourguide_net
 
+  # ----------------------------------------------------------
+  # Prometheus — сбор метрик
+  # ----------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: aitourguide_prometheus
+    restart: unless-stopped
+
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # Grafana — визуализация метрик
+  # ----------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.4.3
+    container_name: aitourguide_grafana
+    restart: unless-stopped
+
+    depends_on:
+      - prometheus
+
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GF_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "http://localhost:${GRAFANA_PORT:-3000}"
+      # Отключаем телеметрию
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+
+    networks:
+      - aitourguide_net
+
 networks:
   aitourguide_net:
     driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:

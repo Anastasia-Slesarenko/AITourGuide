@@ -18,7 +18,9 @@ from src.api.routes import (
     info_router,
     frontend_router,
     gallery_router,
+    metrics_router,
 )
+from src.core.metrics import METRICS
 from src.core.logging import setup_logging
 
 setup_logging(
@@ -60,6 +62,16 @@ async def lifespan(app: FastAPI):
         )
         set_guide(guide)
         logger.info("AITourGuide инициализирован успешно")
+
+        # Устанавливаем размер FAISS-индекса в Gauge (один раз при старте)
+        try:
+            index_size = len(guide.retriever.gallery_metadata)
+            METRICS.index_size.set(index_size)
+            logger.info(f"FAISS index_size gauge = {index_size}")
+        except Exception as _e:
+            logger.warning(
+                f"Не удалось установить index_size gauge: {_e}"
+            )
     except Exception as e:
         logger.error(f"Ошибка инициализации AITourGuide: {e}")
         logger.warning("Сервис запущен в деградированном режиме")
@@ -116,6 +128,7 @@ app.include_router(info_router)
 app.include_router(predict_router)
 app.include_router(health_router)
 app.include_router(gallery_router)
+app.include_router(metrics_router)
 
 # Статические файлы (монтируем после роутеров)
 app.mount(

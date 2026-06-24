@@ -25,9 +25,11 @@ from pathlib import Path
 from PIL import Image
 from typing import Dict, List, Optional, Union, Any, Tuple, cast
 from enum import Enum
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from dotenv import load_dotenv
+
+from src.core.metrics import METRICS
 from src.rag.landmark_retriever import (
     LandmarkRetriever,
     LandmarkRetrievalResult,
@@ -119,87 +121,78 @@ class AITourGuideConfig:
         """Конвертирует конфигурацию в словарь."""
         return asdict(self)
 
+def _metrics_to_dict() -> Dict:
+    """
+    Возвращает снимок метрик в виде словаря для /v1/health и /v1/info.
 
-@dataclass
-class PerformanceMetrics:
-    """Метрики производительности сервиса."""
+    Читает накопленные значения из глобального синглтона METRICS.
+    """
+    def _labeled(status: str) -> float:
+        try:
+            key = (("status", status),)
+            child = METRICS.requests_total._metrics.get(key)
+            if child:
+                return float(child._value.get())
+            return 0.0
+        except Exception:
+            return 0.0
 
-    total_requests: int = 0
-    successful_requests: int = 0
-    failed_requests: int = 0
-    avg_confidence: float = 0.0
-    internet_search_rate: float = 0.0
-    avg_retrieval_time: float = 0.0
-    avg_generation_time: float = 0.0
-    avg_total_time: float = 0.0
-    last_updated: Optional[str] = None
+    def _simple(counter) -> float:
+        try:
+            return float(counter._value.get())
+        except Exception:
+            return 0.0
 
-    # Накопительные суммы (не отображаются в repr)
-    _sum_confidence: float = field(default=0.0, repr=False)
-    _sum_retrieval_time: float = field(default=0.0, repr=False)
-    _sum_generation_time: float = field(default=0.0, repr=False)
-    _sum_total_time: float = field(default=0.0, repr=False)
-    _internet_searches: int = field(default=0, repr=False)
+    def _gauge(gauge) -> float:
+        try:
+            return float(gauge._value.get())
+        except Exception:
+            return 0.0
 
-    def update(self, result: Dict):
-        """Обновляет метрики на основе результата предсказания."""
-        self.total_requests += 1
+    successful = _labeled("success")
+    failed = _labeled("error")
+    total = successful + failed
+    internet = _simple(METRICS.internet_searches_total)
 
-        if result.get("error"):
-            self.failed_requests += 1
-        else:
-            self.successful_requests += 1
+    return {
+        "total_requests": int(total),
+        "successful_requests": int(successful),
+        "failed_requests": int(failed),
+        "success_rate": (
+            round(successful / total, 4) if total > 0 else 0.0
+        ),
+        "internet_searches": int(internet),
+        "confidence_last": round(_gauge(METRICS.confidence_last), 4),
+    }
 
-            conf = result.get("confidence", 0.0)
-            self._sum_confidence += conf
-            self.avg_confidence = (
-                self._sum_confidence / self.successful_requests
+
+def _update_metrics(result: Dict) -> None:
+    """Обновляет METRICS на основе результата predict()."""
+    if result.get("error"):
+        METRICS.requests_total.labels(status="error").inc()
+    else:
+        METRICS.requests_total.labels(status="success").inc()
+
+        conf = result.get("confidence", 0.0)
+        METRICS.confidence_last.set(conf)
+
+        timing = result.get("timing", {})
+        if "retrieval" in timing:
+            METRICS.retrieval_duration.observe(timing["retrieval"])
+        if "vlm_generation" in timing:
+            METRICS.vlm_duration.observe(timing["vlm_generation"])
+        if "internet_search" in timing:
+            METRICS.internet_search_duration.observe(
+                timing["internet_search"]
             )
 
-            timing = result.get("timing", {})
-            if "retrieval" in timing:
-                self._sum_retrieval_time += timing["retrieval"]
-                self.avg_retrieval_time = (
-                    self._sum_retrieval_time / self.successful_requests
-                )
+        total_time = sum(timing.values())
+        if total_time > 0:
+            METRICS.total_duration.observe(total_time)
 
-            if "vlm_generation" in timing:
-                self._sum_generation_time += timing["vlm_generation"]
-                self.avg_generation_time = (
-                    self._sum_generation_time / self.successful_requests
-                )
+        if result.get("source") == PredictionSource.INTERNET.value:
+            METRICS.internet_searches_total.inc()
 
-            total_time = sum(timing.values())
-            self._sum_total_time += total_time
-            self.avg_total_time = (
-                self._sum_total_time / self.successful_requests
-            )
-
-            if result.get("source") == PredictionSource.INTERNET.value:
-                self._internet_searches += 1
-            self.internet_search_rate = (
-                self._internet_searches / self.successful_requests
-            )
-
-        self.last_updated = datetime.now().isoformat()
-
-    def to_dict(self) -> Dict:
-        """Возвращает метрики в виде словаря (без приватных полей)."""
-        return {
-            "total_requests": self.total_requests,
-            "successful_requests": self.successful_requests,
-            "failed_requests": self.failed_requests,
-            "success_rate": (
-                self.successful_requests / self.total_requests
-                if self.total_requests > 0 else 0.0
-            ),
-            "avg_confidence": round(self.avg_confidence, 4),
-            "internet_search_rate": round(self.internet_search_rate, 4),
-            "avg_retrieval_time": round(self.avg_retrieval_time, 3),
-            "avg_generation_time": round(self.avg_generation_time, 3),
-            "avg_total_time": round(self.avg_total_time, 3),
-            "last_updated": self.last_updated,
-        }
 
 
 class SGLangClient:
@@ -368,7 +361,6 @@ class AITourGuide:
                 yc_api_key=self.yc_api_key,
             )
 
-        self.metrics = PerformanceMetrics()
         self._is_ready = False
 
         logger.info("Загрузка LandmarkRetriever...")
@@ -413,7 +405,7 @@ class AITourGuide:
             "timestamp": datetime.now().isoformat(),
             "components": {},
             "config": safe_config,
-            "metrics": self.metrics.to_dict(),
+            "metrics": _metrics_to_dict(),
         }
 
         try:
@@ -444,12 +436,20 @@ class AITourGuide:
 
     def get_metrics(self) -> Dict:
         """Возвращает метрики производительности."""
-        return self.metrics.to_dict()
+        return _metrics_to_dict()
 
     def reset_metrics(self):
-        """Сбрасывает метрики производительности."""
-        self.metrics = PerformanceMetrics()
-        logger.info("Метрики сброшены")
+        """
+        Сбрасывает метрики производительности.
+
+        Prometheus Counter/Histogram/Gauge — глобальные синглтоны,
+        их нельзя обнулить через REGISTRY. Метод оставлен для совместимости
+        API, но фактически не сбрасывает накопленные значения.
+        """
+        logger.warning(
+            "reset_metrics: Prometheus-метрики не поддерживают сброс. "
+            "Перезапустите сервис для обнуления счётчиков."
+        )
 
     # ------------------------------------------------------------------
     # VLM через SGLang
@@ -1513,7 +1513,7 @@ class AITourGuide:
                 )
 
             result["timing"] = timing
-            self.metrics.update(result)
+            _update_metrics(result)
 
             logger.info(
                 f"[{correlation_id}] Готово за "
@@ -1528,7 +1528,7 @@ class AITourGuide:
                 f"[{correlation_id}] Неожиданная ошибка: {e}\n"
                 f"{traceback.format_exc()}"
             )
-            self.metrics.update(result)
+            _update_metrics(result)
             return result
 
     # ------------------------------------------------------------------
