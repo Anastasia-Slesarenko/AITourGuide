@@ -204,10 +204,15 @@
       "description": "Кликните на трейс → waterfall: HTTP handler → retrieval → vlm_reranking → internet_search",
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 33 },
       "options": { "dedupStrategy": "none", "enableNodeGraph": true, "sortBy": "startTime" },
-      "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" },
-        "queryType": "traceql",
-        "query": "{ resource.service.name = \"aitourguide\" }",
-        "limit": 20, "refId": "A" }]
+      "targets": [
+        {
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "nativeSearch",
+          "serviceName": "aitourguide",
+          "limit": 20,
+          "refId": "A"
+        }
+      ]
     }
 
   ],
