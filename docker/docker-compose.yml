@@ -59,8 +59,7 @@ services:
         --host 0.0.0.0
         --mem-fraction-static 0.85
         --max-total-tokens 4096
-        --dtype auto
-        --quantization w8a8_int8
+        --dtype float16
         --attention-backend triton
 
     ports:
