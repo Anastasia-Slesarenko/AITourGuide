@@ -1293,7 +1293,7 @@ class AITourGuide:
         # Параллельные запросы с ограничением параллелизма
         # (SGLang T4 не справляется с 10 одновременными запросами
         #  с изображениями)
-        semaphore = asyncio.Semaphore(3)
+        semaphore = asyncio.Semaphore(5)
 
         async def _score_with_sem(cand: Dict) -> Dict:
             async with semaphore:
