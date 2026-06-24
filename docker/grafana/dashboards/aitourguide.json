@@ -2,7 +2,8 @@
   "__inputs": [],
   "__requires": [
     { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
-    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "datasource", "id": "tempo", "name": "Tempo", "version": "1.0.0" }
   ],
   "annotations": { "list": [] },
   "editable": true,
@@ -12,404 +13,213 @@
   "links": [],
   "panels": [
 
+    { "id": 100, "type": "row", "title": "📊 Обзор", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+
     {
-      "id": 1,
-      "type": "stat",
-      "title": "Всего запросов",
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area",
-        "textMode": "auto"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "blue", "value": null }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(aitourguide_requests_total)",
-          "legendFormat": "Всего",
-          "refId": "A"
-        }
-      ]
+      "id": 1, "type": "stat", "title": "Всего запросов",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(aitourguide_requests_total)", "legendFormat": "Всего", "refId": "A" }]
     },
 
     {
-      "id": 2,
-      "type": "stat",
-      "title": "Успешных запросов",
-      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "aitourguide_requests_total{status=\"success\"}",
-          "legendFormat": "Успешных",
-          "refId": "A"
-        }
-      ]
+      "id": 2, "type": "stat", "title": "Успешных",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "short" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "aitourguide_requests_total{status=\"success\"}", "legendFormat": "Успешных", "refId": "A" }]
     },
 
     {
-      "id": 3,
-      "type": "stat",
-      "title": "Ошибок",
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 10 }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "aitourguide_requests_total{status=\"error\"}",
-          "legendFormat": "Ошибок",
-          "refId": "A"
-        }
-      ]
+      "id": 3, "type": "stat", "title": "Ошибок",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }
+        ] }, "unit": "short" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "aitourguide_requests_total{status=\"error\"}", "legendFormat": "Ошибок", "refId": "A" }]
     },
 
     {
-      "id": 4,
-      "type": "stat",
-      "title": "Интернет-поисков",
-      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "purple", "value": null }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "aitourguide_internet_searches_total",
-          "legendFormat": "Поисков",
-          "refId": "A"
-        }
-      ]
+      "id": 4, "type": "stat", "title": "Не распознано (unknown)",
+      "description": "Запросы где confidence < threshold после всех этапов",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }
+        ] }, "unit": "short" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "aitourguide_unknown_total", "legendFormat": "Unknown", "refId": "A" }]
     },
 
     {
-      "id": 5,
-      "type": "stat",
-      "title": "Confidence последнего запроса",
-      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none",
-        "textMode": "value"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.5 },
-              { "color": "green", "value": 0.75 }
-            ]
-          },
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "aitourguide_confidence_last",
-          "legendFormat": "Confidence",
-          "refId": "A"
-        }
-      ]
+      "id": 5, "type": "stat", "title": "Confidence последнего запроса",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "green", "value": 0.75 }
+        ] }, "unit": "percentunit", "min": 0, "max": 1 } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "aitourguide_confidence_last", "legendFormat": "Confidence", "refId": "A" }]
     },
 
     {
-      "id": 6,
-      "type": "stat",
-      "title": "Размер FAISS-индекса",
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "blue", "value": null }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "aitourguide_index_size",
-          "legendFormat": "Объектов",
-          "refId": "A"
-        }
-      ]
+      "id": 6, "type": "stat", "title": "Объектов в индексе",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "aitourguide_index_size", "legendFormat": "Объектов", "refId": "A" }]
     },
 
+    { "id": 101, "type": "row", "title": "📈 Трафик и качество", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 } },
+
     {
-      "id": 7,
-      "type": "timeseries",
-      "title": "RPS — запросов в секунду",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      },
+      "id": 7, "type": "timeseries", "title": "RPS (запросов/сек)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } } },
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "rate(aitourguide_requests_total{status=\"success\"}[$__rate_interval])",
-          "legendFormat": "success",
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "success", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "rate(aitourguide_requests_total{status=\"error\"}[$__rate_interval])",
-          "legendFormat": "error",
-          "refId": "B"
-        }
+          "legendFormat": "error", "refId": "B" }
       ]
     },
 
     {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Confidence последнего запроса (динамика)",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "options": {
-        "tooltip": { "mode": "single" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 },
-          "color": { "mode": "palette-classic" }
-        }
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "aitourguide_confidence_last",
-          "legendFormat": "confidence",
-          "refId": "A"
-        }
-      ]
+      "id": 8, "type": "piechart", "title": "Источник ответа",
+      "description": "retrieval — найдено в индексе; internet — потребовался поиск; fallback — поиск не дал результата",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 6 },
+      "options": { "pieType": "donut", "legend": { "displayMode": "table", "placement": "right" } },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "aitourguide_source_total", "legendFormat": "{{source}}", "refId": "A" }]
     },
 
     {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Latency p50 / p95 / p99 — полное время запроса",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2, "fillOpacity": 5 }
-        }
-      },
+      "id": 9, "type": "timeseries", "title": "Доля интернет-поисков (5 мин)",
+      "description": "Как часто VLM не уверен и запускается поиск. Высокое значение = модель плохо справляется",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 6 },
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1,
+        "custom": { "lineWidth": 2, "fillOpacity": 10 }, "noValue": "нет данных" } },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "increase(aitourguide_internet_searches_total[5m]) / clamp_min(increase(aitourguide_requests_total{status=\"success\"}[5m]), 1)",
+        "legendFormat": "internet rate", "refId": "A" }]
+    },
+
+    { "id": 102, "type": "row", "title": "⏱ Latency", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 } },
+
+    {
+      "id": 10, "type": "timeseries", "title": "Полное время запроса (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 5 } } },
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.50, rate(aitourguide_total_duration_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.95, rate(aitourguide_total_duration_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "p95",
-          "refId": "B"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.99, rate(aitourguide_total_duration_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "p99",
-          "refId": "C"
-        }
+          "legendFormat": "p99", "refId": "C" }
       ]
     },
 
     {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Latency по этапам (p95)",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-      "options": {
-        "tooltip": { "mode": "multi" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2, "fillOpacity": 5 }
-        }
-      },
+      "id": 11, "type": "timeseries", "title": "Latency по этапам (p95)",
+      "description": "Retrieval обычно < 0.5с; VLM — самый долгий этап (зависит от GPU); internet search — только при низком confidence",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 5 } } },
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.95, rate(aitourguide_retrieval_duration_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "retrieval p95",
-          "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "retrieval", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.95, rate(aitourguide_vlm_duration_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "VLM reranking p95",
-          "refId": "B"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "legendFormat": "VLM reranking", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "histogram_quantile(0.95, rate(aitourguide_internet_search_duration_seconds_bucket[$__rate_interval]))",
-          "legendFormat": "internet search p95",
-          "refId": "C"
-        }
+          "legendFormat": "internet search", "refId": "C" }
       ]
     },
 
+    { "id": 103, "type": "row", "title": "🎯 Качество модели", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 } },
+
     {
-      "id": 11,
-      "type": "timeseries",
-      "title": "Доля интернет-поисков от успешных запросов",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-      "options": {
-        "tooltip": { "mode": "single" },
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
-        }
-      },
+      "id": 12, "type": "timeseries", "title": "Confidence — квантили (p25 / p50 / p75)",
+      "description": "Распределение уверенности модели. Если p50 < 0.5 — модель часто не уверена",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1,
+        "custom": { "lineWidth": 2, "fillOpacity": 5 } } },
       "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(aitourguide_internet_searches_total[$__rate_interval]) / rate(aitourguide_requests_total{status=\"success\"}[$__rate_interval])",
-          "legendFormat": "internet search rate",
-          "refId": "A"
-        }
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.25, rate(aitourguide_confidence_bucket[$__rate_interval]))",
+          "legendFormat": "p25", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, rate(aitourguide_confidence_bucket[$__rate_interval]))",
+          "legendFormat": "p50 (медиана)", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.75, rate(aitourguide_confidence_bucket[$__rate_interval]))",
+          "legendFormat": "p75", "refId": "C" }
       ]
     },
 
     {
-      "id": 12,
-      "type": "heatmap",
-      "title": "Heatmap — полное время запроса",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-      "options": {
-        "calculate": false,
-        "yAxis": { "unit": "s" },
-        "color": { "scheme": "Oranges", "mode": "scheme" }
-      },
+      "id": 13, "type": "heatmap", "title": "Heatmap — время запроса",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "options": { "calculate": false, "yAxis": { "unit": "s" }, "color": { "scheme": "Oranges", "mode": "scheme" } },
       "fieldConfig": { "defaults": { "unit": "s" } },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(rate(aitourguide_total_duration_seconds_bucket[$__rate_interval])) by (le)",
-          "legendFormat": "{{le}}",
-          "format": "heatmap",
-          "refId": "A"
-        }
-      ]
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "expr": "sum(rate(aitourguide_total_duration_seconds_bucket[$__rate_interval])) by (le)",
+        "legendFormat": "{{le}}", "format": "heatmap", "refId": "A" }]
+    },
+
+    { "id": 104, "type": "row", "title": "🔍 Трейсы (детальный путь запроса)", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 } },
+
+    {
+      "id": 14, "type": "traces", "title": "Трейсы запросов",
+      "description": "Кликните на трейс → waterfall: HTTP handler → retrieval → vlm_reranking → internet_search",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 33 },
+      "options": { "dedupStrategy": "none", "enableNodeGraph": true, "sortBy": "startTime" },
+      "targets": [{ "datasource": { "type": "tempo", "uid": "${DS_TEMPO}" },
+        "queryType": "traceql",
+        "query": "{ resource.service.name = \"aitourguide\" }",
+        "limit": 20, "refId": "A" }]
     }
 
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["aitourguide", "ml", "fastapi"],
+  "tags": ["aitourguide", "ml", "fastapi", "tracing"],
   "templating": {
     "list": [
-      {
-        "current": {},
-        "hide": 0,
-        "includeAll": false,
-        "name": "DS_PROMETHEUS",
-        "options": [],
-        "query": "prometheus",
-        "refresh": 1,
-        "type": "datasource"
-      }
+      { "current": {}, "hide": 0, "includeAll": false, "name": "DS_PROMETHEUS",
+        "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" },
+      { "current": {}, "hide": 0, "includeAll": false, "name": "DS_TEMPO",
+        "options": [], "query": "tempo", "refresh": 1, "type": "datasource" }
     ]
   },
   "time": { "from": "now-1h", "to": "now" },
@@ -417,5 +227,5 @@
   "timezone": "browser",
   "title": "AI Tour Guide",
   "uid": "aitourguide-main",
-  "version": 1
+  "version": 3
 }

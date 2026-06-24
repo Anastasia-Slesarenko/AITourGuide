@@ -30,6 +30,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from src.core.metrics import METRICS
+from src.core.tracing import get_tracer
 from src.rag.landmark_retriever import (
     LandmarkRetriever,
     LandmarkRetrievalResult,
@@ -166,32 +167,48 @@ def _metrics_to_dict() -> Dict:
     }
 
 
-def _update_metrics(result: Dict) -> None:
+def _update_metrics(result: Dict, image_size_bytes: int = 0) -> None:
     """Обновляет METRICS на основе результата predict()."""
     if result.get("error"):
         METRICS.requests_total.labels(status="error").inc()
-    else:
-        METRICS.requests_total.labels(status="success").inc()
+        return
 
-        conf = result.get("confidence", 0.0)
-        METRICS.confidence_last.set(conf)
+    METRICS.requests_total.labels(status="success").inc()
 
-        timing = result.get("timing", {})
-        if "retrieval" in timing:
-            METRICS.retrieval_duration.observe(timing["retrieval"])
-        if "vlm_generation" in timing:
-            METRICS.vlm_duration.observe(timing["vlm_generation"])
-        if "internet_search" in timing:
-            METRICS.internet_search_duration.observe(
-                timing["internet_search"]
-            )
+    conf = result.get("confidence", 0.0)
+    METRICS.confidence_last.set(conf)
+    METRICS.confidence_histogram.observe(conf)
 
-        total_time = sum(timing.values())
-        if total_time > 0:
-            METRICS.total_duration.observe(total_time)
+    # Источник ответа
+    source = result.get("source", "retrieval")
+    METRICS.source_total.labels(source=source).inc()
 
-        if result.get("source") == PredictionSource.INTERNET.value:
-            METRICS.internet_searches_total.inc()
+    # Флаг unknown
+    if result.get("unknown"):
+        METRICS.unknown_total.inc()
+
+    # Интернет-поиск
+    if source == PredictionSource.INTERNET.value:
+        METRICS.internet_searches_total.inc()
+
+    # Тайминги
+    timing = result.get("timing", {})
+    if "retrieval" in timing:
+        METRICS.retrieval_duration.observe(timing["retrieval"])
+    if "vlm_generation" in timing:
+        METRICS.vlm_duration.observe(timing["vlm_generation"])
+    if "internet_search" in timing:
+        METRICS.internet_search_duration.observe(
+            timing["internet_search"]
+        )
+
+    total_time = sum(timing.values())
+    if total_time > 0:
+        METRICS.total_duration.observe(total_time)
+
+    # Размер изображения
+    if image_size_bytes > 0:
+        METRICS.image_size_bytes.observe(image_size_bytes)
 
 
 
@@ -1171,19 +1188,25 @@ class AITourGuide:
         timing: Dict[str, float],
     ) -> List[LandmarkRetrievalResult]:
         """Ищет кандидатов через SigLIP + FAISS."""
-        t0 = time.time()
-        retrieved = await asyncio.to_thread(
-            self.retriever.retrieve,
-            image,
-            top_k=self.top_k_retrieval,
-            faiss_k=self.faiss_k,
-        )
-        timing["retrieval"] = round(time.time() - t0, 3)
+        tracer = get_tracer()
+        with tracer.start_as_current_span("retrieval") as span:
+            t0 = time.time()
+            retrieved = await asyncio.to_thread(
+                self.retriever.retrieve,
+                image,
+                top_k=self.top_k_retrieval,
+                faiss_k=self.faiss_k,
+            )
+            timing["retrieval"] = round(time.time() - t0, 3)
+            span.set_attribute("retrieval.duration_s", timing["retrieval"])
+            span.set_attribute(
+                "retrieval.candidates_found", len(retrieved)
+            )
 
-        if not retrieved:
-            raise RuntimeError("Кандидаты не найдены")
+            if not retrieved:
+                raise RuntimeError("Кандидаты не найдены")
 
-        return retrieved
+            return retrieved
 
     async def _generate_vlm_prediction(
         self,
@@ -1204,7 +1227,6 @@ class AITourGuide:
         for cand in retrieved:
             top_image = cand.get_top_image()
             if top_image:
-                # Предпочитаем guide_description, затем caption_landmark
                 description = (
                     top_image.guide_description
                     or top_image.caption_landmark
@@ -1220,6 +1242,8 @@ class AITourGuide:
 
         if not candidates:
             raise RuntimeError("Нет кандидатов для VLM reranking")
+
+        METRICS.vlm_candidates_count.observe(len(candidates))
 
         async def _score_candidate(cand: Dict) -> Dict:
             """Вычисляет P(yes) для одного кандидата."""
@@ -1299,16 +1323,29 @@ class AITourGuide:
             async with semaphore:
                 return await _score_candidate(cand)
 
-        scored = await asyncio.gather(
-            *[_score_with_sem(c) for c in candidates]
-        )
-        results = list(scored)
+        with get_tracer().start_as_current_span("vlm_reranking") as span:
+            span.set_attribute(
+                "vlm.candidates_count", len(candidates)
+            )
+            scored = await asyncio.gather(
+                *[_score_with_sem(c) for c in candidates]
+            )
+            results = list(scored)
 
-        # Выбираем кандидата с максимальным P(yes)
-        results.sort(key=lambda x: x["p_yes"], reverse=True)
-        best = results[0]
+            # Выбираем кандидата с максимальным P(yes)
+            results.sort(key=lambda x: x["p_yes"], reverse=True)
+            best = results[0]
 
-        timing["vlm_generation"] = round(time.time() - t0, 3)
+            timing["vlm_generation"] = round(time.time() - t0, 3)
+            span.set_attribute(
+                "vlm.best_p_yes", round(best["p_yes"], 4)
+            )
+            span.set_attribute(
+                "vlm.best_landmark", best["landmark_name"]
+            )
+            span.set_attribute(
+                "vlm.duration_s", timing["vlm_generation"]
+            )
 
         return {
             "name": best["landmark_name"],
@@ -1392,9 +1429,12 @@ class AITourGuide:
         timing: Dict[str, float] = {}
         result = self._init_result()
         correlation_id = str(uuid.uuid4())[:8]
+        _image_size = (
+            len(image_input) if isinstance(image_input, bytes) else 0
+        )
 
         input_id = (
-            f"bytes ({len(image_input)} bytes)"
+            f"bytes ({_image_size} bytes)"
             if isinstance(image_input, bytes)
             else str(image_input)
         )
@@ -1513,7 +1553,7 @@ class AITourGuide:
                 )
 
             result["timing"] = timing
-            _update_metrics(result)
+            _update_metrics(result, image_size_bytes=_image_size)
 
             logger.info(
                 f"[{correlation_id}] Готово за "
@@ -1528,7 +1568,7 @@ class AITourGuide:
                 f"[{correlation_id}] Неожиданная ошибка: {e}\n"
                 f"{traceback.format_exc()}"
             )
-            _update_metrics(result)
+            _update_metrics(result, image_size_bytes=_image_size)
             return result
 
     # ------------------------------------------------------------------

@@ -7,8 +7,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from src.core.config import settings
+from src.core.metrics import METRICS
+from src.core.tracing import setup_tracing
 from src.services.ai_tour_guide import AITourGuide
 from src.api.dependencies import set_guide
 from src.api.middleware import RateLimiter
@@ -20,8 +23,10 @@ from src.api.routes import (
     gallery_router,
     metrics_router,
 )
-from src.core.metrics import METRICS
 from src.core.logging import setup_logging
+
+# Инициализируем трейсинг до создания приложения
+setup_tracing()
 
 setup_logging(
     level=getattr(settings, "log_level", "INFO"),
@@ -136,6 +141,10 @@ app.mount(
     StaticFiles(directory=str(settings.static_path_abs)),
     name="static",
 )
+
+# OTel FastAPI instrumentation — автоматически создаёт span для каждого
+# HTTP-запроса; дочерние spans из ai_tour_guide.py прикрепляются к нему
+FastAPIInstrumentor.instrument_app(app)
 
 
 if __name__ == "__main__":

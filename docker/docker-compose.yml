@@ -108,6 +108,10 @@ services:
       DEVICE: "cpu"
       LOG_FORMAT: "json"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      # OTel трейсинг → Tempo
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
+      OTEL_SERVICE_NAME: "aitourguide"
+      OTEL_TRACES_SAMPLER_ARG: "${OTEL_SAMPLE_RATE:-1.0}"
 
     volumes:
       # FAISS-индекс (в бакете: dataset/index/siglip/)
@@ -128,6 +132,27 @@ services:
       timeout: 10s
       start_period: 60s
       retries: 3
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # Grafana Tempo — хранение трейсов (OTLP/gRPC порт 4317)
+  # ----------------------------------------------------------
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: aitourguide_tempo
+    restart: unless-stopped
+
+    command: ["-config.file=/etc/tempo.yaml"]
+
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
+    ports:
+      - "4317:4317"   # OTLP gRPC (приём трейсов от API)
+      - "3200:3200"   # Tempo HTTP API (для Grafana datasource)
 
     networks:
       - aitourguide_net
@@ -193,3 +218,4 @@ networks:
 volumes:
   prometheus_data:
   grafana_data:
+  tempo_data:

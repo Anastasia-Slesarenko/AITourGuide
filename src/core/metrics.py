@@ -34,6 +34,16 @@ class _AITourGuideMetrics:
             "aitourguide_internet_searches_total",
             "Число запросов, для которых был выполнен интернет-поиск",
         )
+        self.unknown_total = Counter(
+            "aitourguide_unknown_total",
+            "Число запросов где достопримечательность не распознана "
+            "(unknown=True, confidence < threshold)",
+        )
+        self.source_total = Counter(
+            "aitourguide_source_total",
+            "Число запросов по источнику итогового ответа",
+            ["source"],   # labels: retrieval | internet | fallback
+        )
 
         # ── Гистограммы времени выполнения ────────────────────────────────
         self.retrieval_duration = Histogram(
@@ -55,6 +65,24 @@ class _AITourGuideMetrics:
             "aitourguide_internet_search_duration_seconds",
             "Время интернет-поиска (Yandex + Wikipedia)",
             buckets=(1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 90.0),
+        )
+        self.confidence_histogram = Histogram(
+            "aitourguide_confidence",
+            "Распределение confidence по всем успешным запросам",
+            buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+        )
+        self.vlm_candidates_count = Histogram(
+            "aitourguide_vlm_candidates_count",
+            "Число кандидатов переданных в VLM reranking",
+            buckets=(1, 2, 3, 5, 7, 10, 15),
+        )
+        self.image_size_bytes = Histogram(
+            "aitourguide_image_size_bytes",
+            "Размер входящего изображения в байтах",
+            buckets=(
+                50_000, 100_000, 250_000, 500_000,
+                1_000_000, 2_000_000, 5_000_000, 10_000_000,
+            ),
         )
 
         # ── Gauge: текущие значения ───────────────────────────────────────

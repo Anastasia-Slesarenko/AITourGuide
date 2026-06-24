@@ -39,7 +39,13 @@ python-multipart>=0.0.6
 jinja2>=3.1.0
 
 # ── Monitoring ────────────────────────────────────────────────
-prometheus-client>=0.20.0   # Prometheus metrics exposition (/metrics endpoint)
+prometheus-client>=0.20.0        # Prometheus metrics exposition (/metrics)
+
+# ── Tracing (OpenTelemetry → Grafana Tempo) ───────────────────
+opentelemetry-sdk>=1.24.0
+opentelemetry-api>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
 
 # ── Configuration ─────────────────────────────────────────────
 python-dotenv>=1.0.0
