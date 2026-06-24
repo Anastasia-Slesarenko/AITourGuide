@@ -206,7 +206,7 @@
       "options": { "dedupStrategy": "none", "enableNodeGraph": true, "sortBy": "startTime" },
       "targets": [{ "datasource": { "type": "tempo", "uid": "${DS_TEMPO}" },
         "queryType": "traceql",
-        "query": "{ resource.service.name = \"aitourguide\" }",
+        "query": "{ .service.name = \"aitourguide\" }",
         "limit": 20, "refId": "A" }]
     }
 
