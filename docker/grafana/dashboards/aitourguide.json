@@ -204,7 +204,7 @@
       "description": "Кликните на трейс → waterfall: HTTP handler → retrieval → vlm_reranking → internet_search",
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 33 },
       "options": { "dedupStrategy": "none", "enableNodeGraph": true, "sortBy": "startTime" },
-      "targets": [{ "datasource": { "type": "tempo", "uid": "${DS_TEMPO}" },
+      "targets": [{ "datasource": { "type": "tempo", "uid": "tempo" },
         "queryType": "traceql",
         "query": "{ resource.service.name = \"aitourguide\" }",
         "limit": 20, "refId": "A" }]
@@ -217,9 +217,7 @@
   "templating": {
     "list": [
       { "current": {}, "hide": 0, "includeAll": false, "name": "DS_PROMETHEUS",
-        "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" },
-      { "current": {}, "hide": 0, "includeAll": false, "name": "DS_TEMPO",
-        "options": [], "query": "tempo", "refresh": 1, "type": "datasource" }
+        "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" }
     ]
   },
   "time": { "from": "now-1h", "to": "now" },
