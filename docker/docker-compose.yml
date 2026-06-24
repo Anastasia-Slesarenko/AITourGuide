@@ -6,8 +6,9 @@ version: "3.9"
 # Сервисы:
 #   sglang     — VLM-сервер (Qwen2-VL-2B через SGLang, порт 30000)
 #   api        — FastAPI-приложение (SigLIP+FAISS retrieval, порт 8000)
+#   tempo      — хранение трейсов OTel (внутренний, порт 3200 для Grafana)
 #   prometheus — сбор метрик (порт 9090)
-#   grafana    — визуализация метрик (порт 3000)
+#   grafana    — визуализация метрик и трейсов (порт 3000)
 #
 # Запуск:
 #   docker compose -f docker/docker-compose.yml up -d
@@ -89,6 +90,8 @@ services:
     depends_on:
       sglang:
         condition: service_healthy
+      tempo:
+        condition: service_started
 
     env_file:
       - ../.env
@@ -150,9 +153,12 @@ services:
       - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
       - tempo_data:/var/tempo
 
-    ports:
-      - "4317:4317"   # OTLP gRPC (приём трейсов от API)
-      - "3200:3200"   # Tempo HTTP API (для Grafana datasource)
+    # Порты НЕ публикуем наружу — только внутри docker-сети:
+    #   4317 — OTLP gRPC (api → tempo)
+    #   3200 — Tempo HTTP API (grafana → tempo)
+    expose:
+      - "4317"
+      - "3200"
 
     networks:
       - aitourguide_net
@@ -174,6 +180,8 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
+      # Принимает remote_write от Tempo metrics_generator (span-metrics)
+      - "--web.enable-remote-write-receiver"
 
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
@@ -191,6 +199,7 @@ services:
 
     depends_on:
       - prometheus
+      - tempo
 
     environment:
       GF_SECURITY_ADMIN_PASSWORD: "${GF_ADMIN_PASSWORD:-admin}"
