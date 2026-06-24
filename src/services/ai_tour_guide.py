@@ -1381,6 +1381,21 @@ class AITourGuide:
             result["search_query"] = search_result["query"]
             result["confidence"] = round(search_result["confidence"], 4)
 
+            # Если объект найден через интернет (Wikipedia/Yandex),
+            # а не через fallback_retrieval — очищаем winner_images,
+            # чтобы в слайдере не показывались фото из базы для
+            # другого (неверного) объекта.
+            # При fallback_retrieval confidence ==
+            # internet_confidence_fallback_retrieval, что означает
+            # полный провал интернет-поиска и возврат к top-1 из базы
+            # — в этом случае winner_images оставляем.
+            fallback_conf = round(
+                self.config.internet_confidence_fallback_retrieval, 4
+            )
+            if round(search_result["confidence"], 4) != fallback_conf:
+                result["winner_images"] = []
+                result["winner_landmark_id"] = ""
+
             # Переводим название и описание на русский язык если нужно.
             # Используем долю кириллицы: если < 30% букв кириллические —
             # считаем текст английским и переводим.
