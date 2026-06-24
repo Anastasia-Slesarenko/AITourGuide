@@ -206,12 +206,26 @@
       "options": { "dedupStrategy": "none", "enableNodeGraph": true, "sortBy": "startTime" },
       "targets": [
         {
-          "datasource": { "type": "tempo", "uid": "tempo" },
-          "queryType": "clear",
-          "limit": 20,
           "refId": "A",
-          "search": "aitourguide",
-          "serviceName": "aitourguide"
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceqlSearch",
+          "limit": 20,
+          "tableType": "traces",
+          "filters": [
+            {
+              "id": "a18530be",
+              "operator": "=",
+              "scope": "span"
+            },
+            {
+              "id": "service-name",
+              "tag": "service.name",
+              "operator": "=",
+              "scope": "resource",
+              "value": ["aitourguide"],
+              "valueType": "string"
+            }
+          ]
         }
       ]
     }
