@@ -207,11 +207,11 @@
       "targets": [
         {
           "datasource": { "type": "tempo", "uid": "tempo" },
-          "queryType": "traceql",
-          "query": "{ resource.service.name = \"aitourguide\" }",
-          "tableType": "traces",
+          "queryType": "clear",
           "limit": 20,
-          "refId": "A"
+          "refId": "A",
+          "search": "aitourguide",
+          "serviceName": "aitourguide"
         }
       ]
     }
