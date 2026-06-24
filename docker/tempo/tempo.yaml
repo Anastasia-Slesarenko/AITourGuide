@@ -4,9 +4,6 @@ server:
   http_listen_port: 3200
   grpc_listen_port: 9096
 
-# Включаем поиск трейсов (требуется для Grafana Explore → Search)
-search_enabled: true
-
 distributor:
   receivers:
     otlp:
