@@ -207,10 +207,21 @@
       "targets": [
         {
           "datasource": { "type": "tempo", "uid": "tempo" },
-          "queryType": "nativeSearch",
-          "serviceName": "aitourguide",
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"aitourguide\" }",
+          "tableType": "traces",
           "limit": 20,
-          "refId": "A"
+          "refId": "A",
+          "filters": [
+            {
+              "id": "service-name",
+              "operator": "=",
+              "scope": "resource",
+              "tag": "service.name",
+              "value": ["aitourguide"],
+              "valueType": "string"
+            }
+          ]
         }
       ]
     }
