@@ -193,7 +193,7 @@ services:
   # Grafana — визуализация метрик
   # ----------------------------------------------------------
   grafana:
-    image: grafana/grafana:10.4.3
+    image: grafana/grafana:11.1.0
     container_name: aitourguide_grafana
     restart: unless-stopped
 
