@@ -21,9 +21,15 @@ scrape_configs:
           job: docker
           __path__: /var/lib/docker/containers/*/*-json.log
 
+    # Периодический опрос файлов вместо inotify
+    # (inotify не работает для overlay2 filesystem внутри контейнера)
+    decompression:
+      enabled: false
+    file_watch_config:
+      min_poll_frequency: 1s
+      max_poll_frequency: 5s
+
     pipeline_stages:
-      # Каждая строка в json-file Docker — это:
-      # {"log":"<actual log line>\n","stream":"stdout","time":"..."}
       - json:
           expressions:
             log_line: log
@@ -32,8 +38,6 @@ scrape_configs:
           source: log_line
       - labels:
           stream:
-      # Для строк которые сами являются JSON (наши логи из FastAPI)
-      # извлекаем level и logger как labels
       - json:
           expressions:
             level: level
