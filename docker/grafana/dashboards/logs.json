@@ -48,7 +48,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"ERROR\" [$__range])",
+          "expr": "sum(count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"ERROR\" [$__range]))",
           "legendFormat": "Ошибки",
           "refId": "A"
         }
@@ -84,7 +84,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"WARNING\" [$__range])",
+          "expr": "sum(count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"WARNING\" [$__range]))",
           "legendFormat": "Предупреждения",
           "refId": "A"
         }
@@ -108,7 +108,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"INFO\" [$__range])",
+          "expr": "sum(count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"INFO\" [$__range]))",
           "legendFormat": "Info",
           "refId": "A"
         }
