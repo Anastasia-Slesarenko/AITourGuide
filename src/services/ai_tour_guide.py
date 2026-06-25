@@ -971,9 +971,7 @@ class AITourGuide:
             "description": "",
             "query": None,
             "confidence": 0.5,
-            # Явный флаг: True если интернет-поиск провалился и вернули
-            # top-1 из retrieval. Используется в _enhance_with_internet_search
-            # чтобы не запускать VLM-верификацию для retrieval-fallback.
+            # True если интернет-поиск провалился и вернули top-1 из retrieval.
             "is_fallback_retrieval": False,
         }
 
@@ -1573,93 +1571,81 @@ class AITourGuide:
         )
         timing["internet_search"] = round(time.time() - t0, 3)
 
-        if search_result.get("found"):
-            result["source"] = PredictionSource.INTERNET.value
-            result["search_query"] = search_result["query"]
+        if not search_result.get("found"):
+            return
 
-            # Если объект найден через интернет (Wikipedia/Yandex),
-            # а не через fallback_retrieval — очищаем winner_images,
-            # чтобы в слайдере не показывались фото из базы для
-            # другого (неверного) объекта.
-            # При fallback_retrieval confidence ==
-            # internet_confidence_fallback_retrieval, что означает
-            # полный провал интернет-поиска и возврат к top-1 из базы
-            # — в этом случае winner_images оставляем.
-            is_fallback_retrieval = search_result.get(
-                "is_fallback_retrieval", False
+        # Интернет-поиск провалился и вернул top-1 из retrieval —
+        # result уже содержит правильные name, description, confidence
+        # и winner_images от VLM reranking. Ничего не меняем.
+        if search_result.get("is_fallback_retrieval", False):
+            logger.info(
+                "Интернет-поиск провалился, используем top-1 из retrieval"
             )
-            if not is_fallback_retrieval:
-                result["winner_images"] = []
-                result["winner_landmark_id"] = ""
+            return
 
-            # Переводим название и описание на русский язык если нужно.
-            # Используем долю кириллицы: если < 30% букв кириллические —
-            # считаем текст английским и переводим.
-            # Простая проверка "есть ли хоть одна кириллица" не работает
-            # т.к. Wikipedia EN может содержать транслитерацию в скобках
-            # (напр. "Saint Isaac's Cathedral (Russian: Исаакиевский собор)")
-            name = search_result["name"]
-            description = search_result["description"]
-            t_translate = time.time()
-            try:
-                if self._needs_translation(name):
-                    translated_name = self.translator.translate(
-                        name, target_language="ru", source_language="en"
-                    )
-                    if translated_name:
-                        name = translated_name
+        result["source"] = PredictionSource.INTERNET.value
+        result["search_query"] = search_result["query"]
 
-                if description and self._needs_translation(description):
-                    translated_desc = self.translator.translate(
-                        description, target_language="ru", source_language="en"
-                    )
-                    if translated_desc:
-                        description = translated_desc
-            except Exception as e:
-                logger.warning(f"Ошибка перевода: {e}")
-            timing["translation"] = round(time.time() - t_translate, 3)
+        # Очищаем winner_images: фото из базы относятся к другому объекту
+        # (тому что был top-1 при retrieval), а не к найденному в интернете.
+        result["winner_images"] = []
+        result["winner_landmark_id"] = ""
 
-            result["name"] = name
-            result["description"] = description
-
-            # Верификация через VLM: спрашиваем модель "это {название}?"
-            # используя оригинальное (до перевода) название для лучшего
-            # распознавания VLM-ом (модель обучена на английском).
-            # Результат — p_yes, семантически эквивалентный p_yes из
-            # VLM reranking, что делает confidence единым на всех путях.
-            # Пропускаем верификацию при fallback_retrieval — там
-            # интернет-поиск провалился и мы уже вернули top-1 из базы,
-            # confidence в этом случае берём из search_result напрямую.
-            if not is_fallback_retrieval:
-                t_verify = time.time()
-                # Открываем WikipediaService для получения thumbnail —
-                # промпт будет идентичен prepare_vlm_messages() (обучение).
-                # Используем EN Wikipedia (больше изображений).
-                async with WikipediaService(
-                    language="ru", fallback_lang="en"
-                ) as wiki_svc:
-                    verified_p_yes = (
-                        await self._verify_internet_result_with_vlm(
-                            image=image,
-                            landmark_name=search_result["name"],
-                            description=search_result["description"],
-                            wiki_service=wiki_svc,
-                        )
-                    )
-                timing["vlm_verification"] = round(
-                    time.time() - t_verify, 3
+        # Переводим название и описание на русский язык если нужно.
+        # Используем долю кириллицы: если < 30% букв кириллические —
+        # считаем текст английским и переводим.
+        # Простая проверка "есть ли хоть одна кириллица" не работает
+        # т.к. Wikipedia EN может содержать транслитерацию в скобках
+        # (напр. "Saint Isaac's Cathedral (Russian: Исаакиевский собор)")
+        name = search_result["name"]
+        description = search_result["description"]
+        t_translate = time.time()
+        try:
+            if self._needs_translation(name):
+                translated_name = self.translator.translate(
+                    name, target_language="ru", source_language="en"
                 )
-                result["confidence"] = round(verified_p_yes, 4)
-                logger.info(
-                    f"Интернет-поиск завершён: "
-                    f"name='{search_result['name']}' "
-                    f"(переведено: '{result['name']}') "
-                    f"confidence={result['confidence']}"
+                if translated_name:
+                    name = translated_name
+
+            if description and self._needs_translation(description):
+                translated_desc = self.translator.translate(
+                    description, target_language="ru", source_language="en"
                 )
-            else:
-                result["confidence"] = round(
-                    search_result["confidence"], 4
-                )
+                if translated_desc:
+                    description = translated_desc
+        except Exception as e:
+            logger.warning(f"Ошибка перевода: {e}")
+        timing["translation"] = round(time.time() - t_translate, 3)
+
+        result["name"] = name
+        result["description"] = description
+
+        # Верификация через VLM: спрашиваем модель "это {название}?"
+        # используя оригинальное (до перевода) название для лучшего
+        # распознавания VLM-ом (модель обучена на английском).
+        # Результат — p_yes, семантически эквивалентный p_yes из
+        # VLM reranking, что делает confidence единым на всех путях.
+        t_verify = time.time()
+        # Открываем WikipediaService для получения thumbnail —
+        # промпт будет идентичен prepare_vlm_messages() (обучение).
+        async with WikipediaService(
+            language="ru", fallback_lang="en"
+        ) as wiki_svc:
+            verified_p_yes = await self._verify_internet_result_with_vlm(
+                image=image,
+                landmark_name=search_result["name"],
+                description=search_result["description"],
+                wiki_service=wiki_svc,
+            )
+        timing["vlm_verification"] = round(time.time() - t_verify, 3)
+        result["confidence"] = round(verified_p_yes, 4)
+        logger.info(
+            f"Интернет-поиск завершён: "
+            f"name='{search_result['name']}' "
+            f"(переведено: '{result['name']}') "
+            f"confidence={result['confidence']}"
+        )
 
     async def predict(
         self,
@@ -1792,9 +1778,14 @@ class AITourGuide:
 
             # 6. Определяем флаг unknown:
             # достопримечательность не распознана если confidence
-            # всё ещё ниже порога после всех этапов
+            # всё ещё ниже порога после всех этапов (VLM reranking +
+            # интернет-поиск + VLM верификация).
+            # При unknown=True очищаем name/description — нет смысла
+            # возвращать ненадёжное название.
             if result["confidence"] < self.vlm_threshold:
                 result["unknown"] = True
+                result["name"] = ""
+                result["description"] = ""
                 logger.info(
                     f"[{correlation_id}] Достопримечательность "
                     f"не распознана (confidence="
