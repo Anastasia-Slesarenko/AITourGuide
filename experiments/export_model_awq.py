@@ -4,11 +4,15 @@ Merge LoRA + AWQ квантование Qwen2-VL для SGLang на T4 (sm75).
 Пайплайн:
   1. Загружаем base модель + LoRA адаптер
   2. Merge LoRA в веса (merge_and_unload)
-  3. Квантуем LLM-часть в AWQ int4, vision encoder оставляем в fp16
+  3. Квантуем LLM-часть в AWQ int4 через llm-compressor,
+     vision encoder оставляем в fp16
   4. Сохраняем в HuggingFace формате — SGLang читает напрямую
 
 Требования:
-  pip install autoawq autoawq-kernels transformers peft torch
+  pip install llmcompressor transformers peft torch
+
+  llm-compressor — официальный преемник AutoAWQ от vLLM-проекта,
+  совместим с transformers>=4.51.
 
 Запуск:
   python experiments/export_model_awq.py
@@ -112,12 +116,19 @@ def step1_merge_lora() -> Path:
 
 def step2_quantize_awq(merged_dir: Path) -> Path:
     """
-    Шаг 2: AWQ int4 квантование LLM-части, vision encoder остаётся fp16.
+    Шаг 2: AWQ int4 квантование LLM-части через llm-compressor.
+    Vision encoder (visual.*) остаётся в fp16.
+
+    llm-compressor — официальный преемник AutoAWQ от vLLM-проекта.
+    Совместим с transformers>=4.51 (в отличие от autoawq 0.2.9,
+    который сломан на transformers>=4.52 из-за удалённого PytorchGELUTanh).
+
+    Установка: pip install llmcompressor
 
     Возвращает путь к AWQ директории.
     """
     print("\n" + "=" * 60)
-    print("Шаг 2: AWQ int4 квантование")
+    print("Шаг 2: AWQ int4 квантование (llm-compressor)")
     print("=" * 60)
     print(f"  Не квантуем: {AWQ_CONFIG['modules_to_not_convert']}")
 
@@ -127,17 +138,23 @@ def step2_quantize_awq(merged_dir: Path) -> Path:
         return AWQ_OUTPUT_DIR
 
     try:
-        from awq import AutoAWQForCausalLM
+        from llmcompressor import oneshot
+        from llmcompressor.modifiers.quantization import GPTQModifier
+        from compressed_tensors.quantization import (
+            QuantizationArgs,
+            QuantizationScheme,
+            QuantizationType,
+        )
     except ImportError:
         raise ImportError(
-            "AutoAWQ не установлен.\n"
-            "Установите: pip install autoawq autoawq-kernels"
+            "llm-compressor не установлен.\n"
+            "Установите: pip install llmcompressor\n\n"
+            "llm-compressor — официальный преемник AutoAWQ от vLLM-проекта,\n"
+            "совместим с transformers>=4.51."
         )
 
     print(f"  Загружаем merged модель: {merged_dir}")
-    # AutoAWQ загружает модель как CausalLM и квантует только linear слои LLM.
-    # Visual encoder пропускается через modules_to_not_convert.
-    model = AutoAWQForCausalLM.from_pretrained(
+    model = Qwen2VLForConditionalGeneration.from_pretrained(
         str(merged_dir),
         device_map="cuda",
         torch_dtype=torch.float16,
@@ -148,19 +165,47 @@ def step2_quantize_awq(merged_dir: Path) -> Path:
         trust_remote_code=True,
     )
 
-    print(
-        f"  AWQ: w_bit={AWQ_CONFIG['w_bit']}, "
-        f"q_group_size={AWQ_CONFIG['q_group_size']}, "
-        f"version={AWQ_CONFIG['version']}"
-    )
-    print("  Запускаем калибровку и квантование (~5-10 мин)...")
-    # Калибровка использует небольшой датасет (pileval по умолчанию)
-    # для определения масштабов квантования
-    model.quantize(processor, quant_config=AWQ_CONFIG)
+    # Формируем список слоёв, которые НЕ квантуем:
+    # - visual.* — весь vision encoder
+    # - lm_head   — выходной слой
+    ignore_patterns = AWQ_CONFIG["modules_to_not_convert"]
 
+    # AWQ через GPTQ-алгоритм (эквивалент autoawq GEMM):
+    # w_bit=4, group_size=128, zero_point=True
+    recipe = GPTQModifier(
+        targets="Linear",
+        scheme=QuantizationScheme(
+            weights=QuantizationArgs(
+                num_bits=AWQ_CONFIG["w_bit"],
+                type=QuantizationType.int,
+                group_size=AWQ_CONFIG["q_group_size"],
+                # zero_point=True → asymmetric quantization
+                symmetric=not AWQ_CONFIG["zero_point"],
+                strategy="group",
+            )
+        ),
+        ignore=ignore_patterns,
+        dampening_frac=0.01,
+    )
+
+    print(
+        f"  AWQ/GPTQ: w_bit={AWQ_CONFIG['w_bit']}, "
+        f"q_group_size={AWQ_CONFIG['q_group_size']}, "
+        f"zero_point={AWQ_CONFIG['zero_point']}"
+    )
+    print("  Запускаем калибровку и квантование (~5-15 мин)...")
+
+    # Калибровка на небольшом датасете (c4 по умолчанию в llm-compressor)
     AWQ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"  Сохраняем AWQ модель -> {AWQ_OUTPUT_DIR}")
-    model.save_quantized(str(AWQ_OUTPUT_DIR))
+    oneshot(
+        model=model,
+        recipe=recipe,
+        dataset="open_platypus",   # небольшой текстовый датасет для калибровки
+        num_calibration_samples=512,
+        max_seq_length=2048,
+        save_compressed=True,
+        output_dir=str(AWQ_OUTPUT_DIR),
+    )
     processor.save_pretrained(str(AWQ_OUTPUT_DIR))
 
     del model
