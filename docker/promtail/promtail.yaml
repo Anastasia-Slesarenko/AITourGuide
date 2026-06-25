@@ -4,12 +4,10 @@ server:
   log_level: info
 
 positions:
-  # Сохраняем позиции в постоянном месте чтобы не перечитывать при перезапуске
   filename: /run/promtail/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
-    # Батч-интервал: отправляем логи каждые 5 секунд
     batchwait: 5s
     batchsize: 1048576
 
@@ -30,13 +28,6 @@ scrape_configs:
           expressions:
             log_line: log
             stream: stream
-            docker_ts: time
-      # Убираем \n из конца поля log
-      - replace:
-          expression: "(?s)(.*)\n$"
-          source: log_line
-          replace: "$1"
-      # Заменяем текст строки на содержимое поля log
       - output:
           source: log_line
       - labels:
