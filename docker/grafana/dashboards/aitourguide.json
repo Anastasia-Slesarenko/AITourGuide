@@ -2,15 +2,23 @@
   "__inputs": [],
   "__requires": [
     { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
-    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
-    { "type": "datasource", "id": "tempo", "name": "Tempo", "version": "1.0.0" }
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
   ],
   "annotations": { "list": [] },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {
+      "title": "Логи приложения",
+      "url": "/d/aitourguide-logs",
+      "type": "link",
+      "icon": "external link",
+      "tooltip": "Открыть dashboard с логами (Loki)",
+      "targetBlank": false
+    }
+  ],
   "panels": [
 
     { "id": 100, "type": "row", "title": "📊 Обзор", "collapsed": false,
@@ -240,57 +248,18 @@
           "expr": "histogram_quantile(0.95, sum(rate(aitourguide_internet_search_duration_seconds_bucket[$__rate_interval])) by (le))",
           "legendFormat": "internet search", "refId": "C" }
       ]
-    },
-
-    { "id": 103, "type": "row", "title": "🔍 Трейсы", "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 } },
-
-    {
-      "id": 14, "type": "traces", "title": "Последние запросы",
-      "description": "Кликните на трейс → waterfall: HTTP handler → retrieval → vlm_reranking → internet_search",
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 24 },
-      "options": { "dedupStrategy": "none", "enableNodeGraph": true, "sortBy": "startTime" },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "tempo", "uid": "${DS_TEMPO}" },
-          "queryType": "traceqlSearch",
-          "limit": 20,
-          "tableType": "traces",
-          "filters": [
-            {
-              "id": "a18530be",
-              "operator": "=",
-              "scope": "span"
-            },
-            {
-              "id": "service-name",
-              "tag": "service.name",
-              "operator": "=",
-              "scope": "resource",
-              "value": ["aitourguide"],
-              "valueType": "string"
-            }
-          ]
-        }
-      ]
     }
 
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["aitourguide", "ml", "fastapi", "tracing"],
+  "tags": ["aitourguide", "ml", "fastapi"],
   "templating": {
     "list": [
       {
         "current": {}, "hide": 0, "includeAll": false,
         "name": "DS_PROMETHEUS", "options": [],
         "query": "prometheus", "refresh": 1, "type": "datasource"
-      },
-      {
-        "current": {}, "hide": 0, "includeAll": false,
-        "name": "DS_TEMPO", "options": [],
-        "query": "tempo", "refresh": 1, "type": "datasource"
       }
     ]
   },
@@ -299,5 +268,5 @@
   "timezone": "browser",
   "title": "AI Tour Guide",
   "uid": "aitourguide-main",
-  "version": 4
+  "version": 5
 }
