@@ -180,6 +180,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Лог-файлы контейнеров (json-file driver)
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Позиции чтения — сохраняем между перезапусками
+      - promtail_positions:/run/promtail
 
     networks:
       - aitourguide_net
@@ -248,3 +250,4 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:
+  promtail_positions:
