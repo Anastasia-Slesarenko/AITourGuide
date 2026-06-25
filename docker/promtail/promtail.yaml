@@ -24,7 +24,6 @@ scrape_configs:
         regex: "^/?aitourguide_api$"
         action: keep
       - source_labels: [__meta_docker_container_name]
-        # Убираем ведущий "/" из имени контейнера
         regex: "^/?(.*)"
         target_label: container
         replacement: "$1"
@@ -35,29 +34,31 @@ scrape_configs:
       - replacement: api
         target_label: service
     pipeline_stages:
-      # Парсим JSON-логи (LOG_FORMAT=json в продакшене)
-      - json:
-          expressions:
-            level: level
-            logger: logger
-            message: message
-            correlation_id: correlation_id
-            ts: timestamp
-      # Устанавливаем уровень лога как label для фильтрации в Grafana
-      - labels:
-          level:
-          logger:
-      # Используем timestamp из лога, а не время получения
-      # Go reference time: Mon Jan 2 15:04:05 MST 2006
-      - timestamp:
-          source: ts
-          format: "2006-01-02T15:04:05.999999999Z07:00"
-          fallback_formats:
-            - "2006-01-02T15:04:05Z07:00"
-            - "2006-01-02T15:04:05Z"
-      # Выводим message как основной текст записи
-      - output:
-          source: message
+      # Шаг 1: обрабатываем только строки, начинающиеся с '{' (JSON-логи).
+      # Строки plain-text (uvicorn access log, stack traces) пропускаются
+      # без изменений — они попадут в Loki как есть, без ошибок парсинга.
+      - match:
+          selector: '{service="api"} |~ "^\\{"'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  logger: logger
+                  message: message
+                  correlation_id: correlation_id
+                  ts: timestamp
+            - labels:
+                level:
+                logger:
+            # Go reference time: Mon Jan 2 15:04:05.999999999 MST 2006
+            - timestamp:
+                source: ts
+                format: "2006-01-02T15:04:05.999999999Z07:00"
+                fallback_formats:
+                  - "2006-01-02T15:04:05Z07:00"
+                  - "2006-01-02T15:04:05Z"
+            - output:
+                source: message
 
   # ------------------------------------------------------------------
   # Логи SGLang-контейнера (plain text)
