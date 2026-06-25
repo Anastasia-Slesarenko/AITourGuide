@@ -5,7 +5,6 @@ server:
 
 positions:
   filename: /run/promtail/positions.yaml
-  # Синхронизируем позиции каждые 10 секунд
   sync_period: 10s
 
 clients:
@@ -23,6 +22,13 @@ scrape_configs:
           job: docker
           __path__: /var/lib/docker/containers/*/*-json.log
 
+    relabel_configs:
+      # Извлекаем container ID из пути к файлу
+      - source_labels: [__path__]
+        regex: '/var/lib/docker/containers/([^/]+)/.*'
+        target_label: container_id
+        replacement: '$1'
+
     pipeline_stages:
       - json:
           expressions:
@@ -36,6 +42,8 @@ scrape_configs:
           expressions:
             level: level
             logger: logger
+            service_name: service_name
       - labels:
           level:
           logger:
+          service_name:

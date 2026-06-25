@@ -48,7 +48,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum(count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"ERROR\" [$__range]))",
+          "expr": "sum(count_over_time({job=\"docker\", level=\"ERROR\"} [$__range]))",
           "legendFormat": "Ошибки",
           "refId": "A"
         }
@@ -84,7 +84,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum(count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"WARNING\" [$__range]))",
+          "expr": "sum(count_over_time({job=\"docker\", level=\"WARNING\"} [$__range]))",
           "legendFormat": "Предупреждения",
           "refId": "A"
         }
@@ -108,7 +108,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum(count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=\"INFO\" [$__range]))",
+          "expr": "sum(count_over_time({job=\"docker\", level=\"INFO\"} [$__range]))",
           "legendFormat": "Info",
           "refId": "A"
         }
@@ -144,7 +144,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "sum by (level) (count_over_time({container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=~\"$level\" [$__interval]))",
+          "expr": "sum by (level) (count_over_time({job=\"docker\"} | json | __error__=\"\" | level=~\"$level\" [$__interval]))",
           "legendFormat": "{{level}}",
           "refId": "A"
         }
@@ -154,7 +154,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
       "id": 12,
-      "title": "Все логи",
+      "title": "Все логи API",
       "type": "row"
     },
     {
@@ -164,7 +164,7 @@
       "options": {
         "dedupStrategy": "none",
         "enableLogDetails": true,
-        "prettifyLogMessage": true,
+        "prettifyLogMessage": false,
         "showCommonLabels": false,
         "showLabels": false,
         "showTime": true,
@@ -176,7 +176,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "{container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=~\"$level\" | logger=~\"$logger\"",
+          "expr": "{job=\"docker\", level=~\"$level\"} | logger=~\"$logger\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -196,7 +196,7 @@
       "options": {
         "dedupStrategy": "none",
         "enableLogDetails": true,
-        "prettifyLogMessage": true,
+        "prettifyLogMessage": false,
         "showCommonLabels": false,
         "showLabels": false,
         "showTime": true,
@@ -208,7 +208,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "{container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | level=~\"ERROR|WARNING\"",
+          "expr": "{job=\"docker\", level=~\"ERROR|WARNING\"}",
           "legendFormat": "",
           "refId": "A"
         }
@@ -228,7 +228,7 @@
       "options": {
         "dedupStrategy": "none",
         "enableLogDetails": true,
-        "prettifyLogMessage": true,
+        "prettifyLogMessage": false,
         "showCommonLabels": false,
         "showLabels": false,
         "showTime": true,
@@ -240,7 +240,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "${datasource}" },
-          "expr": "{container=~\"/?(aitourguide_api)\"} | json | __error__=\"\" | correlation_id=\"$correlation_id\"",
+          "expr": "{job=\"docker\"} | json | __error__=\"\" | correlation_id=\"$correlation_id\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -267,14 +267,14 @@
       {
         "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
         "datasource": { "type": "loki", "uid": "${datasource}" },
-        "definition": "label_values({container=~\"/?(aitourguide_api)\"}, level)",
+        "definition": "label_values({job=\"docker\"}, level)",
         "hide": 0,
         "includeAll": true,
         "label": "Уровень",
         "multi": true,
         "name": "level",
         "options": [],
-        "query": "label_values({container=~\"/?(aitourguide_api)\"}, level)",
+        "query": "label_values({job=\"docker\"}, level)",
         "refresh": 2,
         "sort": 1,
         "type": "query"
@@ -282,14 +282,14 @@
       {
         "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
         "datasource": { "type": "loki", "uid": "${datasource}" },
-        "definition": "label_values({container=~\"/?(aitourguide_api)\"}, logger)",
+        "definition": "label_values({job=\"docker\"}, logger)",
         "hide": 0,
         "includeAll": true,
         "label": "Logger",
         "multi": true,
         "name": "logger",
         "options": [],
-        "query": "label_values({container=~\"/?(aitourguide_api)\"}, logger)",
+        "query": "label_values({job=\"docker\"}, logger)",
         "refresh": 2,
         "sort": 1,
         "type": "query"
@@ -310,5 +310,5 @@
   "timezone": "browser",
   "title": "AI Tour Guide — Logs",
   "uid": "aitourguide-logs",
-  "version": 3
+  "version": 4
 }
