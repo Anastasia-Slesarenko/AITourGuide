@@ -1144,6 +1144,7 @@ class AITourGuide:
             "winner_landmark_id": "",  # landmark_id победителя
             "retrieved_names": [],
             "retrieved_scores": [],
+            "retrieved_p_yes": [],   # p_yes от VLM для каждого кандидата
             "retrieved_images": [],
             "retrieved_captions": [],
             "search_query": None,
@@ -1306,10 +1307,17 @@ class AITourGuide:
             f"duration={timing['vlm_generation']}s"
         )
 
+        # Строим словарь landmark_name → p_yes для всех кандидатов
+        # (используется для отображения в UI)
+        all_p_yes = {
+            r["landmark_name"]: round(r["p_yes"], 4) for r in results
+        }
+
         return {
             "name": best["landmark_name"],
             "description": best["description"],
             "p_yes": best["p_yes"],
+            "all_p_yes": all_p_yes,
         }
 
     def _parse_logprobs_p_yes(self, response: Dict) -> Optional[float]:
@@ -1759,6 +1767,13 @@ class AITourGuide:
                 )
                 result["name"] = parsed["name"]
                 result["description"] = parsed["description"]
+                # Заполняем p_yes для каждого кандидата в том же порядке
+                # что retrieved_names — для отображения в UI
+                all_p_yes = parsed.get("all_p_yes", {})
+                result["retrieved_p_yes"] = [
+                    all_p_yes.get(name, 0.0)
+                    for name in retrieved_names
+                ]
                 logger.info(
                     f"[{correlation_id}] VLM выбрал: {parsed['name']} "
                     f"(P(yes)={parsed.get('p_yes', 0):.4f})"

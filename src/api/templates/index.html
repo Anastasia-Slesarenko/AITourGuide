@@ -258,9 +258,9 @@
                                     <span class="candidate-name">
                                         {{ result.retrieved_names[i] if result.retrieved_names and result.retrieved_names[i] else '—' }}
                                     </span>
-                                    {% if result.retrieved_scores and result.retrieved_scores[i] is defined %}
+                                    {% if result.retrieved_p_yes and result.retrieved_p_yes[i] is defined %}
                                     <span class="candidate-score">
-                                        {{ (result.retrieved_scores[i] * 100) | round(1) }}%
+                                        {{ (result.retrieved_p_yes[i] * 100) | round(1) }}%
                                     </span>
                                     {% endif %}
                                 </div>
