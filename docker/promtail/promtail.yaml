@@ -5,6 +5,8 @@ server:
 
 positions:
   filename: /run/promtail/positions.yaml
+  # Синхронизируем позиции каждые 10 секунд
+  sync_period: 10s
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
@@ -20,14 +22,6 @@ scrape_configs:
         labels:
           job: docker
           __path__: /var/lib/docker/containers/*/*-json.log
-
-    # Периодический опрос файлов вместо inotify
-    # (inotify не работает для overlay2 filesystem внутри контейнера)
-    decompression:
-      enabled: false
-    file_watch_config:
-      min_poll_frequency: 1s
-      max_poll_frequency: 5s
 
     pipeline_stages:
       - json:
