@@ -1088,7 +1088,7 @@ class AITourGuide:
             best_name = self._extract_clean_name(best_key)
             logger.info(
                 f"Интернет-поиск: best_key='{best_key}' → "
-                f"best_name='{best_name}' (confidence={match_confidence})"
+                f"best_name='{best_name}'"
             )
 
             # query возвращаем в словаре — не мутируем result внутри замыкания
