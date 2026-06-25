@@ -1396,7 +1396,7 @@ class AITourGuide:
                 response.raise_for_status()
                 return Image.open(BytesIO(response.content)).convert("RGB")
         except Exception as e:
-            logger.debug(f"Не удалось скачать изображение {url}: {e}")
+            logger.warning(f"Не удалось скачать thumbnail {url}: {e}")
             return None
 
     async def _verify_internet_result_with_vlm(
@@ -1452,8 +1452,13 @@ class AITourGuide:
                         candidate_uri = self._image_to_base64_data_uri(
                             thumb_img
                         )
-                        logger.debug(
-                            f"Wikipedia thumbnail получен для "
+                        logger.info(
+                            f"Wikipedia thumbnail скачан для "
+                            f"'{landmark_name}'"
+                        )
+                    else:
+                        logger.warning(
+                            f"Не удалось скачать thumbnail для "
                             f"'{landmark_name}': {thumb_url}"
                         )
 
