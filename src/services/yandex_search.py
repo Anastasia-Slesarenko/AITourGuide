@@ -398,6 +398,63 @@ class WikipediaService:
 
             return None, None, self.language
 
+    async def get_thumbnail_url(
+        self,
+        landmark_name: str,
+        thumb_size: int = 500,
+    ) -> Optional[str]:
+        """
+        Возвращает URL thumbnail-изображения статьи Wikipedia.
+
+        Использует prop=pageimages для получения основного изображения
+        статьи. Пробует сначала английскую Wikipedia (больше изображений),
+        затем русскую.
+
+        Args:
+            landmark_name: Название достопримечательности (желательно EN)
+            thumb_size: Ширина thumbnail в пикселях (Wikipedia масштабирует)
+
+        Returns:
+            URL изображения или None если не найдено
+        """
+        if self._aiohttp_session is None:
+            return None
+
+        for lang in (self.fallback_lang, self.language):
+            url = self.BASE_URL.format(lang=lang)
+            params = {
+                "action": "query",
+                "format": "json",
+                "prop": "pageimages",
+                "piprop": "thumbnail",
+                "pithumbsize": thumb_size,
+                "titles": landmark_name,
+                "redirects": "1",
+                "formatversion": "2",
+            }
+            try:
+                async with self._aiohttp_session.get(
+                    url, params=params
+                ) as response:
+                    if response.status != 200:
+                        continue
+                    data = await response.json()
+                    pages = data.get("query", {}).get("pages", [])
+                    if pages:
+                        thumb = pages[0].get("thumbnail", {})
+                        src = thumb.get("source")
+                        if src:
+                            logger.debug(
+                                f"Wikipedia thumbnail для '{landmark_name}'"
+                                f" ({lang}): {src}"
+                            )
+                            return src
+            except Exception as e:
+                logger.debug(
+                    f"Ошибка получения thumbnail для '{landmark_name}': {e}"
+                )
+        return None
+
     async def _try_get_summary(
         self,
         query: str,

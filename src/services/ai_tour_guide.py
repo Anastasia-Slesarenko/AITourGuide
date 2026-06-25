@@ -971,6 +971,10 @@ class AITourGuide:
             "description": "",
             "query": None,
             "confidence": 0.5,
+            # Явный флаг: True если интернет-поиск провалился и вернули
+            # top-1 из retrieval. Используется в _enhance_with_internet_search
+            # чтобы не запускать VLM-верификацию для retrieval-fallback.
+            "is_fallback_retrieval": False,
         }
 
         if self._yandex_service is None:
@@ -1122,6 +1126,7 @@ class AITourGuide:
             result["confidence"] = (
                 self.config.internet_confidence_fallback_retrieval
             )
+            result["is_fallback_retrieval"] = True
 
         return result
 
@@ -1259,49 +1264,15 @@ class AITourGuide:
                     top_logprobs=20,
                 )
 
-                logprobs_data = (
-                    response.get("choices", [{}])[0].get("logprobs", {})
-                )
-                if not logprobs_data or not logprobs_data.get("content"):
+                p_yes = self._parse_logprobs_p_yes(response)
+                if p_yes is None:
                     # logprobs не вернулись — fallback на текстовый ответ
-                    text = str(
-                        response.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    ).strip().lower()
+                    p_yes = self._text_response_to_p_yes(response)
                     logger.debug(
-                        f"logprobs пусты, текст: {text!r} "
+                        f"logprobs пусты, текст fallback: "
+                        f"p_yes={p_yes} "
                         f"кандидат: {cand['landmark_name']!r}"
                     )
-                    if text.startswith("yes"):
-                        return {**cand, "p_yes": 0.9}
-                    elif text.startswith("no"):
-                        return {**cand, "p_yes": 0.1}
-                    return {**cand, "p_yes": 0.0}
-
-                top_lp = logprobs_data["content"][0].get("top_logprobs", [])
-
-                logit_yes = None
-                logit_no = None
-                for item in top_lp:
-                    token = item.get("token", "")
-                    logprob = item.get("logprob", -100)
-                    if logit_yes is None and token in self._YES_VARIANTS:
-                        logit_yes = logprob
-                    elif logit_no is None and token in self._NO_VARIANTS:
-                        logit_no = logprob
-
-                if logit_yes is not None and logit_no is not None:
-                    max_logit = max(logit_yes, logit_no)
-                    exp_yes = math.exp(logit_yes - max_logit)
-                    exp_no = math.exp(logit_no - max_logit)
-                    p_yes = exp_yes / (exp_yes + exp_no)
-                elif logit_yes is not None:
-                    p_yes = 1.0
-                elif logit_no is not None:
-                    p_yes = 0.0
-                else:
-                    p_yes = 0.0
 
                 return {**cand, "p_yes": p_yes}
 
@@ -1343,6 +1314,242 @@ class AITourGuide:
             "p_yes": best["p_yes"],
         }
 
+    def _parse_logprobs_p_yes(self, response: Dict) -> Optional[float]:
+        """
+        Извлекает p_yes из logprobs ответа SGLang.
+
+        Единая точка парсинга logprobs для VLM reranking и верификации.
+        Используется в _score_candidate() и _verify_internet_result_with_vlm().
+
+        Args:
+            response: Ответ от SGLang chat_completion
+
+        Returns:
+            p_yes ∈ [0, 1] или None если logprobs недоступны
+            (None — вызывающий код должен использовать текстовый fallback)
+        """
+        logprobs_data = (
+            response.get("choices", [{}])[0].get("logprobs", {})
+        )
+        if not logprobs_data or not logprobs_data.get("content"):
+            return None
+
+        top_lp = logprobs_data["content"][0].get("top_logprobs", [])
+
+        logit_yes = None
+        logit_no = None
+        for item in top_lp:
+            token = item.get("token", "")
+            logprob = item.get("logprob", -100)
+            if logit_yes is None and token in self._YES_VARIANTS:
+                logit_yes = logprob
+            elif logit_no is None and token in self._NO_VARIANTS:
+                logit_no = logprob
+
+        if logit_yes is not None and logit_no is not None:
+            max_logit = max(logit_yes, logit_no)
+            exp_yes = math.exp(logit_yes - max_logit)
+            exp_no = math.exp(logit_no - max_logit)
+            return exp_yes / (exp_yes + exp_no)
+        elif logit_yes is not None:
+            return 1.0
+        elif logit_no is not None:
+            return 0.0
+        return None
+
+    def _text_response_to_p_yes(self, response: Dict) -> float:
+        """
+        Fallback: извлекает p_yes из текстового ответа VLM (без logprobs).
+
+        Args:
+            response: Ответ от SGLang chat_completion
+
+        Returns:
+            0.9 если ответ начинается с "yes", 0.1 если "no", иначе 0.5
+        """
+        text = str(
+            response.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        ).strip().lower()
+        if text.startswith("yes"):
+            return 0.9
+        elif text.startswith("no"):
+            return 0.1
+        return 0.5
+
+    async def _fetch_image_from_url(
+        self, url: str
+    ) -> Optional[Image.Image]:
+        """
+        Скачивает изображение по URL и возвращает PIL Image.
+
+        Args:
+            url: URL изображения
+
+        Returns:
+            PIL Image или None при ошибке
+        """
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(15.0)
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return Image.open(BytesIO(response.content)).convert("RGB")
+        except Exception as e:
+            logger.debug(f"Не удалось скачать изображение {url}: {e}")
+            return None
+
+    async def _verify_internet_result_with_vlm(
+        self,
+        image: Image.Image,
+        landmark_name: str,
+        description: str,
+        wiki_service: Optional[WikipediaService] = None,
+    ) -> float:
+        """
+        Верифицирует результат интернет-поиска через VLM.
+
+        Два режима в зависимости от доступности Wikipedia thumbnail:
+
+        1. Thumbnail доступен → промпт идентичен prepare_vlm_messages():
+           Query Photo + Candidate Photo (Wikipedia thumbnail) + вопрос.
+           Это формат обучения VLM reranker — наиболее точный p_yes.
+
+        2. Thumbnail недоступен → промпт с одним фото + текстовый контекст:
+           Photo + вопрос с названием и описанием из Wikipedia.
+           Модель оценивает соответствие фото и текстового описания объекта.
+
+        Args:
+            image: PIL-изображение запроса
+            landmark_name: Название из интернет-поиска (до перевода,
+                EN — VLM обучен на английском)
+            description: Описание из Wikipedia (до перевода)
+            wiki_service: Открытый WikipediaService для получения thumbnail.
+
+        Returns:
+            p_yes ∈ [0, 1]
+        """
+        try:
+            query_uri = self._image_to_base64_data_uri(image)
+            caption = (
+                description[:self.caption_max_length] if description else ""
+            )
+
+            # Пытаемся получить thumbnail из Wikipedia.
+            # Если thumbnail доступен — промпт идентичен prepare_vlm_messages()
+            # (Query Photo + Candidate Photo) — формат обучения.
+            # Если недоступен — промпт с одним фото и текстовым контекстом:
+            # модель оценивает "является ли объект на фото данным landmark"
+            # опираясь на название и описание из Wikipedia.
+            candidate_uri: Optional[str] = None
+            if wiki_service is not None:
+                thumb_url = await wiki_service.get_thumbnail_url(
+                    landmark_name
+                )
+                if thumb_url:
+                    thumb_img = await self._fetch_image_from_url(thumb_url)
+                    if thumb_img is not None:
+                        candidate_uri = self._image_to_base64_data_uri(
+                            thumb_img
+                        )
+                        logger.debug(
+                            f"Wikipedia thumbnail получен для "
+                            f"'{landmark_name}': {thumb_url}"
+                        )
+
+            if candidate_uri is not None:
+                # Формат обучения: Query Photo + Candidate Photo
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Query Photo:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": query_uri},
+                            },
+                            {"type": "text", "text": "Candidate Photo:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": candidate_uri},
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"Question: Are these photos showing "
+                                    f"the same landmark: "
+                                    f"\"{landmark_name}\"?\n"
+                                    f"Candidate details: {caption}\n"
+                                    f"Answer only with Yes or No."
+                                ),
+                            },
+                        ],
+                    }
+                ]
+                logger.info(
+                    f"VLM верификация: thumbnail режим "
+                    f"(Query+Candidate) для '{landmark_name}'"
+                )
+            else:
+                # Thumbnail недоступен: один фото + название + описание.
+                # Модель оценивает соответствие фото и текстового описания
+                # объекта из Wikipedia.
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Photo:"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": query_uri},
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"Question: Is the landmark shown in "
+                                    f"this photo \"{landmark_name}\"?\n"
+                                    f"Description: {caption}\n"
+                                    f"Answer only with Yes or No."
+                                ),
+                            },
+                        ],
+                    }
+                ]
+                logger.info(
+                    f"VLM верификация: текстовый режим "
+                    f"(нет thumbnail) для '{landmark_name}'"
+                )
+
+            response = await self.sglang_client.chat_completion(
+                messages=messages,
+                max_tokens=1,
+                temperature=0.0,
+                logprobs=True,
+                top_logprobs=20,
+            )
+
+            p_yes = self._parse_logprobs_p_yes(response)
+            if p_yes is None:
+                p_yes = self._text_response_to_p_yes(response)
+                logger.info(
+                    f"VLM верификация (logprobs недоступны, текст fallback): "
+                    f"'{landmark_name}' → p_yes={p_yes}"
+                )
+            else:
+                logger.info(
+                    f"VLM верификация (logprobs): '{landmark_name}' → "
+                    f"p_yes={p_yes:.4f}"
+                )
+            return p_yes
+
+        except Exception as e:
+            logger.warning(
+                f"Ошибка VLM верификации для '{landmark_name}': {e}"
+            )
+            return 0.5
+
     async def _enhance_with_internet_search(
         self,
         image: Image.Image,
@@ -1369,7 +1576,6 @@ class AITourGuide:
         if search_result.get("found"):
             result["source"] = PredictionSource.INTERNET.value
             result["search_query"] = search_result["query"]
-            result["confidence"] = round(search_result["confidence"], 4)
 
             # Если объект найден через интернет (Wikipedia/Yandex),
             # а не через fallback_retrieval — очищаем winner_images,
@@ -1379,10 +1585,10 @@ class AITourGuide:
             # internet_confidence_fallback_retrieval, что означает
             # полный провал интернет-поиска и возврат к top-1 из базы
             # — в этом случае winner_images оставляем.
-            fallback_conf = round(
-                self.config.internet_confidence_fallback_retrieval, 4
+            is_fallback_retrieval = search_result.get(
+                "is_fallback_retrieval", False
             )
-            if round(search_result["confidence"], 4) != fallback_conf:
+            if not is_fallback_retrieval:
                 result["winner_images"] = []
                 result["winner_landmark_id"] = ""
 
@@ -1415,6 +1621,45 @@ class AITourGuide:
 
             result["name"] = name
             result["description"] = description
+
+            # Верификация через VLM: спрашиваем модель "это {название}?"
+            # используя оригинальное (до перевода) название для лучшего
+            # распознавания VLM-ом (модель обучена на английском).
+            # Результат — p_yes, семантически эквивалентный p_yes из
+            # VLM reranking, что делает confidence единым на всех путях.
+            # Пропускаем верификацию при fallback_retrieval — там
+            # интернет-поиск провалился и мы уже вернули top-1 из базы,
+            # confidence в этом случае берём из search_result напрямую.
+            if not is_fallback_retrieval:
+                t_verify = time.time()
+                # Открываем WikipediaService для получения thumbnail —
+                # промпт будет идентичен prepare_vlm_messages() (обучение).
+                # Используем EN Wikipedia (больше изображений).
+                async with WikipediaService(
+                    language="ru", fallback_lang="en"
+                ) as wiki_svc:
+                    verified_p_yes = (
+                        await self._verify_internet_result_with_vlm(
+                            image=image,
+                            landmark_name=search_result["name"],
+                            description=search_result["description"],
+                            wiki_service=wiki_svc,
+                        )
+                    )
+                timing["vlm_verification"] = round(
+                    time.time() - t_verify, 3
+                )
+                result["confidence"] = round(verified_p_yes, 4)
+                logger.info(
+                    f"Интернет-поиск завершён: "
+                    f"name='{search_result['name']}' "
+                    f"(переведено: '{result['name']}') "
+                    f"confidence={result['confidence']}"
+                )
+            else:
+                result["confidence"] = round(
+                    search_result["confidence"], 4
+                )
 
     async def predict(
         self,
