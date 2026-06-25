@@ -12,8 +12,9 @@ clients:
 scrape_configs:
 
   # ------------------------------------------------------------------
-  # Все Docker-контейнеры — без фильтрации на уровне SD.
-  # Labels добавляются через relabel_configs.
+  # Читаем лог-файлы Docker-контейнеров напрямую с хоста.
+  # Docker SD даёт метаданные (имя контейнера, image),
+  # __path__ указывает на json-file лог на хосте.
   # ------------------------------------------------------------------
   - job_name: docker
     docker_sd_configs:
@@ -21,20 +22,32 @@ scrape_configs:
         refresh_interval: 5s
 
     relabel_configs:
+      # Путь к лог-файлу контейнера на хосте (json-file driver)
+      - source_labels: [__meta_docker_container_id]
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/$1-json.log
+
       # container — имя без ведущего "/"
       - source_labels: [__meta_docker_container_name]
         regex: "/?(.+)"
         target_label: container
         replacement: "$1"
 
-      # job — всегда "docker"
+      # job label
       - target_label: job
         replacement: docker
 
     pipeline_stages:
-      # Для контейнера api пробуем извлечь level и logger из JSON.
-      # Строки где JSON не парсится — попадают в Loki как есть (без labels level/logger).
-      # output НЕ переопределяем — в Loki идёт оригинальная строка лога.
+      # Каждая строка в json-file — это JSON вида:
+      # {"log":"...\n","stream":"stdout","time":"..."}
+      # Сначала извлекаем поле "log" как новый текст строки
+      - json:
+          expressions:
+            log_line: log
+      - output:
+          source: log_line
+
+      # Для контейнера api парсим наш JSON-лог внутри поля log
       - match:
           selector: '{container="aitourguide_api"}'
           stages:
