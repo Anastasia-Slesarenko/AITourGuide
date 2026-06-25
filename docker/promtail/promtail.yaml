@@ -12,58 +12,61 @@ clients:
 scrape_configs:
 
   # ------------------------------------------------------------------
-  # Все Docker-контейнеры проекта — собираем через Docker SD,
-  # фильтруем по имени через relabel, добавляем статические labels.
+  # Логи FastAPI-контейнера (stdout/stderr через Docker)
   # ------------------------------------------------------------------
-  - job_name: docker
+  - job_name: aitourguide_api
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
-
+        filters:
+          - name: name
+            values: ["aitourguide_api"]
     relabel_configs:
-      # Оставляем только контейнеры нашего проекта (имя начинается с aitourguide_)
       - source_labels: [__meta_docker_container_name]
-        regex: ".*/?(aitourguide_.+)"
-        action: keep
-
-      # Убираем ведущий "/" из имени контейнера → label "container"
-      - source_labels: [__meta_docker_container_name]
-        regex: ".*/?(.*)"
         target_label: container
-        replacement: "$1"
-
-      # Общий label для всего проекта
+      - source_labels: [__meta_docker_container_image]
+        target_label: image
       - replacement: aitourguide
         target_label: app
-
-      # service = часть имени после "aitourguide_" (api, sglang, prometheus, ...)
-      - source_labels: [__meta_docker_container_name]
-        regex: ".*/?aitourguide_(.*)"
+      - replacement: api
         target_label: service
-        replacement: "$1"
-
     pipeline_stages:
-      # Для контейнера api парсим JSON-логи.
-      # Фильтр |~ "^{" применяется только к строкам начинающимся с '{',
-      # остальные (plain-text uvicorn, traceback) пропускаются как есть.
-      - match:
-          selector: '{service="api"} |~ "^\\{"'
-          stages:
-            - json:
-                expressions:
-                  level: level
-                  logger: logger
-                  message: message
-                  correlation_id: correlation_id
-                  ts: timestamp
-            - labels:
-                level:
-                logger:
-            - timestamp:
-                source: ts
-                format: "2006-01-02T15:04:05.999999999Z07:00"
-                fallback_formats:
-                  - "2006-01-02T15:04:05Z07:00"
-                  - "2006-01-02T15:04:05Z"
-            - output:
-                source: message
+      # Парсим JSON-логи (LOG_FORMAT=json в продакшене).
+      # Ошибки парсинга для plain-text строк подавляются через __error__=""
+      # в LogQL-запросах на стороне Grafana.
+      - json:
+          expressions:
+            level: level
+            logger: logger
+            message: message
+            correlation_id: correlation_id
+            ts: timestamp
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: "2006-01-02T15:04:05.999999999Z07:00"
+          fallback_formats:
+            - "2006-01-02T15:04:05Z07:00"
+            - "2006-01-02T15:04:05Z"
+      - output:
+          source: message
+
+  # ------------------------------------------------------------------
+  # Логи SGLang-контейнера (plain text)
+  # ------------------------------------------------------------------
+  - job_name: aitourguide_sglang
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values: ["aitourguide_sglang"]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+      - replacement: aitourguide
+        target_label: app
+      - replacement: sglang
+        target_label: service
