@@ -11,10 +11,6 @@ clients:
 
 scrape_configs:
 
-  # ------------------------------------------------------------------
-  # Читаем лог-файлы всех Docker-контейнеров напрямую с хоста.
-  # Glob по всем json-file логам, метаданные через Docker SD.
-  # ------------------------------------------------------------------
   - job_name: docker_files
     static_configs:
       - targets:
@@ -22,26 +18,3 @@ scrape_configs:
         labels:
           job: docker
           __path__: /var/lib/docker/containers/*/*-json.log
-
-    pipeline_stages:
-      # Каждая строка в json-file — это JSON вида:
-      # {"log":"...\n","stream":"stdout","time":"..."}
-      - json:
-          expressions:
-            log_line: log
-            stream: stream
-            container_ts: time
-      # Используем timestamp из Docker json-file
-      - timestamp:
-          source: container_ts
-          format: "2006-01-02T15:04:05.999999999Z07:00"
-      # Заменяем текст строки на содержимое поля log
-      - output:
-          source: log_line
-      # Извлекаем container ID из пути к файлу
-      - regex:
-          expression: "/var/lib/docker/containers/(?P<container_id>[^/]+)/[^/]+-json\\.log"
-          source: filename
-      - labels:
-          container_id:
-          stream:
