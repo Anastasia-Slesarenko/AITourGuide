@@ -167,6 +167,7 @@ services:
     image: grafana/promtail:3.0.0
     container_name: aitourguide_promtail
     restart: unless-stopped
+    user: root
 
     depends_on:
       loki:
