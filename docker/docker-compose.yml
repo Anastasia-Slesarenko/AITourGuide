@@ -84,7 +84,6 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: aitourguide_api:latest
     container_name: aitourguide_api
     restart: unless-stopped
 
