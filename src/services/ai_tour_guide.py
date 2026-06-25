@@ -1382,6 +1382,9 @@ class AITourGuide:
         """
         Скачивает изображение по URL и возвращает PIL Image.
 
+        Использует User-Agent совместимый с Wikimedia политикой доступа
+        (upload.wikimedia.org блокирует запросы без корректного User-Agent).
+
         Args:
             url: URL изображения
 
@@ -1389,8 +1392,16 @@ class AITourGuide:
             PIL Image или None при ошибке
         """
         try:
+            headers = {
+                "User-Agent": (
+                    "AITourGuide/1.0 "
+                    "(slesarenko221999@gmail.com) educational bot"
+                )
+            }
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(15.0)
+                timeout=httpx.Timeout(15.0),
+                headers=headers,
+                follow_redirects=True,
             ) as client:
                 response = await client.get(url)
                 response.raise_for_status()

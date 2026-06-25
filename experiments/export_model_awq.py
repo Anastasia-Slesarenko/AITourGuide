@@ -1,27 +1,25 @@
 """
-Merge LoRA + AWQ квантование Qwen2-VL для SGLang на T4 (sm75).
+Merge LoRA + GPTQ int4 квантование Qwen2-VL для SGLang на T4 (sm75).
 
 Пайплайн:
   1. Загружаем base модель + LoRA адаптер
   2. Merge LoRA в веса (merge_and_unload)
-  3. Квантуем LLM-часть в AWQ int4 через llm-compressor,
-     vision encoder оставляем в fp16
+  3. Квантуем LLM-часть в GPTQ int4, vision encoder оставляем в fp16
   4. Сохраняем в HuggingFace формате — SGLang читает напрямую
 
 Требования:
-  pip install llmcompressor transformers peft torch
+  pip install auto-gptq optimum
 
-  llm-compressor — официальный преемник AutoAWQ от vLLM-проекта,
-  совместим с transformers>=4.51.
+  auto-gptq совместим с transformers==4.57.1 и не ломает зависимости.
 
 Запуск:
   python experiments/export_model_awq.py
 
 После квантования запускать SGLang:
   python -m sglang.launch_server \
-    --model-path /path/to/qwen2-vl-2b-r16-awq \
+    --model-path /path/to/qwen2-vl-2b-r16-gptq \
     --served-model-name qwen2-vl-2b-r16 \
-    --quantization awq \
+    --quantization gptq \
     --dtype float16 \
     --port 30000
 """
@@ -42,20 +40,18 @@ LORA_CHECKPOINT_PATH = (
 MERGED_FP16_DIR = Path(
     "/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-merged"
 )
-# Финальная папка с AWQ моделью
-AWQ_OUTPUT_DIR = Path(
-    "/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-awq"
+# Финальная папка с GPTQ моделью
+GPTQ_OUTPUT_DIR = Path(
+    "/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-gptq"
 )
 
-# AWQ параметры
-AWQ_CONFIG = {
-    "zero_point": True,
-    "q_group_size": 128,
-    "w_bit": 4,
-    "version": "GEMM",
+# GPTQ параметры
+GPTQ_CONFIG = {
+    "bits": 4,
+    "group_size": 128,
+    "desc_act": False,   # False = быстрее на T4, True = чуть точнее
     # Vision encoder НЕ квантуем:
     # - он уже небольшой (~300MB в fp16)
-    # - AWQ для visual трансформеров даёт нестабильные результаты
     # - основной bottleneck — LLM-часть (28 слоёв)
     "modules_to_not_convert": [
         "visual",   # весь vision encoder Qwen2-VL
@@ -114,124 +110,119 @@ def step1_merge_lora() -> Path:
     return MERGED_FP16_DIR
 
 
-def step2_quantize_awq(merged_dir: Path) -> Path:
+def step2_quantize_gptq(merged_dir: Path) -> Path:
     """
-    Шаг 2: AWQ int4 квантование LLM-части через llm-compressor.
-    Vision encoder (visual.*) остаётся в fp16.
+    Шаг 2: GPTQ int4 квантование LLM-части, vision encoder остаётся fp16.
 
-    llm-compressor — официальный преемник AutoAWQ от vLLM-проекта.
-    Совместим с transformers>=4.51 (в отличие от autoawq 0.2.9,
-    который сломан на transformers>=4.52 из-за удалённого PytorchGELUTanh).
+    Использует auto-gptq — совместим с transformers==4.57.1.
+    Установка: pip install auto-gptq optimum
 
-    Установка: pip install llmcompressor
+    Размер модели: ~4GB fp16 → ~1.3GB int4 (только LLM-часть).
 
-    Возвращает путь к AWQ директории.
+    Возвращает путь к GPTQ директории.
     """
     print("\n" + "=" * 60)
-    print("Шаг 2: AWQ int4 квантование (llm-compressor)")
+    print("Шаг 2: GPTQ int4 квантование (auto-gptq)")
     print("=" * 60)
-    print(f"  Не квантуем: {AWQ_CONFIG['modules_to_not_convert']}")
+    print(f"  Не квантуем: {GPTQ_CONFIG['modules_to_not_convert']}")
 
-    if AWQ_OUTPUT_DIR.exists():
-        print(f"  Уже существует: {AWQ_OUTPUT_DIR}")
+    if GPTQ_OUTPUT_DIR.exists():
+        print(f"  Уже существует: {GPTQ_OUTPUT_DIR}")
         print("  Пропускаем квантование (удалите папку чтобы пересоздать)")
-        return AWQ_OUTPUT_DIR
+        return GPTQ_OUTPUT_DIR
 
     try:
-        from llmcompressor import oneshot
-        from llmcompressor.modifiers.quantization import GPTQModifier
-        from compressed_tensors.quantization import (
-            QuantizationArgs,
-            QuantizationScheme,
-            QuantizationType,
-        )
+        from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
     except ImportError:
         raise ImportError(
-            "llm-compressor не установлен.\n"
-            "Установите: pip install llmcompressor\n\n"
-            "llm-compressor — официальный преемник AutoAWQ от vLLM-проекта,\n"
-            "совместим с transformers>=4.51."
+            "auto-gptq не установлен.\n"
+            "Установите: pip install auto-gptq optimum\n\n"
+            "auto-gptq совместим с transformers==4.57.1."
         )
 
+    # Калибровочный датасет — небольшой набор текстов для определения
+    # масштабов квантования. Используем стандартный c4/wikitext.
+    from datasets import load_dataset
+
+    print("  Загружаем калибровочный датасет (wikitext-2)...")
+    dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+    calibration_texts = [
+        t for t in dataset["text"] if len(t.strip()) > 50
+    ][:512]
+
     print(f"  Загружаем merged модель: {merged_dir}")
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
-        str(merged_dir),
-        device_map="cuda",
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-    )
     processor = AutoProcessor.from_pretrained(
         str(merged_dir),
         trust_remote_code=True,
     )
+    tokenizer = processor.tokenizer
 
-    # Формируем список слоёв, которые НЕ квантуем:
-    # - visual.* — весь vision encoder
-    # - lm_head   — выходной слой
-    ignore_patterns = AWQ_CONFIG["modules_to_not_convert"]
+    quantize_config = BaseQuantizeConfig(
+        bits=GPTQ_CONFIG["bits"],
+        group_size=GPTQ_CONFIG["group_size"],
+        desc_act=GPTQ_CONFIG["desc_act"],
+        model_file_base_name="model",
+    )
 
-    # AWQ через GPTQ-алгоритм (эквивалент autoawq GEMM):
-    # w_bit=4, group_size=128, zero_point=True
-    recipe = GPTQModifier(
-        targets="Linear",
-        scheme=QuantizationScheme(
-            weights=QuantizationArgs(
-                num_bits=AWQ_CONFIG["w_bit"],
-                type=QuantizationType.int,
-                group_size=AWQ_CONFIG["q_group_size"],
-                # zero_point=True → asymmetric quantization
-                symmetric=not AWQ_CONFIG["zero_point"],
-                strategy="group",
-            )
-        ),
-        ignore=ignore_patterns,
-        dampening_frac=0.01,
+    # auto-gptq загружает модель как CausalLM.
+    # Visual encoder пропускается через modules_to_not_convert.
+    model = AutoGPTQForCausalLM.from_pretrained(
+        str(merged_dir),
+        quantize_config=quantize_config,
+        device_map="cuda",
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
+        modules_to_not_convert=GPTQ_CONFIG["modules_to_not_convert"],
     )
 
     print(
-        f"  AWQ/GPTQ: w_bit={AWQ_CONFIG['w_bit']}, "
-        f"q_group_size={AWQ_CONFIG['q_group_size']}, "
-        f"zero_point={AWQ_CONFIG['zero_point']}"
+        f"  GPTQ: bits={GPTQ_CONFIG['bits']}, "
+        f"group_size={GPTQ_CONFIG['group_size']}, "
+        f"desc_act={GPTQ_CONFIG['desc_act']}"
     )
-    print("  Запускаем калибровку и квантование (~5-15 мин)...")
+    print("  Токенизируем калибровочные данные...")
+    calibration_data = [
+        tokenizer(
+            text,
+            return_tensors="pt",
+            max_length=2048,
+            truncation=True,
+        )
+        for text in calibration_texts
+    ]
 
-    # Калибровка на небольшом датасете (c4 по умолчанию в llm-compressor)
-    AWQ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    oneshot(
-        model=model,
-        recipe=recipe,
-        dataset="open_platypus",   # небольшой текстовый датасет для калибровки
-        num_calibration_samples=512,
-        max_seq_length=2048,
-        save_compressed=True,
-        output_dir=str(AWQ_OUTPUT_DIR),
-    )
-    processor.save_pretrained(str(AWQ_OUTPUT_DIR))
+    print("  Запускаем калибровку и квантование (~5-15 мин)...")
+    model.quantize(calibration_data)
+
+    GPTQ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"  Сохраняем GPTQ модель -> {GPTQ_OUTPUT_DIR}")
+    model.save_quantized(str(GPTQ_OUTPUT_DIR), use_safetensors=True)
+    processor.save_pretrained(str(GPTQ_OUTPUT_DIR))
 
     del model
     torch.cuda.empty_cache()
 
-    print(f"  OK: AWQ модель сохранена: {AWQ_OUTPUT_DIR}")
-    return AWQ_OUTPUT_DIR
+    print(f"  OK: GPTQ модель сохранена: {GPTQ_OUTPUT_DIR}")
+    return GPTQ_OUTPUT_DIR
 
 
-def step3_check_vision_weights(awq_dir: Path):
+def step3_check_vision_weights(gptq_dir: Path):
     """
-    Шаг 3: Проверяем что visual веса присутствуют в AWQ директории.
+    Шаг 3: Проверяем что visual веса присутствуют в GPTQ директории.
 
-    AutoAWQ может не сохранить visual веса если модель загружалась
+    auto-gptq может не сохранить visual веса если модель загружалась
     как CausalLM. Выводим предупреждение если visual весов нет.
     """
     print("\n" + "=" * 60)
     print("Шаг 3: Проверка vision encoder весов")
     print("=" * 60)
 
-    awq_shards = list(awq_dir.glob("*.safetensors"))
-    if not awq_shards:
-        print("  WARN: AWQ директория пуста — пропускаем")
+    gptq_shards = list(gptq_dir.glob("*.safetensors"))
+    if not gptq_shards:
+        print("  WARN: GPTQ директория пуста — пропускаем")
         return
 
-    index_file = awq_dir / "model.safetensors.index.json"
+    index_file = gptq_dir / "model.safetensors.index.json"
     if not index_file.exists():
         print("  Один shard — visual веса внутри, пропускаем")
         return
@@ -248,31 +239,30 @@ def step3_check_vision_weights(awq_dir: Path):
             f"({len(visual_keys)} тензоров в fp16)"
         )
     else:
-        print("  WARN: Visual веса отсутствуют в AWQ модели!")
+        print("  WARN: Visual веса отсутствуют в GPTQ модели!")
         print(
-            "  AutoAWQ не сохранил vision encoder.\n"
-            "  Нужно скопировать visual веса вручную из merged fp16 модели.\n"
-            "  Запустите: python experiments/export_model_awq.py --fix-visual"
+            "  auto-gptq не сохранил vision encoder.\n"
+            "  Нужно скопировать visual веса вручную из merged fp16 модели."
         )
 
 
-def print_summary(awq_dir: Path):
+def print_summary(gptq_dir: Path):
     """Выводит итоговую информацию и команды для запуска."""
     print("\n" + "=" * 60)
     print("ГОТОВО")
     print("=" * 60)
 
     total_size = sum(
-        f.stat().st_size for f in awq_dir.rglob("*") if f.is_file()
+        f.stat().st_size for f in gptq_dir.rglob("*") if f.is_file()
     )
-    print(f"  Путь:   {awq_dir}")
+    print(f"  Путь:   {gptq_dir}")
     print(f"  Размер: {total_size / 1e9:.2f} GB")
 
     cmd = (
         "python -m sglang.launch_server \\\n"
-        f"  --model-path {awq_dir} \\\n"
+        f"  --model-path {gptq_dir} \\\n"
         "  --served-model-name qwen2-vl-2b-r16 \\\n"
-        "  --quantization awq \\\n"
+        "  --quantization gptq \\\n"
         "  --dtype float16 \\\n"
         "  --port 30000 \\\n"
         "  --host 0.0.0.0 \\\n"
@@ -286,9 +276,9 @@ def print_summary(awq_dir: Path):
     dc_cmd = (
         "command: >\n"
         "  python -m sglang.launch_server\n"
-        "    --model-path /models/qwen2-vl-2b-r16-awq\n"
+        "    --model-path /models/qwen2-vl-2b-r16-gptq\n"
         "    --served-model-name qwen2-vl-2b-r16\n"
-        "    --quantization awq\n"
+        "    --quantization gptq\n"
         "    --dtype float16\n"
         "    --port 30000\n"
         "    --host 0.0.0.0\n"
@@ -302,18 +292,18 @@ def print_summary(awq_dir: Path):
 
 def main():
     print("=" * 60)
-    print("Qwen2-VL: LoRA merge + AWQ int4 квантование")
+    print("Qwen2-VL: LoRA merge + GPTQ int4 квантование")
     print("Vision encoder остаётся в fp16")
     print("=" * 60)
     print(f"  Base модель:  {BASE_MODEL_PATH}")
     print(f"  LoRA:         {LORA_CHECKPOINT_PATH}")
     print(f"  Merged fp16:  {MERGED_FP16_DIR}")
-    print(f"  AWQ output:   {AWQ_OUTPUT_DIR}")
+    print(f"  GPTQ output:  {GPTQ_OUTPUT_DIR}")
 
     merged_dir = step1_merge_lora()
-    awq_dir = step2_quantize_awq(merged_dir)
-    step3_check_vision_weights(awq_dir)
-    print_summary(awq_dir)
+    gptq_dir = step2_quantize_gptq(merged_dir)
+    step3_check_vision_weights(gptq_dir)
+    print_summary(gptq_dir)
 
 
 if __name__ == "__main__":
