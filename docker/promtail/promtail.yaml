@@ -18,3 +18,25 @@ scrape_configs:
         labels:
           job: docker
           __path__: /var/lib/docker/containers/*/*-json.log
+
+    pipeline_stages:
+      # Каждая строка в json-file Docker — это:
+      # {"log":"<actual log line>\n","stream":"stdout","time":"..."}
+      # Извлекаем поле log как новый текст строки
+      - json:
+          expressions:
+            log_line: log
+            stream: stream
+      - output:
+          source: log_line
+      - labels:
+          stream:
+      # Для строк которые сами являются JSON (наши логи из FastAPI)
+      # извлекаем level и logger как labels
+      - json:
+          expressions:
+            level: level
+            logger: logger
+      - labels:
+          level:
+          logger:
