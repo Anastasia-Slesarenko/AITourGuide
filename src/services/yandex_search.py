@@ -444,14 +444,21 @@ class WikipediaService:
                         thumb = pages[0].get("thumbnail", {})
                         src = thumb.get("source")
                         if src:
-                            logger.debug(
+                            logger.info(
                                 f"Wikipedia thumbnail для '{landmark_name}'"
                                 f" ({lang}): {src}"
                             )
                             return src
+                        else:
+                            logger.info(
+                                f"Wikipedia: нет thumbnail для "
+                                f"'{landmark_name}' ({lang}), "
+                                f"pages={pages}"
+                            )
             except Exception as e:
-                logger.debug(
-                    f"Ошибка получения thumbnail для '{landmark_name}': {e}"
+                logger.warning(
+                    f"Ошибка получения thumbnail для '{landmark_name}'"
+                    f" ({lang}): {e}"
                 )
         return None
 
