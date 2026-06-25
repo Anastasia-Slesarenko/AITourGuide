@@ -30,7 +30,6 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from src.core.metrics import METRICS
-from src.core.tracing import get_tracer
 from src.rag.landmark_retriever import (
     LandmarkRetriever,
     LandmarkRetrievalResult,
@@ -1188,25 +1187,23 @@ class AITourGuide:
         timing: Dict[str, float],
     ) -> List[LandmarkRetrievalResult]:
         """Ищет кандидатов через SigLIP + FAISS."""
-        tracer = get_tracer()
-        with tracer.start_as_current_span("retrieval") as span:
-            t0 = time.time()
-            retrieved = await asyncio.to_thread(
-                self.retriever.retrieve,
-                image,
-                top_k=self.top_k_retrieval,
-                faiss_k=self.faiss_k,
-            )
-            timing["retrieval"] = round(time.time() - t0, 3)
-            span.set_attribute("retrieval.duration_s", timing["retrieval"])
-            span.set_attribute(
-                "retrieval.candidates_found", len(retrieved)
-            )
+        t0 = time.time()
+        retrieved = await asyncio.to_thread(
+            self.retriever.retrieve,
+            image,
+            top_k=self.top_k_retrieval,
+            faiss_k=self.faiss_k,
+        )
+        timing["retrieval"] = round(time.time() - t0, 3)
+        logger.debug(
+            f"retrieval: duration={timing['retrieval']}s, "
+            f"candidates_found={len(retrieved)}"
+        )
 
-            if not retrieved:
-                raise RuntimeError("Кандидаты не найдены")
+        if not retrieved:
+            raise RuntimeError("Кандидаты не найдены")
 
-            return retrieved
+        return retrieved
 
     async def _generate_vlm_prediction(
         self,
@@ -1323,29 +1320,22 @@ class AITourGuide:
             async with semaphore:
                 return await _score_candidate(cand)
 
-        with get_tracer().start_as_current_span("vlm_reranking") as span:
-            span.set_attribute(
-                "vlm.candidates_count", len(candidates)
-            )
-            scored = await asyncio.gather(
-                *[_score_with_sem(c) for c in candidates]
-            )
-            results = list(scored)
+        scored = await asyncio.gather(
+            *[_score_with_sem(c) for c in candidates]
+        )
+        results = list(scored)
 
-            # Выбираем кандидата с максимальным P(yes)
-            results.sort(key=lambda x: x["p_yes"], reverse=True)
-            best = results[0]
+        # Выбираем кандидата с максимальным P(yes)
+        results.sort(key=lambda x: x["p_yes"], reverse=True)
+        best = results[0]
 
-            timing["vlm_generation"] = round(time.time() - t0, 3)
-            span.set_attribute(
-                "vlm.best_p_yes", round(best["p_yes"], 4)
-            )
-            span.set_attribute(
-                "vlm.best_landmark", best["landmark_name"]
-            )
-            span.set_attribute(
-                "vlm.duration_s", timing["vlm_generation"]
-            )
+        timing["vlm_generation"] = round(time.time() - t0, 3)
+        logger.debug(
+            f"vlm_reranking: candidates={len(candidates)}, "
+            f"best_landmark={best['landmark_name']!r}, "
+            f"best_p_yes={round(best['p_yes'], 4)}, "
+            f"duration={timing['vlm_generation']}s"
+        )
 
         return {
             "name": best["landmark_name"],
