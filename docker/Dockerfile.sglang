@@ -1,6 +1,43 @@
 FROM lmsysorg/sglang:v0.5.13.post1-cu129
 
-# Обновляем torchao до версии совместимой с SGLang v0.5.13.
-# Базовый образ поставляется со старой версией torchao, в которой
-# отсутствует float8_dynamic_activation_float8_weight (нужен для --torchao-config).
-RUN pip install --upgrade torchao -q
+# SGLang v0.5.13 безусловно импортирует float8_dynamic_activation_float8_weight
+# из torchao.quantization при любом --torchao-config, включая int8wo.
+# Этот символ появился в torchao>=0.7.0, но образ поставляется со старой версией.
+#
+# Патчим torchao_utils.py: переносим float8-импорты внутрь условия
+# которое выполняется только для float8 конфигов.
+# Для int8wo эти импорты не нужны.
+
+RUN python - <<'EOF'
+import re
+
+path = "/sgl-workspace/sglang/python/sglang/srt/layers/torchao_utils.py"
+with open(path) as f:
+    src = f.read()
+
+# Оборачиваем весь блок импорта torchao.quantization в try/except
+# чтобы старая версия torchao не ломала int8wo
+old = "from torchao.quantization import ("
+new = "try:\n    from torchao.quantization import ("
+src = src.replace(old, new, 1)
+
+# Находим конец блока импорта (строку с закрывающей скобкой) и добавляем except
+# Ищем паттерн: строка содержит только ")" после блока импорта torchao.quantization
+lines = src.split("\n")
+in_import = False
+result = []
+for i, line in enumerate(lines):
+    if "try:\n    from torchao.quantization import (" in "\n".join(lines[max(0,i-2):i+1]):
+        in_import = True
+    result.append(line)
+    if in_import and line.strip() == ")":
+        result.append("except ImportError:")
+        result.append("    float8_dynamic_activation_float8_weight = None")
+        result.append("    float8_weight_only = None")
+        in_import = False
+
+with open(path, "w") as f:
+    f.write("\n".join(result))
+
+print("Patch applied successfully")
+EOF
