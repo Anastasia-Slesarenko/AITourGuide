@@ -1287,10 +1287,9 @@ class AITourGuide:
                 )
                 return {**cand, "p_yes": 0.0}
 
-        # Параллельные запросы с ограничением параллелизма
-        # (SGLang T4 не справляется с 10 одновременными запросами
-        #  с изображениями)
-        semaphore = asyncio.Semaphore(5)
+        # Параллельные запросы с ограничением параллелизма.
+        # vLLM лучше батчит запросы чем SGLang — увеличиваем до 10.
+        semaphore = asyncio.Semaphore(10)
 
         async def _score_with_sem(cand: Dict) -> Dict:
             async with semaphore:

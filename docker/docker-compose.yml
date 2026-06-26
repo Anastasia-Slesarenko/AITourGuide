@@ -68,7 +68,6 @@ services:
         --gpu-memory-utilization 0.85
         --trust-remote-code
         --attention-backend TRITON_ATTN
-        --enforce-eager
 
     ports:
       - "30000:30000"
