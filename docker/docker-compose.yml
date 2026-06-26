@@ -64,10 +64,11 @@ services:
         --dtype float16
         --quantization bitsandbytes
         --load-format bitsandbytes
-        --max-model-len 4096
+        --max-model-len 2048
         --gpu-memory-utilization 0.85
         --trust-remote-code
         --attention-backend TRITON_ATTN
+        --enable-prefix-caching
 
     ports:
       - "30000:30000"

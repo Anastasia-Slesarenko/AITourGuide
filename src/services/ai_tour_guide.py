@@ -399,6 +399,12 @@ class AITourGuide:
             max_retries=config.sglang_max_retries,
         )
 
+        # Кэш base64 data URI для изображений галереи.
+        # Заполняется лениво при первом обращении к каждому изображению
+        # через _get_candidate_image_uri(). Устраняет повторные disk reads
+        # и блокировку event loop в prepare_vlm_messages().
+        self._gallery_image_cache: Dict[str, str] = {}
+
         self._is_ready = True
         logger.info("AITourGuide готов")
         logger.info(f"  SGLang: {config.sglang_base_url}")
@@ -480,7 +486,7 @@ class AITourGuide:
         """Конвертирует PIL Image в base64 data URI для OpenAI API.
 
         Ресайзит до max_size px по большей стороне чтобы не превышать
-        лимит payload SGLang.
+        лимит payload vLLM.
         """
         # Ресайз с сохранением пропорций
         w, h = image.size
@@ -494,6 +500,37 @@ class AITourGuide:
             image.save(buf, format="JPEG", quality=quality)
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return f"data:image/jpeg;base64,{b64}"
+
+    def _get_candidate_image_uri(self, candidate_image: str) -> str:
+        """
+        Возвращает base64 data URI для изображения кандидата из галереи.
+
+        Результат кэшируется в _gallery_image_cache по ключу candidate_image,
+        чтобы не читать один и тот же файл с диска при каждом запросе.
+        Устраняет синхронные disk reads в prepare_vlm_messages().
+
+        Args:
+            candidate_image: Имя файла или относительный путь изображения
+
+        Returns:
+            base64 data URI строка
+        """
+        if candidate_image in self._gallery_image_cache:
+            return self._gallery_image_cache[candidate_image]
+
+        candidate_path = candidate_image
+        if self.images_base_dir is not None:
+            candidate_path = str(self.images_base_dir / candidate_image)
+
+        with Image.open(candidate_path) as img:
+            candidate_img = img.convert("RGB")
+        uri = self._image_to_base64_data_uri(candidate_img)
+        self._gallery_image_cache[candidate_image] = uri
+        logger.debug(
+            f"Закэшировано gallery-изображение: {candidate_image} "
+            f"(кэш: {len(self._gallery_image_cache)} записей)"
+        )
+        return uri
 
     def prepare_vlm_messages(
         self,
@@ -527,17 +564,9 @@ class AITourGuide:
                 f"Неподдерживаемый тип query_image: {type(query_image)}"
             )
 
-        # Загружаем изображение кандидата
-        # image_path в метаданных — просто имя файла (photo.jpg),
-        # поэтому добавляем images_base_dir если он задан
-        candidate_path = candidate_image
-        if self.images_base_dir is not None:
-            candidate_path = str(self.images_base_dir / candidate_image)
-        with Image.open(candidate_path) as img:
-            candidate_img = img.convert("RGB")
-
         query_uri = self._image_to_base64_data_uri(query_img)
-        candidate_uri = self._image_to_base64_data_uri(candidate_img)
+        # Изображение кандидата берём из кэша (lazy load + кэш по пути)
+        candidate_uri = self._get_candidate_image_uri(candidate_image)
         caption = candidate_caption[:self.caption_max_length]
 
         return [
@@ -863,89 +892,6 @@ class AITourGuide:
             }
         ]
 
-    async def _vlm_extract_landmark_name(
-        self,
-        image: Image.Image,
-        page_titles: List[str],
-    ) -> Optional[str]:
-        """
-        Двухэтапное извлечение названия достопримечательности через Qwen.
-
-        Этап 1: спрашиваем Qwen без pageTitle — модель использует
-        собственные визуальные знания без риска быть сбитой мусорными
-        заголовками страниц. Пропускается если
-        skip_internet_search_stage1=True.
-
-        Этап 2: если Qwen не смог определить — даём pageTitle как
-        подсказки (они могут содержать мусор, но иногда помогают).
-
-        Args:
-            image: PIL-изображение запроса
-            page_titles: Список pageTitle от Yandex (после базовой очистки),
-                отсортированный по длине (короткие = более точные)
-
-        Returns:
-            Чистое название достопримечательности или None если не удалось.
-        """
-        image_uri = self._image_to_base64_data_uri(image)
-
-        try:
-            # Этап 1: без pageTitle — Qwen использует собственные знания
-            # (пропускаем если skip_internet_search_stage1=True)
-            if not self.config.skip_internet_search_stage1:
-                response = await self.sglang_client.chat_completion(
-                    messages=self._build_vlm_messages(image_uri, hint=None),
-                    max_tokens=48,
-                    temperature=0.0,
-                )
-                raw = str(
-                    response["choices"][0]["message"]["content"]
-                ).strip()
-                logger.debug(f"VLM этап 1 (без подсказок): {raw!r}")
-                result = self._validate_vlm_answer(raw)
-                if result:
-                    logger.info(
-                        f"VLM извлёк название (этап 1): {result!r}"
-                    )
-                    return result
-
-            # Этап 2: с pageTitle как подсказками
-            if not page_titles:
-                logger.info(
-                    "VLM не смог определить название (нет pageTitle)"
-                )
-                return None
-
-            titles_str = "\n".join(
-                f"- {t}" for t in page_titles[:10]
-            )
-            response2 = await self.sglang_client.chat_completion(
-                messages=self._build_vlm_messages(
-                    image_uri, hint=titles_str
-                ),
-                max_tokens=48,
-                temperature=0.0,
-            )
-            raw2 = str(
-                response2["choices"][0]["message"]["content"]
-            ).strip()
-            logger.debug(f"VLM этап 2 (с подсказками): {raw2!r}")
-            result2 = self._validate_vlm_answer(raw2)
-            if result2:
-                logger.info(
-                    f"VLM извлёк название (этап 2): {result2!r}"
-                )
-                return result2
-
-            logger.info(
-                "VLM не смог определить название достопримечательности"
-            )
-            return None
-
-        except Exception as e:
-            logger.warning(f"Ошибка VLM извлечения названия: {e}")
-            return None
-
     async def _search_internet(
         self,
         image: Union[Image.Image, str, bytes],
@@ -996,28 +942,116 @@ class AITourGuide:
 
         async def _do_search() -> Optional[Dict]:
             """Внутренняя корутина — весь поиск под одним таймаутом."""
-            # 1. Yandex Image Search (синхронный вызов в потоке)
-            names = await asyncio.to_thread(
-                self._yandex_search_sync, image
+            # 1. Yandex Image Search (синхронный вызов в потоке) и
+            #    VLM этап 1 (без подсказок) запускаются параллельно.
+            #
+            #    VLM этап 1 не зависит от результатов Yandex — модель
+            #    использует собственные визуальные знания без pageTitle.
+            #    Параллельный запуск экономит ~1–3s на Yandex IO.
+            #
+            #    Если skip_internet_search_stage1=True — VLM этап 1
+            #    пропускается, запускаем только Yandex.
+
+            async def _vlm_stage1_no_hints() -> Optional[str]:
+                """VLM этап 1: название без подсказок."""
+                if (
+                    pil_image is None
+                    or self.config.skip_internet_search_stage1
+                ):
+                    return None
+                image_uri = self._image_to_base64_data_uri(pil_image)
+                try:
+                    response = await self.sglang_client.chat_completion(
+                        messages=self._build_vlm_messages(
+                            image_uri, hint=None
+                        ),
+                        max_tokens=48,
+                        temperature=0.0,
+                    )
+                    raw = str(
+                        response["choices"][0]["message"]["content"]
+                    ).strip()
+                    logger.debug(
+                        f"VLM этап 1 (без подсказок, параллельно): {raw!r}"
+                    )
+                    return self._validate_vlm_answer(raw)
+                except Exception as e:
+                    logger.warning(
+                        f"Ошибка VLM этап 1 (параллельно): {e}"
+                    )
+                    return None
+
+            yandex_task = asyncio.create_task(
+                asyncio.to_thread(self._yandex_search_sync, image)
             )
-            if not names:
+            vlm_stage1_task = asyncio.create_task(_vlm_stage1_no_hints())
+
+            names_raw, vlm_stage1_result = await asyncio.gather(
+                yandex_task, vlm_stage1_task
+            )
+
+            if not names_raw:
                 logger.info("Yandex не вернул результатов")
                 return None
 
             # Сортируем по длине: короткие названия обычно точнее
-            page_titles = sorted(names, key=len)
+            page_titles = sorted(names_raw, key=len)
 
-            # 2. Qwen извлекает чистое название из фото + pageTitle
+            # 2. Определяем vlm_name:
+            #    - если VLM этап 1 уже дал результат — используем его
+            #    - иначе запускаем VLM этап 2 с pageTitle как подсказками
             if pil_image is None:
                 logger.warning(
                     "pil_image недоступен, VLM-шаг пропущен — "
                     "поиск по pageTitle без уточнения от Qwen"
                 )
             vlm_name: Optional[str] = None
-            if pil_image is not None:
-                vlm_name = await self._vlm_extract_landmark_name(
-                    pil_image, page_titles
+            if vlm_stage1_result is not None:
+                # Этап 1 уже выполнен параллельно с Yandex
+                vlm_name = vlm_stage1_result
+                logger.info(
+                    f"VLM извлёк название (этап 1, параллельно): {vlm_name!r}"
                 )
+            elif pil_image is not None:
+                # Этап 1 не дал результата — запускаем этап 2 с подсказками
+                image_uri = self._image_to_base64_data_uri(pil_image)
+                if not page_titles:
+                    logger.info(
+                        "VLM не смог определить название (нет pageTitle)"
+                    )
+                else:
+                    titles_str = "\n".join(
+                        f"- {t}" for t in page_titles[:10]
+                    )
+                    try:
+                        response2 = await self.sglang_client.chat_completion(
+                            messages=self._build_vlm_messages(
+                                image_uri, hint=titles_str
+                            ),
+                            max_tokens=48,
+                            temperature=0.0,
+                        )
+                        raw2 = str(
+                            response2["choices"][0]["message"]["content"]
+                        ).strip()
+                        logger.debug(
+                            f"VLM этап 2 (с подсказками): {raw2!r}"
+                        )
+                        result2 = self._validate_vlm_answer(raw2)
+                        if result2:
+                            vlm_name = result2
+                            logger.info(
+                                f"VLM извлёк название (этап 2): {vlm_name!r}"
+                            )
+                        else:
+                            logger.info(
+                                "VLM не смог определить название "
+                                "достопримечательности"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Ошибка VLM этап 2: {e}"
+                        )
 
             # 3. Wikipedia-поиск — один вызов для всех кандидатов.
             # Если Qwen дал название — добавляем его первым (приоритет
