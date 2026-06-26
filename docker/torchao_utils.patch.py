@@ -53,7 +53,11 @@ old_int8wo = (
 )
 new_int8wo = (
     "        def llm_only_filter(mod, fqn):\n"
-    "            return 'visual' not in fqn and proj_filter_conv3d(mod, fqn)\n"
+    "            # Исключаем visual encoder (Conv3d несовместим с int8)\n"
+    "            # и lm_head (квантование ломает logprobs)\n"
+    "            if 'visual' in fqn or 'lm_head' in fqn:\n"
+    "                return False\n"
+    "            return proj_filter_conv3d(mod, fqn)\n"
     "        quantize_(model, Int8WeightOnlyConfig(),"
     " filter_fn=llm_only_filter)"
 )
