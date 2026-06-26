@@ -30,6 +30,11 @@ def _build_sorted_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     names = result.get("retrieved_names") or []
     p_yes_list = result.get("retrieved_p_yes") or []
 
+    logger.info(
+        f"_build_sorted_candidates: images={len(images)}, "
+        f"p_yes_list={p_yes_list}"
+    )
+
     candidates = []
     for i in range(1, len(images)):
         p_yes = (
@@ -44,6 +49,10 @@ def _build_sorted_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
 
     candidates.sort(key=lambda c: c["p_yes"], reverse=True)
+    logger.info(
+        f"sorted_candidates order: "
+        f"{[(c['name'], round(c['p_yes'], 3)) for c in candidates]}"
+    )
     return candidates
 
 
@@ -53,7 +62,7 @@ async def index(request: Request):
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"use_internet": True},
+        context={"use_internet": True, "sorted_candidates": []},
     )
 
 
