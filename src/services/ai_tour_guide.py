@@ -1233,9 +1233,15 @@ class AITourGuide:
                     or top_image.caption_landmark
                     or top_image.caption
                 )
+                # Русское название для отображения пользователю
+                display_name = (
+                    top_image.landmark_name_ru
+                    or cand.landmark_name
+                )
                 candidates.append({
                     "landmark_id": cand.landmark_id,
                     "landmark_name": cand.landmark_name,
+                    "landmark_name_ru": display_name,
                     "image_path": top_image.image_path,
                     "caption": top_image.caption,
                     "description": description,
@@ -1314,7 +1320,7 @@ class AITourGuide:
         }
 
         return {
-            "name": best["landmark_name"],
+            "name": best["landmark_name_ru"],
             "description": best["description"],
             "p_yes": best["p_yes"],
             "all_p_yes": all_p_yes,
@@ -1719,7 +1725,8 @@ class AITourGuide:
             try:
                 retrieved = await self._retrieve_candidates(image, timing)
                 retrieved_scores = []
-                retrieved_names = []
+                retrieved_names = []      # RU-названия для UI
+                retrieved_names_en = []   # EN-названия для маппинга p_yes
                 retrieved_images = []
                 retrieved_captions = []
 
@@ -1728,7 +1735,14 @@ class AITourGuide:
                     if not top_image:
                         continue
                     retrieved_scores.append(candidate.aggregated_score)
-                    retrieved_names.append(candidate.landmark_name)
+                    # Русское название для отображения пользователю
+                    display_name = (
+                        top_image.landmark_name_ru
+                        or candidate.landmark_name
+                    )
+                    retrieved_names.append(display_name)
+                    # EN-название для маппинга p_yes из VLM
+                    retrieved_names_en.append(candidate.landmark_name)
                     retrieved_images.append(top_image.image_path)
                     retrieved_captions.append(top_image.caption)
 
@@ -1768,11 +1782,12 @@ class AITourGuide:
                 result["name"] = parsed["name"]
                 result["description"] = parsed["description"]
                 # Заполняем p_yes для каждого кандидата в том же порядке
-                # что retrieved_names — для отображения в UI
+                # что retrieved_names — для отображения в UI.
+                # Маппинг строится по EN-именам (all_p_yes ключи — EN).
                 all_p_yes = parsed.get("all_p_yes", {})
                 result["retrieved_p_yes"] = [
-                    all_p_yes.get(name, 0.0)
-                    for name in retrieved_names
+                    all_p_yes.get(name_en, 0.0)
+                    for name_en in retrieved_names_en
                 ]
                 logger.info(
                     f"[{correlation_id}] VLM выбрал: {parsed['name']} "

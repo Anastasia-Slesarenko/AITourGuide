@@ -49,6 +49,9 @@ class GalleryImageMetadata:
     caption_landmark: str  # Сводное описание достопримечательности
     caption: str           # Описание конкретного изображения
 
+    # Русское название для отображения пользователю
+    landmark_name_ru: str = ""
+
     # Оценки качества
     confidence: float = 0.0
     mean_conf: float = 0.0
@@ -87,6 +90,7 @@ class GalleryImageMetadata:
             "image_path": self.image_path,
             "landmark_id": self.landmark_id,
             "landmark_name": self.landmark_name,
+            "landmark_name_ru": self.landmark_name_ru,
             "caption": self.caption,
             "caption_landmark": self.caption_landmark,
             "confidence": self.confidence,
@@ -392,6 +396,7 @@ class LandmarkRetriever:
                 image_path=d.get("image_path", ""),
                 landmark_id=d.get("landmark_id", ""),
                 landmark_name=d.get("landmark_name", ""),
+                landmark_name_ru=d.get("landmark_name_ru", ""),
                 caption=d.get("caption", ""),
                 caption_landmark=d.get("caption_landmark", ""),
                 confidence=d.get("confidence", 0.0),
@@ -505,10 +510,17 @@ def build_index_from_landmarks(
 
     for landmark in tqdm(landmarks, desc="Сбор изображений"):
         landmark_id = landmark.get("landmark_id", "")
+        # Для VLM используем английское название (модель обучена на EN)
         landmark_name = (
             landmark.get("name_en", "").strip()
             or landmark.get("name_ru", "").strip()
             or landmark.get("name", "").strip()
+        )
+        # Русское название для отображения пользователю
+        landmark_name_ru = (
+            landmark.get("name_ru", "").strip()
+            or landmark.get("name", "").strip()
+            or landmark_name
         )
         valid_images = landmark.get("valid_images", [])
 
@@ -528,6 +540,7 @@ def build_index_from_landmarks(
                 "image_path": img_path,
                 "landmark_id": landmark_id,
                 "landmark_name": landmark_name,
+                "landmark_name_ru": landmark_name_ru,
                 "caption": img_caption,
                 "caption_landmark": landmark.get(
                     "landmark_summary_caption", landmark_name
@@ -596,6 +609,7 @@ def build_index_from_landmarks(
                 image_path=item["image_path"],
                 landmark_id=item["landmark_id"],
                 landmark_name=item["landmark_name"],
+                landmark_name_ru=item.get("landmark_name_ru", ""),
                 caption=item["caption"],
                 caption_landmark=item["caption_landmark"],
                 confidence=lm.get("confidence", 0.0),

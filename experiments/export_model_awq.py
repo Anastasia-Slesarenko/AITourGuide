@@ -1,25 +1,33 @@
 """
-Merge LoRA + GPTQ int4 квантование Qwen2-VL для SGLang на T4 (sm75).
+Merge LoRA + int4/int8 квантование Qwen2-VL через bitsandbytes для SGLang.
 
 Пайплайн:
   1. Загружаем base модель + LoRA адаптер
   2. Merge LoRA в веса (merge_and_unload)
-  3. Квантуем LLM-часть в GPTQ int4, vision encoder оставляем в fp16
-  4. Сохраняем в HuggingFace формате — SGLang читает напрямую
+  3. Перезагружаем merged модель в int4 NF4 или int8 (bitsandbytes)
+  4. Сохраняем в HuggingFace формате
+
+Почему bitsandbytes:
+  - Встроен в transformers, не требует доп. установки
+  - Поддерживает любую архитектуру (включая multimodal Qwen2-VL)
+  - auto-gptq не поддерживает qwen2_vl_text
+  - autoawq/llmcompressor несовместимы с transformers==4.57.1
+
+Сравнение режимов:
+  int4 NF4: ~1.1GB, быстрее, чуть ниже качество
+  int8:     ~2.0GB, медленнее, качество ближе к fp16
 
 Требования:
-  pip install auto-gptq optimum
-
-  auto-gptq совместим с transformers==4.57.1 и не ломает зависимости.
+  pip install bitsandbytes  (обычно уже есть в DataSphere)
 
 Запуск:
   python experiments/export_model_awq.py
 
 После квантования запускать SGLang:
   python -m sglang.launch_server \
-    --model-path /path/to/qwen2-vl-2b-r16-gptq \
+    --model-path /path/to/qwen2-vl-2b-r16-int4 \
     --served-model-name qwen2-vl-2b-r16 \
-    --quantization gptq \
+    --quantization bitsandbytes \
     --dtype float16 \
     --port 30000
 """
@@ -27,8 +35,16 @@ Merge LoRA + GPTQ int4 квантование Qwen2-VL для SGLang на T4 (sm
 import json
 import torch
 from pathlib import Path
-from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+from transformers import (
+    AutoProcessor,
+    BitsAndBytesConfig,
+    Qwen2VLForConditionalGeneration,
+)
 from peft import PeftModel
+
+# ============================================================
+# КОНФИГУРАЦИЯ — редактируйте здесь
+# ============================================================
 
 # Пути
 BASE_MODEL_PATH = "Qwen/Qwen2-VL-2B-Instruct"
@@ -40,24 +56,47 @@ LORA_CHECKPOINT_PATH = (
 MERGED_FP16_DIR = Path(
     "/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-merged"
 )
-# Финальная папка с GPTQ моделью
-GPTQ_OUTPUT_DIR = Path(
-    "/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-gptq"
+
+# Режим квантования: "int4" или "int8"
+#   int4 NF4: ~1.1GB, быстрее, чуть ниже качество
+#   int8:     ~2.0GB, медленнее, качество ближе к fp16
+QUANT_MODE = "int4"   # <-- меняйте здесь
+
+# Финальная папка с квантованной моделью (подставляется автоматически)
+QUANT_OUTPUT_DIR = Path(
+    f"/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-{QUANT_MODE}"
 )
 
-# GPTQ параметры
-GPTQ_CONFIG = {
-    "bits": 4,
-    "group_size": 128,
-    "desc_act": False,   # False = быстрее на T4, True = чуть точнее
-    # Vision encoder НЕ квантуем:
-    # - он уже небольшой (~300MB в fp16)
-    # - основной bottleneck — LLM-часть (28 слоёв)
-    "modules_to_not_convert": [
-        "visual",   # весь vision encoder Qwen2-VL
-        "lm_head",  # выходной слой — не квантуем для стабильности
-    ],
-}
+# ============================================================
+
+# Модули, которые НЕ квантуем:
+# - visual — весь vision encoder (~300MB, небольшой, квантование нестабильно)
+# - lm_head — выходной слой (квантование ухудшает качество генерации)
+SKIP_MODULES = ["visual", "lm_head"]
+
+# BitsAndBytes int4 конфиг
+# NF4 (NormalFloat4) — лучшее качество для int4, разработан для LLM
+BNB_INT4_CONFIG = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",          # NF4 точнее обычного int4
+    # двойная квантизация: ~0.4 бит/параметр экономии
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_compute_dtype=torch.float16,  # вычисления в fp16
+    llm_int8_skip_modules=SKIP_MODULES,    # исключаем visual и lm_head
+)
+
+# BitsAndBytes int8 конфиг
+# LLM.int8() — поканальное масштабирование, качество близко к fp16
+BNB_INT8_CONFIG = BitsAndBytesConfig(
+    load_in_8bit=True,
+    llm_int8_skip_modules=SKIP_MODULES,    # исключаем visual и lm_head
+)
+
+# Выбор конфига по QUANT_MODE
+if QUANT_MODE not in ("int4", "int8"):
+    raise ValueError(
+        f"QUANT_MODE должен быть 'int4' или 'int8', получено: {QUANT_MODE!r}"
+    )
 
 
 def step1_merge_lora() -> Path:
@@ -110,121 +149,81 @@ def step1_merge_lora() -> Path:
     return MERGED_FP16_DIR
 
 
-def step2_quantize_gptq(merged_dir: Path) -> Path:
+def step2_quantize(merged_dir: Path) -> Path:
     """
-    Шаг 2: GPTQ int4 квантование LLM-части, vision encoder остаётся fp16.
+    Шаг 2: Загружаем merged fp16 модель в int4 NF4 или int8 (bitsandbytes)
+    и сохраняем на диск.
 
-    Использует auto-gptq — совместим с transformers==4.57.1.
-    Установка: pip install auto-gptq optimum
+    bitsandbytes встроен в transformers и поддерживает Qwen2-VL.
+    Размер: ~4GB fp16 -> ~1.1GB int4 / ~2.0GB int8.
 
-    Размер модели: ~4GB fp16 → ~1.3GB int4 (только LLM-часть).
+    Режим выбирается через QUANT_MODE в конфиге вверху файла.
 
-    Возвращает путь к GPTQ директории.
+    Возвращает путь к квантованной директории.
     """
+    mode = "int8" if QUANT_MODE == "int8" else "int4 NF4"
+    bnb_config = BNB_INT8_CONFIG if QUANT_MODE == "int8" else BNB_INT4_CONFIG
+
     print("\n" + "=" * 60)
-    print("Шаг 2: GPTQ int4 квантование (auto-gptq)")
+    print(f"Шаг 2: {mode} квантование (bitsandbytes)")
     print("=" * 60)
-    print(f"  Не квантуем: {GPTQ_CONFIG['modules_to_not_convert']}")
 
-    if GPTQ_OUTPUT_DIR.exists():
-        print(f"  Уже существует: {GPTQ_OUTPUT_DIR}")
+    if QUANT_OUTPUT_DIR.exists():
+        print(f"  Уже существует: {QUANT_OUTPUT_DIR}")
         print("  Пропускаем квантование (удалите папку чтобы пересоздать)")
-        return GPTQ_OUTPUT_DIR
+        return QUANT_OUTPUT_DIR
 
     try:
-        from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+        import bitsandbytes  # noqa: F401
     except ImportError:
         raise ImportError(
-            "auto-gptq не установлен.\n"
-            "Установите: pip install auto-gptq optimum\n\n"
-            "auto-gptq совместим с transformers==4.57.1."
+            "bitsandbytes не установлен.\n"
+            "Установите: pip install bitsandbytes"
         )
 
-    # Калибровочный датасет — небольшой набор текстов для определения
-    # масштабов квантования. Используем стандартный c4/wikitext.
-    from datasets import load_dataset
-
-    print("  Загружаем калибровочный датасет (wikitext-2)...")
-    dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-    calibration_texts = [
-        t for t in dataset["text"] if len(t.strip()) > 50
-    ][:512]
-
+    print(f"  Режим: {mode}")
     print(f"  Загружаем merged модель: {merged_dir}")
+    print("  (загрузка сразу квантует веса — занимает ~2-5 мин)")
+    model = Qwen2VLForConditionalGeneration.from_pretrained(
+        str(merged_dir),
+        quantization_config=bnb_config,
+        device_map="cuda",
+        trust_remote_code=True,
+    )
     processor = AutoProcessor.from_pretrained(
         str(merged_dir),
         trust_remote_code=True,
     )
-    tokenizer = processor.tokenizer
 
-    quantize_config = BaseQuantizeConfig(
-        bits=GPTQ_CONFIG["bits"],
-        group_size=GPTQ_CONFIG["group_size"],
-        desc_act=GPTQ_CONFIG["desc_act"],
-        model_file_base_name="model",
-    )
-
-    # auto-gptq загружает модель как CausalLM.
-    # Visual encoder пропускается через modules_to_not_convert.
-    model = AutoGPTQForCausalLM.from_pretrained(
-        str(merged_dir),
-        quantize_config=quantize_config,
-        device_map="cuda",
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-        modules_to_not_convert=GPTQ_CONFIG["modules_to_not_convert"],
-    )
-
-    print(
-        f"  GPTQ: bits={GPTQ_CONFIG['bits']}, "
-        f"group_size={GPTQ_CONFIG['group_size']}, "
-        f"desc_act={GPTQ_CONFIG['desc_act']}"
-    )
-    print("  Токенизируем калибровочные данные...")
-    calibration_data = [
-        tokenizer(
-            text,
-            return_tensors="pt",
-            max_length=2048,
-            truncation=True,
-        )
-        for text in calibration_texts
-    ]
-
-    print("  Запускаем калибровку и квантование (~5-15 мин)...")
-    model.quantize(calibration_data)
-
-    GPTQ_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"  Сохраняем GPTQ модель -> {GPTQ_OUTPUT_DIR}")
-    model.save_quantized(str(GPTQ_OUTPUT_DIR), use_safetensors=True)
-    processor.save_pretrained(str(GPTQ_OUTPUT_DIR))
+    QUANT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"  Сохраняем {mode} модель -> {QUANT_OUTPUT_DIR}")
+    # save_pretrained сохраняет квантованные веса + quantization_config.json
+    model.save_pretrained(str(QUANT_OUTPUT_DIR), safe_serialization=True)
+    processor.save_pretrained(str(QUANT_OUTPUT_DIR))
 
     del model
     torch.cuda.empty_cache()
 
-    print(f"  OK: GPTQ модель сохранена: {GPTQ_OUTPUT_DIR}")
-    return GPTQ_OUTPUT_DIR
+    print(f"  OK: {mode} модель сохранена: {QUANT_OUTPUT_DIR}")
+    return QUANT_OUTPUT_DIR
 
 
-def step3_check_vision_weights(gptq_dir: Path):
+def step3_check_vision_weights(quant_dir: Path):
     """
-    Шаг 3: Проверяем что visual веса присутствуют в GPTQ директории.
-
-    auto-gptq может не сохранить visual веса если модель загружалась
-    как CausalLM. Выводим предупреждение если visual весов нет.
+    Шаг 3: Проверяем что visual веса присутствуют в квантованной директории.
     """
     print("\n" + "=" * 60)
     print("Шаг 3: Проверка vision encoder весов")
     print("=" * 60)
 
-    gptq_shards = list(gptq_dir.glob("*.safetensors"))
-    if not gptq_shards:
-        print("  WARN: GPTQ директория пуста — пропускаем")
+    shards = list(quant_dir.glob("*.safetensors"))
+    if not shards:
+        print("  WARN: директория пуста — пропускаем")
         return
 
-    index_file = gptq_dir / "model.safetensors.index.json"
+    index_file = quant_dir / "model.safetensors.index.json"
     if not index_file.exists():
-        print("  Один shard — visual веса внутри, пропускаем")
+        print("  Один shard — visual веса внутри, OK")
         return
 
     with open(index_file) as f:
@@ -236,33 +235,33 @@ def step3_check_vision_weights(gptq_dir: Path):
     if visual_keys:
         print(
             f"  OK: Visual веса присутствуют "
-            f"({len(visual_keys)} тензоров в fp16)"
+            f"({len(visual_keys)} тензоров)"
         )
     else:
-        print("  WARN: Visual веса отсутствуют в GPTQ модели!")
+        print("  WARN: Visual веса отсутствуют!")
         print(
-            "  auto-gptq не сохранил vision encoder.\n"
+            "  bitsandbytes не сохранил vision encoder.\n"
             "  Нужно скопировать visual веса вручную из merged fp16 модели."
         )
 
 
-def print_summary(gptq_dir: Path):
+def print_summary(quant_dir: Path):
     """Выводит итоговую информацию и команды для запуска."""
     print("\n" + "=" * 60)
     print("ГОТОВО")
     print("=" * 60)
 
     total_size = sum(
-        f.stat().st_size for f in gptq_dir.rglob("*") if f.is_file()
+        f.stat().st_size for f in quant_dir.rglob("*") if f.is_file()
     )
-    print(f"  Путь:   {gptq_dir}")
+    print(f"  Путь:   {quant_dir}")
     print(f"  Размер: {total_size / 1e9:.2f} GB")
 
     cmd = (
         "python -m sglang.launch_server \\\n"
-        f"  --model-path {gptq_dir} \\\n"
+        f"  --model-path {quant_dir} \\\n"
         "  --served-model-name qwen2-vl-2b-r16 \\\n"
-        "  --quantization gptq \\\n"
+        "  --quantization bitsandbytes \\\n"
         "  --dtype float16 \\\n"
         "  --port 30000 \\\n"
         "  --host 0.0.0.0 \\\n"
@@ -273,12 +272,13 @@ def print_summary(gptq_dir: Path):
     print("\nЗапуск SGLang:")
     print(cmd)
 
+    suffix = QUANT_MODE
     dc_cmd = (
         "command: >\n"
         "  python -m sglang.launch_server\n"
-        "    --model-path /models/qwen2-vl-2b-r16-gptq\n"
+        f"    --model-path /models/qwen2-vl-2b-r16-{suffix}\n"
         "    --served-model-name qwen2-vl-2b-r16\n"
-        "    --quantization gptq\n"
+        "    --quantization bitsandbytes\n"
         "    --dtype float16\n"
         "    --port 30000\n"
         "    --host 0.0.0.0\n"
@@ -291,19 +291,19 @@ def print_summary(gptq_dir: Path):
 
 
 def main():
+    mode = "int8" if QUANT_MODE == "int8" else "int4 NF4"
     print("=" * 60)
-    print("Qwen2-VL: LoRA merge + GPTQ int4 квантование")
-    print("Vision encoder остаётся в fp16")
+    print(f"Qwen2-VL: LoRA merge + {mode} квантование (bitsandbytes)")
     print("=" * 60)
     print(f"  Base модель:  {BASE_MODEL_PATH}")
     print(f"  LoRA:         {LORA_CHECKPOINT_PATH}")
     print(f"  Merged fp16:  {MERGED_FP16_DIR}")
-    print(f"  GPTQ output:  {GPTQ_OUTPUT_DIR}")
+    print(f"  Output:       {QUANT_OUTPUT_DIR}")
 
     merged_dir = step1_merge_lora()
-    gptq_dir = step2_quantize_gptq(merged_dir)
-    step3_check_vision_weights(gptq_dir)
-    print_summary(gptq_dir)
+    quant_dir = step2_quantize(merged_dir)
+    step3_check_vision_weights(quant_dir)
+    print_summary(quant_dir)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ version: "3.9"
 # Структура бакета S3 (монтируется через s3fs в /mnt/s3-aitourguide):
 #   landmarks/                          — изображения галереи
 #   dataset/index/siglip/               — FAISS-индекс
-#   models/qwen2-vl-2b-r16/             — VLM модель для SGLang
+#   models/qwen2-vl-2b-r16-int8/        — VLM модель для SGLang
 #   models/siglip-base-patch16-224/     — SigLIP модель
 #
 # Переменные окружения (.env):
@@ -51,17 +51,18 @@ services:
 
     volumes:
       # VLM модель — читается целиком при старте, монтируем напрямую из s3fs
-      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16:/models/qwen2-vl-2b-r16:ro
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-int8:/models/qwen2-vl-2b-r16-int8:ro
 
     command: >
       python -m sglang.launch_server
-        --model-path /models/qwen2-vl-2b-r16
-        --served-model-name qwen2-vl-2b-r16
+        --model-path /models/qwen2-vl-2b-r16-int8
+        --served-model-name qwen2-vl-2b-r16-int8
         --port 30000
         --host 0.0.0.0
         --mem-fraction-static 0.85
         --max-total-tokens 4096
-        --dtype float16
+        --dtype auto
+        --quantization bitsandbytes
         --attention-backend triton
 
     ports:
@@ -98,7 +99,7 @@ services:
       # Переопределяем адрес SGLang внутри docker-сети
       SGLANG_BASE_URL: "http://sglang:30000/v1"
       # Должно совпадать с --served-model-name в sglang
-      SGLANG_MODEL_NAME: "qwen2-vl-2b-r16"
+      SGLANG_MODEL_NAME: "qwen2-vl-2b-r16-int8"
       # Пути внутри контейнера (совпадают с точками монтирования volumes ниже)
       INDEX_DIR: "/data/index/siglip"
       SIGLIP_MODEL_PATH: "/data/models/siglip-base-patch16-224"
