@@ -1,43 +1,52 @@
 FROM lmsysorg/sglang:v0.5.13.post1-cu129
 
 # SGLang v0.5.13 безусловно импортирует float8_dynamic_activation_float8_weight
-# из torchao.quantization при любом --torchao-config, включая int8wo.
-# Этот символ появился в torchao>=0.7.0, но образ поставляется со старой версией.
+# и float8_weight_only из torchao.quantization при любом --torchao-config.
+# Эти символы появились в torchao>=0.7.0, но образ поставляется со старой версией.
 #
-# Патчим torchao_utils.py: переносим float8-импорты внутрь условия
-# которое выполняется только для float8 конфигов.
-# Для int8wo эти импорты не нужны.
+# Патч: убираем float8-импорты из общего блока — они нужны только для fp8 конфигов.
+# int8wo использует только int8_weight_only который есть в старой версии torchao.
 
-RUN python - <<'EOF'
-import re
+RUN sed -i \
+    's/    from torchao.quantization import (\n        float8_dynamic_activation_float8_weight,\n        float8_weight_only,\n        int4_weight_only,\n        int8_dynamic_activation_int8_weight,\n        int8_weight_only,\n        quantize_,\n    )/    from torchao.quantization import (\n        int4_weight_only,\n        int8_dynamic_activation_int8_weight,\n        int8_weight_only,\n        quantize_,\n    )/' \
+    /sgl-workspace/sglang/python/sglang/srt/layers/torchao_utils.py || true
 
+# sed с многострочным паттерном ненадёжен — используем Python
+RUN python3 - <<'PYEOF'
 path = "/sgl-workspace/sglang/python/sglang/srt/layers/torchao_utils.py"
 with open(path) as f:
     src = f.read()
 
-# Оборачиваем весь блок импорта torchao.quantization в try/except
-# чтобы старая версия torchao не ломала int8wo
-old = "from torchao.quantization import ("
-new = "try:\n    from torchao.quantization import ("
-src = src.replace(old, new, 1)
+old_import = """    from torchao.quantization import (
+        float8_dynamic_activation_float8_weight,
+        float8_weight_only,
+        int4_weight_only,
+        int8_dynamic_activation_int8_weight,
+        int8_weight_only,
+        quantize_,
+    )"""
 
-# Находим конец блока импорта (строку с закрывающей скобкой) и добавляем except
-# Ищем паттерн: строка содержит только ")" после блока импорта torchao.quantization
-lines = src.split("\n")
-in_import = False
-result = []
-for i, line in enumerate(lines):
-    if "try:\n    from torchao.quantization import (" in "\n".join(lines[max(0,i-2):i+1]):
-        in_import = True
-    result.append(line)
-    if in_import and line.strip() == ")":
-        result.append("except ImportError:")
-        result.append("    float8_dynamic_activation_float8_weight = None")
-        result.append("    float8_weight_only = None")
-        in_import = False
+new_import = """    from torchao.quantization import (
+        int4_weight_only,
+        int8_dynamic_activation_int8_weight,
+        int8_weight_only,
+        quantize_,
+    )
+    try:
+        from torchao.quantization import (
+            float8_dynamic_activation_float8_weight,
+            float8_weight_only,
+        )
+    except ImportError:
+        float8_dynamic_activation_float8_weight = None
+        float8_weight_only = None"""
 
-with open(path, "w") as f:
-    f.write("\n".join(result))
-
-print("Patch applied successfully")
-EOF
+if old_import in src:
+    src = src.replace(old_import, new_import)
+    with open(path, "w") as f:
+        f.write(src)
+    print("Patch applied successfully")
+else:
+    print("ERROR: pattern not found, check torchao_utils.py manually")
+    import sys; sys.exit(1)
+PYEOF
