@@ -50,13 +50,14 @@ services:
               capabilities: [gpu]
 
     volumes:
-      # VLM модель — читается целиком при старте, монтируем напрямую из s3fs
-      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-int8:/models/qwen2-vl-2b-r16-int8:ro
+      # VLM модель — fp16 merged, SGLang квантует в int8 на лету через --quantization bitsandbytes.
+      # Подаём чистую fp16 модель — bitsandbytes-сохранённые веса (.SCB) SGLang не умеет читать.
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-merged:/models/qwen2-vl-2b-r16-merged:ro
 
     # bitsandbytes отсутствует в базовом образе SGLang — устанавливаем перед запуском.
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "pip install 'bitsandbytes>=0.46.1' -q && python -m sglang.launch_server --model-path /models/qwen2-vl-2b-r16-int8 --served-model-name qwen2-vl-2b-r16-int8 --port 30000 --host 0.0.0.0 --mem-fraction-static 0.85 --max-total-tokens 4096 --dtype auto --quantization bitsandbytes --attention-backend triton"
+      - "pip install 'bitsandbytes>=0.46.1' -q && python -m sglang.launch_server --model-path /models/qwen2-vl-2b-r16-merged --served-model-name qwen2-vl-2b-r16 --port 30000 --host 0.0.0.0 --mem-fraction-static 0.85 --max-total-tokens 4096 --dtype auto --quantization bitsandbytes --attention-backend triton"
 
     ports:
       - "30000:30000"
@@ -92,7 +93,7 @@ services:
       # Переопределяем адрес SGLang внутри docker-сети
       SGLANG_BASE_URL: "http://sglang:30000/v1"
       # Должно совпадать с --served-model-name в sglang
-      SGLANG_MODEL_NAME: "qwen2-vl-2b-r16-int8"
+      SGLANG_MODEL_NAME: "qwen2-vl-2b-r16"
       # Пути внутри контейнера (совпадают с точками монтирования volumes ниже)
       INDEX_DIR: "/data/index/siglip"
       SIGLIP_MODEL_PATH: "/data/models/siglip-base-patch16-224"
