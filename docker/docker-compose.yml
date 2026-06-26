@@ -36,9 +36,10 @@ services:
   # SGLang VLM-сервер
   # ----------------------------------------------------------
   sglang:
-    # latest — актуальная версия с улучшенной torchao интеграцией.
-    # Для воспроизводимости зафиксировать конкретный тег после проверки.
-    image: lmsysorg/sglang:latest
+    # v0.5.13 — последняя версия с поддержкой T4 (sm75).
+    # SGLang latest требует sm80+ (A100/A10), T4 не поддерживается.
+    # torchao int8wo ломает logprobs на T4 — запускаем fp16 (~4.82GB из 16GB).
+    image: lmsysorg/sglang:v0.5.13.post1-cu129
     container_name: aitourguide_sglang
     restart: unless-stopped
 
