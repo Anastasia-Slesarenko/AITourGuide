@@ -67,6 +67,8 @@ services:
         --max-model-len 4096
         --gpu-memory-utilization 0.85
         --trust-remote-code
+        --attention-backend xformers
+        --enforce-eager
 
     ports:
       - "30000:30000"
