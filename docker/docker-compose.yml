@@ -36,9 +36,9 @@ services:
   # SGLang VLM-сервер
   # ----------------------------------------------------------
   sglang:
-    # v0.6.x — улучшенная интеграция torchao, корректные logprobs с int8wo.
-    # Если образ недоступен — откатиться на v0.5.13.post1-cu129 без квантования.
-    image: lmsysorg/sglang:v0.6.1-cu129
+    # latest — актуальная версия с улучшенной torchao интеграцией.
+    # Для воспроизводимости зафиксировать конкретный тег после проверки.
+    image: lmsysorg/sglang:latest
     container_name: aitourguide_sglang
     restart: unless-stopped
 
