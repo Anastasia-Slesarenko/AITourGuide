@@ -121,6 +121,7 @@ class AITourGuideConfig:
         """Конвертирует конфигурацию в словарь."""
         return asdict(self)
 
+
 def _metrics_to_dict() -> Dict:
     """
     Возвращает снимок метрик в виде словаря для /v1/health и /v1/info.
@@ -208,7 +209,6 @@ def _update_metrics(result: Dict, image_size_bytes: int = 0) -> None:
     # Размер изображения
     if image_size_bytes > 0:
         METRICS.image_size_bytes.observe(image_size_bytes)
-
 
 
 class SGLangClient:
@@ -524,7 +524,7 @@ class AITourGuide:
 
         with Image.open(candidate_path) as img:
             candidate_img = img.convert("RGB")
-        uri = self._image_to_base64_data_uri(candidate_img)
+            uri = self._image_to_base64_data_uri(candidate_img)
         self._gallery_image_cache[candidate_image] = uri
         logger.debug(
             f"Закэшировано gallery-изображение: {candidate_image} "
@@ -942,6 +942,13 @@ class AITourGuide:
 
         async def _do_search() -> Optional[Dict]:
             """Внутренняя корутина — весь поиск под одним таймаутом."""
+            # Кодируем query-изображение в base64 один раз —
+            # используется и в этапе 1, и в этапе 2 VLM.
+            image_uri: Optional[str] = (
+                self._image_to_base64_data_uri(pil_image)
+                if pil_image is not None else None
+            )
+
             # 1. Yandex Image Search (синхронный вызов в потоке) и
             #    VLM этап 1 (без подсказок) запускаются параллельно.
             #
@@ -955,11 +962,10 @@ class AITourGuide:
             async def _vlm_stage1_no_hints() -> Optional[str]:
                 """VLM этап 1: название без подсказок."""
                 if (
-                    pil_image is None
+                    image_uri is None
                     or self.config.skip_internet_search_stage1
                 ):
                     return None
-                image_uri = self._image_to_base64_data_uri(pil_image)
                 try:
                     response = await self.sglang_client.chat_completion(
                         messages=self._build_vlm_messages(
@@ -1000,7 +1006,7 @@ class AITourGuide:
             # 2. Определяем vlm_name:
             #    - если VLM этап 1 уже дал результат — используем его
             #    - иначе запускаем VLM этап 2 с pageTitle как подсказками
-            if pil_image is None:
+            if image_uri is None:
                 logger.warning(
                     "pil_image недоступен, VLM-шаг пропущен — "
                     "поиск по pageTitle без уточнения от Qwen"
@@ -1012,9 +1018,8 @@ class AITourGuide:
                 logger.info(
                     f"VLM извлёк название (этап 1, параллельно): {vlm_name!r}"
                 )
-            elif pil_image is not None:
+            elif image_uri is not None:
                 # Этап 1 не дал результата — запускаем этап 2 с подсказками
-                image_uri = self._image_to_base64_data_uri(pil_image)
                 if not page_titles:
                     logger.info(
                         "VLM не смог определить название (нет pageTitle)"

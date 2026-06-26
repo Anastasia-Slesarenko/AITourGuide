@@ -232,8 +232,8 @@
                         </button>
                     </div>
 
-                    {# Секция «Похожие» — все кандидаты кроме победителя (index 0) #}
-                    {% if result.retrieved_images and result.retrieved_images | length > 1 %}
+                    {# Секция «Похожие» — кандидаты кроме победителя, отсортированные по p_yes убыванию #}
+                    {% if sorted_candidates %}
                     <div class="candidates-section glass-card">
                         <div class="candidates-header">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -244,25 +244,23 @@
                             <h3>Другие кандидаты из базы</h3>
                         </div>
                         <div class="candidates-grid">
-                            {% for i in range(1, result.retrieved_images | length) %}
+                            {% for cand in sorted_candidates %}
                             <div class="candidate-card glass-card">
                                 <div class="candidate-img-wrapper">
                                     <img
-                                        src="/gallery-image/{{ result.retrieved_images[i] }}"
-                                        alt="{{ result.retrieved_names[i] if result.retrieved_names and result.retrieved_names[i] else 'Кандидат' }}"
+                                        src="/gallery-image/{{ cand.image }}"
+                                        alt="{{ cand.name or 'Кандидат' }}"
                                         loading="lazy"
                                         onerror="this.closest('.candidate-card').style.display='none'"
                                     >
                                 </div>
                                 <div class="candidate-info">
                                     <span class="candidate-name">
-                                        {{ result.retrieved_names[i] if result.retrieved_names and result.retrieved_names[i] else '—' }}
+                                        {{ cand.name or '—' }}
                                     </span>
-                                    {% if result.retrieved_p_yes and result.retrieved_p_yes[i] is defined %}
                                     <span class="candidate-score">
-                                        {{ (result.retrieved_p_yes[i] * 100) | round(1) }}%
+                                        {{ (cand.p_yes * 100) | round(1) }}%
                                     </span>
-                                    {% endif %}
                                 </div>
                             </div>
                             {% endfor %}
