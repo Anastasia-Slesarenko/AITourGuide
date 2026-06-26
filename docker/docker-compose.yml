@@ -36,7 +36,11 @@ services:
   # SGLang VLM-сервер
   # ----------------------------------------------------------
   sglang:
-    image: lmsysorg/sglang:v0.5.13.post1-cu129
+    # Собираем свой образ на базе lmsysorg/sglang с обновлённым torchao.
+    # Базовый образ поставляется со старой версией torchao (нет float8_dynamic_activation_float8_weight).
+    build:
+      context: .
+      dockerfile: Dockerfile.sglang
     container_name: aitourguide_sglang
     restart: unless-stopped
 
@@ -53,10 +57,17 @@ services:
       # VLM модель fp16. torchao квантует веса в int8 на лету при загрузке (~2GB в VRAM).
       - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16:/models/qwen2-vl-2b-r16:ro
 
-    # torchao в образе SGLang v0.5.13 старой версии — обновляем перед запуском.
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - "pip install torchao -q && python -m sglang.launch_server --model-path /models/qwen2-vl-2b-r16 --served-model-name qwen2-vl-2b-r16 --port 30000 --host 0.0.0.0 --mem-fraction-static 0.85 --max-total-tokens 4096 --dtype float16 --torchao-config int8wo --attention-backend triton"
+    command: >
+      python -m sglang.launch_server
+        --model-path /models/qwen2-vl-2b-r16
+        --served-model-name qwen2-vl-2b-r16
+        --port 30000
+        --host 0.0.0.0
+        --mem-fraction-static 0.85
+        --max-total-tokens 4096
+        --dtype float16
+        --torchao-config int8wo
+        --attention-backend triton
 
     ports:
       - "30000:30000"

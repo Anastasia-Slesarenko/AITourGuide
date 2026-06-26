@@ -1,0 +1,6 @@
+FROM lmsysorg/sglang:v0.5.13.post1-cu129
+
+# Обновляем torchao до версии совместимой с SGLang v0.5.13.
+# Базовый образ поставляется со старой версией torchao, в которой
+# отсутствует float8_dynamic_activation_float8_weight (нужен для --torchao-config).
+RUN pip install --upgrade torchao -q
