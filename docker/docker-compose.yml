@@ -53,7 +53,11 @@ services:
       # VLM модель — читается целиком при старте, монтируем напрямую из s3fs
       - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-int8:/models/qwen2-vl-2b-r16-int8:ro
 
+    # bitsandbytes отсутствует в базовом образе SGLang — устанавливаем перед запуском.
+    # Используем /bin/sh -c чтобы выполнить pip install до старта сервера.
+    entrypoint: ["/bin/sh", "-c"]
     command: >
+      pip install bitsandbytes>=0.46.1 -q &&
       python -m sglang.launch_server
         --model-path /models/qwen2-vl-2b-r16-int8
         --served-model-name qwen2-vl-2b-r16-int8
