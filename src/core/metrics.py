@@ -53,7 +53,7 @@ class _AITourGuideMetrics:
         )
         self.vlm_duration = Histogram(
             "aitourguide_vlm_duration_seconds",
-            "Время VLM reranking через SGLang",
+            "Время VLM reranking через vLLM",
             buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0),
         )
         self.total_duration = Histogram(

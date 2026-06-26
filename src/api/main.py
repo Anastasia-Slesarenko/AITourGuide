@@ -48,10 +48,10 @@ async def lifespan(app: FastAPI):
     try:
         guide = AITourGuide(
             index_dir=str(settings.index_dir_abs),
-            sglang_base_url=settings.sglang_base_url,
-            sglang_model_name=settings.sglang_model_name,
-            sglang_timeout=settings.sglang_timeout,
-            sglang_max_retries=settings.sglang_max_retries,
+            vllm_base_url=settings.vllm_base_url,
+            vllm_model_name=settings.vllm_model_name,
+            vllm_timeout=settings.vllm_timeout,
+            vllm_max_retries=settings.vllm_max_retries,
             device=settings.device,
             siglip_model_path=settings.siglip_model_path,
             images_base_dir=settings.images_base_dir,
@@ -92,7 +92,7 @@ app = FastAPI(
     title="AI Tour Guide API",
     description=(
         "🏛️ Сервис распознавания достопримечательностей по фотографиям.\n\n"
-        "**Пайплайн:** SigLIP + FAISS → VLM reranking (SGLang) → "
+        "**Пайплайн:** SigLIP + FAISS → VLM reranking (vLLM) → "
         "интернет-поиск при низкой уверенности."
     ),
     version="1.0.0",

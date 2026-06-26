@@ -1,9 +1,0 @@
-FROM lmsysorg/sglang:v0.5.13.post1-cu129
-
-# SGLang v0.5.13 безусловно импортирует float8_dynamic_activation_float8_weight
-# при любом --torchao-config включая int8wo. Этот символ появился в torchao>=0.7.0,
-# но образ поставляется со старой версией.
-#
-# Патч переносит float8-импорты в try/except — int8wo работает без float8.
-COPY torchao_utils.patch.py /tmp/torchao_utils.patch.py
-RUN python3 /tmp/torchao_utils.patch.py && rm /tmp/torchao_utils.patch.py

@@ -22,11 +22,11 @@ class Settings(BaseSettings):
     # Локальный путь к SigLIP модели (пустая строка = загрузка с HuggingFace)
     siglip_model_path: str = "data/models/siglip-base-patch16-224"
 
-    # SGLang сервер (VLM reranking)
-    sglang_base_url: str = "http://localhost:30000/v1"
-    sglang_model_name: str = "qwen2-vl-2b-r16"
-    sglang_timeout: float = 30.0
-    sglang_max_retries: int = 3
+    # vLLM сервер (VLM reranking)
+    vllm_base_url: str = "http://localhost:30000/v1"
+    vllm_model_name: str = "qwen2-vl-2b-r16"
+    vllm_timeout: float = 30.0
+    vllm_max_retries: int = 3
 
     # RAG / retrieval
     top_k_retrieval: int = 10

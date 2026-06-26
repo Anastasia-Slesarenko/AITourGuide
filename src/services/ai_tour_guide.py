@@ -5,7 +5,7 @@
 
 Пайплайн:
   1. SigLIP + FAISS — поиск top-K кандидатов
-  2. VLM Reranking через SGLang (попарное сравнение, P(yes))
+  2. VLM Reranking через vLLM (попарное сравнение, P(yes))
   3. Расчёт уверенности
   4. Интернет-поиск при низкой уверенности (Yandex + Wikipedia)
 """
@@ -68,11 +68,11 @@ class AITourGuideConfig:
     # Обязательный параметр — путь к индексу
     index_dir: str
 
-    # SGLang сервер
-    sglang_base_url: str = "http://localhost:30000/v1"
-    sglang_model_name: str = "qwen2-vl-2b-r16"
-    sglang_timeout: float = 30.0
-    sglang_max_retries: int = 3
+    # vLLM сервер
+    vllm_base_url: str = "http://localhost:30000/v1"
+    vllm_model_name: str = "qwen2-vl-2b-r16"
+    vllm_timeout: float = 30.0
+    vllm_max_retries: int = 3
 
     # Локальный путь к SigLIP модели (пустая строка = загрузка с HuggingFace)
     siglip_model_path: str = ""
@@ -114,7 +114,7 @@ class AITourGuideConfig:
     # которые почти всегда возвращают "unknown" без контекста
     skip_internet_search_stage1: bool = False
 
-    # Устройство (не используется с SGLang, для совместимости)
+    # Устройство (не используется с vLLM, для совместимости)
     device: str = "cuda"
 
     def to_dict(self) -> Dict:
@@ -211,8 +211,8 @@ def _update_metrics(result: Dict, image_size_bytes: int = 0) -> None:
         METRICS.image_size_bytes.observe(image_size_bytes)
 
 
-class SGLangClient:
-    """HTTP-клиент для SGLang сервера (совместимый с OpenAI API)."""
+class VLLMClient:
+    """HTTP-клиент для vLLM сервера (совместимый с OpenAI API)."""
 
     def __init__(
         self,
@@ -232,19 +232,19 @@ class SGLangClient:
                 max_keepalive_connections=10, max_connections=20
             ),
         )
-        logger.info(f"SGLang клиент инициализирован: {base_url}")
+        logger.info(f"vLLM клиент инициализирован: {base_url}")
 
     async def health_check(self) -> bool:
-        """Проверяет доступность SGLang сервера."""
+        """Проверяет доступность vLLM сервера."""
         try:
-            # SGLang healthcheck на /health (без /v1 префикса)
+            # vLLM healthcheck на /health (без /v1 префикса)
             base = self.base_url.rstrip("/")
             if base.endswith("/v1"):
                 base = base[:-3]
             response = await self.client.get(f"{base}/health")
             return response.status_code == 200
         except Exception as e:
-            logger.error(f"SGLang health check failed: {e}")
+            logger.error(f"vLLM health check failed: {e}")
             return False
 
     async def chat_completion(
@@ -256,7 +256,7 @@ class SGLangClient:
         top_logprobs: Optional[int] = None,
     ) -> Dict:
         """
-        Отправляет запрос к SGLang серверу через OpenAI API.
+        Отправляет запрос к vLLM серверу через OpenAI API.
 
         Args:
             messages: Список сообщений в формате OpenAI
@@ -266,7 +266,7 @@ class SGLangClient:
             top_logprobs: Количество top logprobs
 
         Returns:
-            Ответ от SGLang сервера
+            Ответ от vLLM сервера
         """
         payload: Dict[str, Any] = {
             "model": self.model_name,
@@ -294,7 +294,7 @@ class SGLangClient:
             except httpx.HTTPStatusError as e:
                 last_exception = e
                 logger.warning(
-                    f"SGLang HTTP ошибка "
+                    f"vLLM HTTP ошибка "
                     f"(попытка {attempt + 1}/{self.max_retries}): "
                     f"{e.response.status_code}"
                 )
@@ -304,14 +304,14 @@ class SGLangClient:
             except httpx.RequestError as e:
                 last_exception = e
                 logger.warning(
-                    f"SGLang ошибка запроса "
+                    f"vLLM ошибка запроса "
                     f"(попытка {attempt + 1}/{self.max_retries}): {e}"
                 )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
 
         raise RuntimeError(
-            f"SGLang запрос не выполнен после {self.max_retries} попыток: "
+            f"vLLM запрос не выполнен после {self.max_retries} попыток: "
             f"{last_exception}"
         )
 
@@ -324,7 +324,7 @@ class AITourGuide:
     """
     Сервис распознавания достопримечательностей по изображениям.
 
-    Использует SGLang сервер для VLM reranking через OpenAI API.
+    Использует vLLM сервер для VLM reranking через OpenAI API.
     """
 
     MAX_CONTEXT_LENGTH = 200
@@ -391,12 +391,12 @@ class AITourGuide:
             index_config=index_config,
         )
 
-        logger.info("Инициализация SGLang клиента...")
-        self.sglang_client = SGLangClient(
-            base_url=config.sglang_base_url,
-            model_name=config.sglang_model_name,
-            timeout=config.sglang_timeout,
-            max_retries=config.sglang_max_retries,
+        logger.info("Инициализация vLLM клиента...")
+        self.vllm_client = VLLMClient(
+            base_url=config.vllm_base_url,
+            model_name=config.vllm_model_name,
+            timeout=config.vllm_timeout,
+            max_retries=config.vllm_max_retries,
         )
 
         # Кэш base64 data URI для изображений галереи.
@@ -407,8 +407,8 @@ class AITourGuide:
 
         self._is_ready = True
         logger.info("AITourGuide готов")
-        logger.info(f"  SGLang: {config.sglang_base_url}")
-        logger.info(f"  Модель: {config.sglang_model_name}")
+        logger.info(f"  vLLM: {config.vllm_base_url}")
+        logger.info(f"  Модель: {config.vllm_model_name}")
         logger.info(f"  VLM порог (p_yes): {config.vlm_threshold}")
 
     # ------------------------------------------------------------------
@@ -439,16 +439,16 @@ class AITourGuide:
                 ),
             }
 
-            sglang_ok = await self.sglang_client.health_check()
-            health["components"]["sglang"] = {
-                "status": "ok" if sglang_ok else "error",
-                "base_url": self.config.sglang_base_url,
-                "model": self.config.sglang_model_name,
+            vllm_ok = await self.vllm_client.health_check()
+            health["components"]["vllm"] = {
+                "status": "ok" if vllm_ok else "error",
+                "base_url": self.config.vllm_base_url,
+                "model": self.config.vllm_model_name,
             }
 
-            if not sglang_ok:
+            if not vllm_ok:
                 health["status"] = "degraded"
-                health["error"] = "SGLang сервер недоступен"
+                health["error"] = "vLLM сервер недоступен"
 
         except Exception as e:
             health["status"] = "degraded"
@@ -474,7 +474,7 @@ class AITourGuide:
         )
 
     # ------------------------------------------------------------------
-    # VLM через SGLang
+    # VLM через vLLM
     # ------------------------------------------------------------------
 
     def _image_to_base64_data_uri(
@@ -606,7 +606,7 @@ class AITourGuide:
         messages = self.prepare_vlm_messages(
             image, candidate_image, candidate_caption, candidate_name
         )
-        response = await self.sglang_client.chat_completion(
+        response = await self.vllm_client.chat_completion(
             messages=messages,
             max_tokens=max_new_tokens,
             temperature=temperature,
@@ -967,7 +967,7 @@ class AITourGuide:
                 ):
                     return None
                 try:
-                    response = await self.sglang_client.chat_completion(
+                    response = await self.vllm_client.chat_completion(
                         messages=self._build_vlm_messages(
                             image_uri, hint=None
                         ),
@@ -1029,7 +1029,7 @@ class AITourGuide:
                         f"- {t}" for t in page_titles[:10]
                     )
                     try:
-                        response2 = await self.sglang_client.chat_completion(
+                        response2 = await self.vllm_client.chat_completion(
                             messages=self._build_vlm_messages(
                                 image_uri, hint=titles_str
                             ),
@@ -1257,7 +1257,7 @@ class AITourGuide:
         """
         Выбирает лучшего кандидата через VLM reranking.
 
-        Для каждого кандидата вычисляет P(yes) через SGLang logprobs,
+        Для каждого кандидата вычисляет P(yes) через vLLM logprobs,
         возвращает кандидата с максимальной вероятностью.
         """
         t0 = time.time()
@@ -1300,7 +1300,7 @@ class AITourGuide:
                     cand["caption"],
                     cand["landmark_name"],
                 )
-                response = await self.sglang_client.chat_completion(
+                response = await self.vllm_client.chat_completion(
                     messages=messages,
                     max_tokens=1,
                     temperature=0.0,
@@ -1327,7 +1327,7 @@ class AITourGuide:
                 return {**cand, "p_yes": 0.0}
 
         # Параллельные запросы с ограничением параллелизма.
-        # vLLM лучше батчит запросы чем SGLang — увеличиваем до 10.
+        # vLLM хорошо батчит параллельные запросы — семафор 10.
         semaphore = asyncio.Semaphore(10)
 
         async def _score_with_sem(cand: Dict) -> Dict:
@@ -1366,13 +1366,13 @@ class AITourGuide:
 
     def _parse_logprobs_p_yes(self, response: Dict) -> Optional[float]:
         """
-        Извлекает p_yes из logprobs ответа SGLang.
+        Извлекает p_yes из logprobs ответа vLLM.
 
         Единая точка парсинга logprobs для VLM reranking и верификации.
         Используется в _score_candidate() и _verify_internet_result_with_vlm().
 
         Args:
-            response: Ответ от SGLang chat_completion
+            response: Ответ от vLLM chat_completion
 
         Returns:
             p_yes ∈ [0, 1] или None если logprobs недоступны
@@ -1412,7 +1412,7 @@ class AITourGuide:
         Fallback: извлекает p_yes из текстового ответа VLM (без logprobs).
 
         Args:
-            response: Ответ от SGLang chat_completion
+            response: Ответ от vLLM chat_completion
 
         Returns:
             0.9 если ответ начинается с "yes", 0.1 если "no", иначе 0.5
@@ -1588,7 +1588,7 @@ class AITourGuide:
                     f"(нет thumbnail) для '{landmark_name}'"
                 )
 
-            response = await self.sglang_client.chat_completion(
+            response = await self.vllm_client.chat_completion(
                 messages=messages,
                 max_tokens=1,
                 temperature=0.0,
@@ -1939,8 +1939,8 @@ class AITourGuide:
     async def _cleanup_resources(self):
         """Закрывает HTTP-клиент, YandexSearchService и удаляет retriever."""
         logger.info("Освобождение ресурсов...")
-        if hasattr(self, "sglang_client"):
-            await self.sglang_client.close()
+        if hasattr(self, "vllm_client"):
+            await self.vllm_client.close()
         if hasattr(self, "_yandex_service") and self._yandex_service:
             self._yandex_service.close()
             self._yandex_service = None

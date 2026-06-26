@@ -70,7 +70,7 @@ async def predict(
     Пайплайн:
     1. Валидация файла
     2. SigLIP + FAISS — поиск кандидатов
-    3. VLM reranking через SGLang — выбор лучшего кандидата
+    3. VLM reranking через vLLM — выбор лучшего кандидата
     4. Интернет-поиск при низкой уверенности
     """
     await check_rate_limit(request, rate_limiter)
