@@ -1,52 +1,9 @@
 FROM lmsysorg/sglang:v0.5.13.post1-cu129
 
 # SGLang v0.5.13 безусловно импортирует float8_dynamic_activation_float8_weight
-# и float8_weight_only из torchao.quantization при любом --torchao-config.
-# Эти символы появились в torchao>=0.7.0, но образ поставляется со старой версией.
+# при любом --torchao-config включая int8wo. Этот символ появился в torchao>=0.7.0,
+# но образ поставляется со старой версией.
 #
-# Патч: убираем float8-импорты из общего блока — они нужны только для fp8 конфигов.
-# int8wo использует только int8_weight_only который есть в старой версии torchao.
-
-RUN sed -i \
-    's/    from torchao.quantization import (\n        float8_dynamic_activation_float8_weight,\n        float8_weight_only,\n        int4_weight_only,\n        int8_dynamic_activation_int8_weight,\n        int8_weight_only,\n        quantize_,\n    )/    from torchao.quantization import (\n        int4_weight_only,\n        int8_dynamic_activation_int8_weight,\n        int8_weight_only,\n        quantize_,\n    )/' \
-    /sgl-workspace/sglang/python/sglang/srt/layers/torchao_utils.py || true
-
-# sed с многострочным паттерном ненадёжен — используем Python
-RUN python3 - <<'PYEOF'
-path = "/sgl-workspace/sglang/python/sglang/srt/layers/torchao_utils.py"
-with open(path) as f:
-    src = f.read()
-
-old_import = """    from torchao.quantization import (
-        float8_dynamic_activation_float8_weight,
-        float8_weight_only,
-        int4_weight_only,
-        int8_dynamic_activation_int8_weight,
-        int8_weight_only,
-        quantize_,
-    )"""
-
-new_import = """    from torchao.quantization import (
-        int4_weight_only,
-        int8_dynamic_activation_int8_weight,
-        int8_weight_only,
-        quantize_,
-    )
-    try:
-        from torchao.quantization import (
-            float8_dynamic_activation_float8_weight,
-            float8_weight_only,
-        )
-    except ImportError:
-        float8_dynamic_activation_float8_weight = None
-        float8_weight_only = None"""
-
-if old_import in src:
-    src = src.replace(old_import, new_import)
-    with open(path, "w") as f:
-        f.write(src)
-    print("Patch applied successfully")
-else:
-    print("ERROR: pattern not found, check torchao_utils.py manually")
-    import sys; sys.exit(1)
-PYEOF
+# Патч переносит float8-импорты в try/except — int8wo работает без float8.
+COPY torchao_utils.patch.py /tmp/torchao_utils.patch.py
+RUN python3 /tmp/torchao_utils.patch.py && rm /tmp/torchao_utils.patch.py
