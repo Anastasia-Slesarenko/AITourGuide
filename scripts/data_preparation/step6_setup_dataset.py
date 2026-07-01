@@ -2950,8 +2950,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-
+    # main()
+    index_config = IndexConfig( 
+        embedder_type="siglip",
+        batch_size=32,
+        max_images_per_landmark=10)
+    build_index_from_landmarks(
+        landmarks_json_path="data/processed/landmarks_with_guide_descriptions_filtred.json",
+        image_base_dir="images",
+        output_dir="data/index/siglip",
+        index_config=index_config
+    )
     # index_config = IndexConfig( 
     #     embedder_type="dinov2",
     #     batch_size=32,

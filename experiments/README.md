@@ -37,7 +37,7 @@ python experiments/eval.py --checkpoint checkpoints/qwen2vl-rerank-lora/best_mod
 ### Python зависимости
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 Основные пакеты:

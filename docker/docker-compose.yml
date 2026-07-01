@@ -12,7 +12,7 @@ version: "3.9"
 #   grafana    — визуализация метрик и логов (порт 3000)
 #
 # Запуск:
-#   docker compose -f docker/docker-compose.yml up -d
+#   docker-compose -f docker/docker-compose.yml up -d
 #
 # Структура бакета S3 (монтируется через s3fs в /mnt/s3-aitourguide):
 #   landmarks/                          — изображения галереи
@@ -86,6 +86,7 @@ services:
   # FastAPI-приложение
   # ----------------------------------------------------------
   api:
+    image: ghcr.io/Anastasia-Slesarenko/AITourGuide/api:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile

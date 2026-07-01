@@ -3,30 +3,26 @@
 
 import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from src.core.config import settings
-from src.core.metrics import METRICS
-from src.services.ai_tour_guide import AITourGuide
+
 from src.api.dependencies import set_guide
 from src.api.middleware import RateLimiter
 from src.api.routes import (
-    predict_router,
-    health_router,
-    info_router,
     frontend_router,
     gallery_router,
+    health_router,
+    info_router,
     metrics_router,
+    predict_router,
 )
+from src.core.config import settings
 from src.core.logging import setup_logging
-
-setup_logging(
-    level=getattr(settings, "log_level", "INFO"),
-    log_format=getattr(settings, "log_format", "text"),
-    log_file=getattr(settings, "log_file", None),
-)
+from src.core.metrics import METRICS
+from src.services.ai_tour_guide import AITourGuide
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +30,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения: запуск и остановка."""
+    # Настраиваем логирование первым делом — до любых других операций
+    setup_logging(
+        level=settings.log_level,
+        log_format=settings.log_format,
+        log_file=settings.log_file,
+    )
     logger.info("Запуск AI Tour Guide API...")
 
     # Проверяем наличие файлов индекса
@@ -68,9 +70,7 @@ async def lifespan(app: FastAPI):
             METRICS.index_size.set(index_size)
             logger.info(f"FAISS index_size gauge = {index_size}")
         except Exception as _e:
-            logger.warning(
-                f"Не удалось установить index_size gauge: {_e}"
-            )
+            logger.warning(f"Не удалось установить index_size gauge: {_e}")
     except Exception as e:
         logger.error(f"Ошибка инициализации AITourGuide: {e}")
         logger.warning("Сервис запущен в деградированном режиме")
@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
     logger.info("Остановка AITourGuide...")
     try:
         from src.api import dependencies
+
         if dependencies._guide:
             await dependencies._guide.cleanup()
             logger.info("Ресурсы AITourGuide освобождены")
@@ -117,9 +118,7 @@ app.state.rate_limiter = RateLimiter(
 )
 
 # Шаблоны Jinja2
-app.state.templates = Jinja2Templates(
-    directory=str(settings.templates_path_abs)
-)
+app.state.templates = Jinja2Templates(directory=str(settings.templates_path_abs))
 
 # Роуты
 app.include_router(frontend_router)
@@ -138,6 +137,7 @@ app.mount(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "src.api.main:app",
         host=settings.host,

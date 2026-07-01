@@ -7,7 +7,7 @@ router = APIRouter(tags=["Info"])
 
 
 @router.get(
-    "/api",
+    "/",
     summary="Информация об API",
     description="Возвращает базовую информацию о сервисе.",
 )

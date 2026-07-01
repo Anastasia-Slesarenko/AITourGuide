@@ -1,330 +1,160 @@
-# AI Tour Guide Architecture
+# AI Tour Guide — Architecture
 
-## System Overview
+## Обзор системы
 
-AI Tour Guide is a landmark recognition service that combines multiple AI technologies:
+AI Tour Guide — сервис распознавания достопримечательностей по фотографиям.  
+Пайплайн: **SigLIP + FAISS** → **Qwen2-VL LoRA reranker (vLLM)** → **Yandex + Wikipedia** (при низкой уверенности).
 
-1. **CLIP** (Contrastive Language-Image Pre-training) for image encoding
-2. **FAISS** (Facebook AI Similarity Search) for fast vector search
-3. **VLM** (Vision-Language Model) for generating descriptions
-4. **Internet Search** (Yandex + Wikipedia) as fallback
-
-## Architecture Diagram
+## Схема архитектуры
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         Client Application                       │
+│                         Client / Browser                         │
 └────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP/REST
+                             │ HTTP/REST  multipart/form-data
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                        FastAPI Server                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ Rate Limiter │  │     CORS     │  │  Validation  │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
+│                     FastAPI Server (CPU)                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │ Rate Limiter │  │     CORS     │  │  File validation     │  │
+│  │ (10 req/min) │  │  Middleware  │  │  (size, MIME type)   │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      AITourGuide Service                         │
+│                     AITourGuide Service                           │
 │                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    Prediction Pipeline                     │  │
-│  │                                                             │  │
-│  │  1. Image Load & Validation                                │  │
-│  │           ▼                                                 │  │
-│  │  2. CLIP Encoding (768-dim vector)                         │  │
-│  │           ▼                                                 │  │
-│  │  3. FAISS Search (top-10 candidates)                       │  │
-│  │           ▼                                                 │  │
-│  │  4. VLM Generation (with RAG context)                      │  │
-│  │           ▼                                                 │  │
-│  │  5. Confidence Calculation                                 │  │
-│  │           ▼                                                 │  │
-│  │  6. Internet Search (if confidence < threshold)            │  │
-│  │           ▼                                                 │  │
-│  │  7. Response Formatting                                    │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                    ▼
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ CLIP Model   │    │ FAISS Index  │    │  VLM Model   │
-│ (openai/     │    │ (15K vectors)│    │ (Qwen2-VL)   │
-│  clip-vit-   │    │              │    │              │
-│  large)      │    │              │    │              │
-└──────────────┘    └──────────────┘    └──────────────┘
+│  1. Загрузка и валидация изображения                             │
+│           ▼                                                       │
+│  2. SigLIP encoding → 768-dim вектор                             │
+│           ▼                                                       │
+│  3. FAISS поиск → top-10 кандидатов                              │
+│           ▼                                                       │
+│  4. VLM reranking (параллельные запросы к vLLM)                  │
+│     Для каждого кандидата: P(yes) через logprobs                  │
+│           ▼                                                       │
+│  5. confidence = P(yes) лучшего кандидата                        │
+│           ▼                                                       │
+│  6. Если P(yes) < threshold (0.5):                               │
+│     Yandex Image Search → VLM (этап 1 без подсказок,             │
+│     этап 2 с pageTitle) → Wikipedia → VLM верификация            │
+│           ▼                                                       │
+│  7. Перевод EN→RU (Yandex Translate)                             │
+│           ▼                                                       │
+│  8. Формирование ответа                                          │
+└──────────┬──────────────────────┬───────────────────────────────┘
+           │                      │
+           ▼                      ▼
+┌──────────────────┐   ┌──────────────────────────────────────────┐
+│  LandmarkRetriever│   │           vLLM Server (GPU)              │
+│                  │   │  Qwen2-VL-2B-Instruct + LoRA adapter     │
+│  SigLIP model    │   │  OpenAI-compatible API (/v1/chat/        │
+│  FAISS index     │   │  completions)                            │
+│  gallery metadata│   │  logprobs для P(yes) вычисления          │
+└──────────────────┘   └──────────────────────────────────────────┘
 ```
 
-## Component Details
+## Компоненты
 
-### 1. FastAPI Server
+### FastAPI Server (`src/api/`)
 
-**Location**: `main.py`, `src/api/`
+- Роуты: `/v1/predict`, `/v1/health`, `/v1/info`, `/metrics`, `/`
+- `RateLimiter` — in-memory, 10 запросов / 60 секунд на IP
+- `python-multipart` для загрузки файлов
+- Jinja2 + StaticFiles для фронтенда
 
-**Responsibilities**:
-- HTTP request handling
-- Input validation
-- Rate limiting
-- CORS management
-- Error handling
-- Response formatting
+### AITourGuide Service (`src/services/ai_tour_guide.py`)
 
-**Key Features**:
-- Async/await for concurrent requests
-- Dependency injection for service management
-- Automatic OpenAPI documentation
-- Middleware for cross-cutting concerns
+Основной оркестратор пайплайна.
 
-### 2. AITourGuide Service
+**Ключевые методы:**
+- `predict()` — полный пайплайн
+- `_retrieve_candidates()` — SigLIP + FAISS
+- `_generate_vlm_prediction()` — параллельный VLM reranking
+- `_search_internet()` — Yandex + Wikipedia + VLM верификация
+- `_parse_logprobs_p_yes()` — извлечение P(yes) из logprobs
 
-**Location**: `services/ai_tour_guide.py`
+**Confidence:**  
+`confidence = P(yes)` — вероятность токена "Yes" из logprobs vLLM.  
+Порог по умолчанию: `vlm_threshold = 0.5` (оптимальный по экспериментам: 0.547).
 
-**Responsibilities**:
-- Orchestrating the prediction pipeline
-- Managing model lifecycle
-- Calculating confidence scores
-- Triggering internet search fallback
-- Performance metrics tracking
+### LandmarkRetriever (`src/rag/landmark_retriever.py`)
 
-**Key Methods**:
-- `predict()`: Main prediction method
-- `_calculate_confidence()`: Confidence scoring
-- `_search_internet()`: Fallback search
-- `health_check()`: Service health status
+- Модель: `google/siglip-base-patch16-224` (SigLIP, не CLIP)
+- Индекс: FAISS `IndexFlatIP` (inner product = cosine similarity на L2-нормализованных векторах)
+- Метаданные: `gallery_metadata.json` — список объектов с изображениями, описаниями, RU-названиями
 
-### 3. RAG Retriever
+### VLM Reranker (vLLM, внешний сервер)
 
-**Location**: `rag/retriever.py`
+- Модель: `Qwen2-VL-2B-Instruct` + LoRA (r=16, α=32)
+- Протокол: OpenAI Chat Completions API
+- Промпт: Query Photo + Candidate Photo + вопрос "Are these the same landmark?"
+- Ответ: `logprobs` для токенов Yes/No → `P(yes) = exp(logit_yes) / (exp(logit_yes) + exp(logit_no))`
 
-**Responsibilities**:
-- CLIP model management
-- Image encoding
-- FAISS index search
-- Facts database lookup
-- Context formatting
+### Internet Search (`src/services/yandex_search.py`)
 
-**Key Features**:
-- L2-normalized embeddings
-- Cosine similarity search
-- Batch processing support
-- Optional multimodal reranking
+1. **YandexSearchService** — синхронный, `requests.Session`, кэш TTL 1 час
+2. **WikipediaService** — асинхронный, `aiohttp`, opensearch + fulltext fallback
+3. **YandexTranslator** — синхронный, Yandex Translate API v2
 
-### 4. VLM (Vision-Language Model)
+### Метрики (`src/core/metrics.py`)
 
-**Location**: Integrated in `services/ai_tour_guide.py`
+Prometheus-метрики (синглтон `METRICS`):
+- `aitourguide_requests_total{status}` — счётчик запросов
+- `aitourguide_confidence` — гистограмма confidence
+- `aitourguide_retrieval_duration_seconds` — время retrieval
+- `aitourguide_vlm_duration_seconds` — время VLM reranking
+- `aitourguide_internet_search_duration_seconds` — время интернет-поиска
+- `aitourguide_index_size` — размер FAISS-индекса
 
-**Model**: Qwen2-VL-2B with LoRA adapter
+## Потоки данных
 
-**Responsibilities**:
-- Generating landmark descriptions
-- Processing image + text prompts
-- JSON response formatting
-
-**Input Format**:
-```python
-{
-    "role": "user",
-    "content": [
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
-        {"type": "text", "text": "Prompt with RAG context"}
-    ]
-}
-```
-
-### 5. Internet Search
-
-**Location**: `services/yandex_search.py`, `services/translator.py`
-
-**Components**:
-- **Yandex Image Search**: Reverse image search
-- **Wikipedia Service**: Fetch landmark information
-- **Yandex Translator**: Translate to Russian
-
-**Workflow**:
-1. Upload image to Yandex Vision API
-2. Extract landmark names from search results
-3. Query Wikipedia for each name
-4. Translate content to Russian
-5. Return best match
-
-## Data Flow
-
-### Successful Retrieval Path
+### Путь через retrieval (высокая уверенность)
 
 ```
-Image Upload
-    ↓
-CLIP Encoding (0.1s)
-    ↓
-FAISS Search (0.05s)
-    ↓
-VLM Generation (2-3s)
-    ↓
-Confidence: 0.85 (> 0.78 threshold)
-    ↓
-Return Result
+Фото → SigLIP (0.1–0.3 с) → FAISS (< 0.05 с) → VLM reranking (1–5 с)
+     → P(yes) ≥ 0.5 → ответ
 ```
 
-### Internet Search Fallback Path
+### Путь через интернет-поиск (низкая уверенность)
 
 ```
-Image Upload
-    ↓
-CLIP Encoding (0.1s)
-    ↓
-FAISS Search (0.05s)
-    ↓
-VLM Generation (2-3s)
-    ↓
-Confidence: 0.65 (< 0.78 threshold)
-    ↓
-Yandex Image Search (2-5s)
-    ↓
-Wikipedia Lookup (1-3s)
-    ↓
-Translation (0.5-1s)
-    ↓
-Return Result
+Фото → SigLIP → FAISS → VLM reranking → P(yes) < 0.5
+     → [параллельно] Yandex Image Search + VLM этап 1 (без подсказок)
+     → VLM этап 2 (с pageTitle) → Wikipedia → VLM верификация
+     → Yandex Translate → ответ
 ```
 
-## Confidence Calculation
+## Стек технологий
 
-The confidence score combines multiple signals:
-
-```python
-confidence = (
-    0.25 * clip_score +           # CLIP similarity
-    0.20 * gap_score +            # Gap between top-2 candidates
-    0.35 * name_match_score +     # Name matching
-    0.20 * position_score         # Position in retrieved list
-)
-```
-
-**Thresholds**:
-- `>= 0.78`: High confidence, return immediately
-- `< 0.78`: Low confidence, trigger internet search
-
-## Performance Optimization
-
-### 1. Model Loading
-- Models loaded once at startup
-- Kept in memory for fast inference
-- GPU acceleration when available
-
-### 2. Caching
-- FAISS index loaded once
-- Facts database cached in memory
-- No per-request model loading
-
-### 3. Async Processing
-- Non-blocking I/O operations
-- Concurrent request handling
-- Timeout protection
-
-### 4. Resource Management
-- Automatic GPU memory cleanup
-- Context managers for services
-- Graceful shutdown handling
-
-## Scalability Considerations
-
-### Current Limitations
-- Single instance (no horizontal scaling)
-- In-memory rate limiting (not distributed)
-- Synchronous model inference
-
-### Future Improvements
-1. **Horizontal Scaling**:
-   - Load balancer (nginx/HAProxy)
-   - Shared Redis for rate limiting
-   - Distributed caching
-
-2. **Model Optimization**:
-   - Model quantization (INT8/INT4)
-   - Batch inference
-   - Model serving (TorchServe/TensorRT)
-
-3. **Database**:
-   - PostgreSQL for facts database
-   - Vector database (Milvus/Qdrant)
-   - Caching layer (Redis)
-
-4. **Monitoring**:
-   - Prometheus metrics
-   - Grafana dashboards
-   - Distributed tracing (Jaeger)
-
-## Security
-
-### Current Measures
-- File size limits (10 MB)
-- File type validation
-- Rate limiting per IP
-- Input sanitization
-
-### Recommendations
-1. Add authentication (API keys/JWT)
-2. Implement request signing
-3. Add HTTPS/TLS
-4. Content Security Policy headers
-5. DDoS protection (Cloudflare)
-
-## Deployment
-
-### Development
-```bash
-make run
-# or
-uvicorn main:app --reload
-```
-
-### Production
-```bash
-# Docker
-docker-compose up -d
-
-# Or direct
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### Environment Variables
-See `.env.example` for configuration options.
-
-## Monitoring
-
-### Health Checks
-- Endpoint: `GET /v1/health`
-- Checks: Model loaded, retriever ready, GPU available
-
-### Metrics
-- Total requests
-- Success/failure rate
-- Average confidence
-- Internet search rate
-- Response times (retrieval, generation, total)
-
-### Logging
-- Structured logging (JSON format)
-- Log levels: DEBUG, INFO, WARNING, ERROR
-- Correlation IDs for request tracing
-
-## Technology Stack
-
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Web Framework | FastAPI | 0.109+ |
+| Компонент | Технология | Версия |
+|-----------|-----------|--------|
+| Web Framework | FastAPI | ≥ 0.109 |
 | ML Framework | PyTorch | 2.2.2 |
-| Vision Model | CLIP | openai/clip-vit-large-patch14 |
-| VLM | Qwen2-VL | 2B with LoRA |
-| Vector Search | FAISS | 1.9.0 |
-| Server | Uvicorn | 0.27+ |
-| Python | CPython | 3.10+ |
+| Vision Encoder | SigLIP (`google/siglip-base-patch16-224`) | via transformers 4.40 |
+| VLM | Qwen2-VL-2B-Instruct + LoRA | via vLLM |
+| Vector Search | FAISS CPU | ≥ 1.8.0 |
+| Async HTTP | httpx (vLLM), aiohttp (Wikipedia) | ≥ 0.27 / ≥ 3.9 |
+| Server | Uvicorn | ≥ 0.27 |
+| Python | CPython | 3.11 |
 
-## References
+## Масштабирование
 
-- [CLIP Paper](https://arxiv.org/abs/2103.00020)
-- [FAISS Documentation](https://github.com/facebookresearch/faiss)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Qwen2-VL](https://github.com/QwenLM/Qwen2-VL)
+### Текущие ограничения
+- Один инстанс API (нет горизонтального масштабирования)
+- In-memory rate limiting (не распределённый)
+- vLLM — отдельный сервер, один инстанс
+
+### Возможные улучшения
+1. Nginx + несколько инстансов API за балансировщиком
+2. Redis для распределённого rate limiting и кэша
+3. Несколько vLLM-серверов с балансировкой
+4. Квантизация модели (AWQ/GPTQ) для снижения VRAM
+
+## Мониторинг
+
+- **Prometheus** — метрики на `/metrics`
+- **Grafana** — дашборды (`docker/grafana/dashboards/`)
+- **Loki + Promtail** — агрегация логов
+- **Структурированные логи** — JSON-формат в продакшене, correlation ID на каждый запрос

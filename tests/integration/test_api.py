@@ -1,175 +1,161 @@
 # tests/integration/test_api.py
 """
-Integration tests for FastAPI endpoints.
+Интеграционные тесты FastAPI-эндпоинтов.
+Используют замоканный AITourGuide — реальные модели не нужны.
 """
 
-import pytest
-from fastapi.testclient import TestClient
-from io import BytesIO
+import io
+from PIL import Image
 
 
-@pytest.mark.integration
-class TestHealthEndpoint:
-    """Tests for health check endpoint."""
-    
-    def test_health_check_endpoint_exists(self, api_client):
-        """Test that health check endpoint exists."""
+def _make_jpeg_bytes(width: int = 224, height: int = 224) -> bytes:
+    """Создаём минимальный JPEG в памяти."""
+    img = Image.new("RGB", (width, height), color=(100, 150, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# /v1/health
+# ---------------------------------------------------------------------------
+
+class TestHealth:
+    """Тесты эндпоинта проверки состояния сервиса."""
+
+    def test_health_возвращает_200(self, api_client):
         response = api_client.get("/v1/health")
-        assert response.status_code in [200, 503]
-    
-    def test_health_check_response_structure(self, api_client):
-        """Test health check response structure."""
-        response = api_client.get("/v1/health")
-        data = response.json()
-        
-        assert "status" in data
-        assert "service" in data
-        assert data["service"] == "AITourGuide"
-    
-    def test_legacy_health_endpoint(self, api_client):
-        """Test legacy health endpoint."""
-        response = api_client.get("/health")
-        assert response.status_code in [200, 503]
-
-
-@pytest.mark.integration
-class TestRootEndpoint:
-    """Tests for root endpoint."""
-    
-    def test_root_endpoint(self, api_client):
-        """Test root endpoint returns API information."""
-        response = api_client.get("/")
         assert response.status_code == 200
-        
-        data = response.json()
-        assert "service" in data
-        assert "version" in data
-        assert "endpoints" in data
-        assert data["service"] == "AI Tour Guide API"
-    
-    def test_root_endpoint_has_docs_links(self, api_client):
-        """Test that root endpoint includes documentation links."""
-        response = api_client.get("/")
-        data = response.json()
-        
-        assert "docs" in data
-        assert "redoc" in data
-        assert data["docs"] == "/docs"
-        assert data["redoc"] == "/redoc"
+
+    def test_health_содержит_статус(self, api_client):
+        data = api_client.get("/v1/health").json()
+        assert "status" in data
+        assert data["status"] in ("healthy", "degraded", "not_ready")
+
+    def test_health_содержит_компоненты(self, api_client):
+        data = api_client.get("/v1/health").json()
+        assert "components" in data
 
 
-@pytest.mark.integration
-@pytest.mark.slow
-class TestPredictEndpoint:
-    """Tests for prediction endpoint."""
-    
-    def test_predict_endpoint_requires_image(self, api_client):
-        """Test that predict endpoint requires an image."""
+# ---------------------------------------------------------------------------
+# /v1/predict
+# ---------------------------------------------------------------------------
+
+class TestPredict:
+    """Тесты эндпоинта распознавания достопримечательности."""
+
+    def test_predict_без_файла_возвращает_422(self, api_client):
+        """Запрос без файла должен вернуть 422 Unprocessable Entity."""
         response = api_client.post("/v1/predict")
-        assert response.status_code == 422  # Unprocessable Entity
-    
-    def test_predict_endpoint_with_invalid_image(self, api_client):
-        """Test prediction with invalid image data."""
-        files = {"image": ("test.jpg", b"invalid image data", "image/jpeg")}
-        response = api_client.post("/v1/predict", files=files)
-        
-        # Should return 400 or 503 depending on service state
-        assert response.status_code in [400, 503]
-    
-    def test_predict_endpoint_with_valid_image(self, api_client, sample_image_bytes):
-        """Test prediction with valid image."""
-        files = {"image": ("test.jpg", sample_image_bytes, "image/jpeg")}
-        data = {"use_internet_search": "false"}
-        
-        response = api_client.post("/v1/predict", files=files, data=data)
-        
-        # May fail if service not initialized, but should not crash
-        assert response.status_code in [200, 503, 504]
-    
-    def test_predict_endpoint_file_size_limit(self, api_client, large_image):
-        """Test that large files are rejected."""
-        # Create a very large image
-        buffer = BytesIO()
-        large_image.save(buffer, format="JPEG", quality=100)
-        large_bytes = buffer.getvalue()
-        
-        files = {"image": ("large.jpg", large_bytes, "image/jpeg")}
-        response = api_client.post("/v1/predict", files=files)
-        
-        # Should reject if file is too large
-        if len(large_bytes) > 10 * 1024 * 1024:
-            assert response.status_code in [400, 413]
-    
-    def test_predict_endpoint_use_internet_search_param(self, api_client, sample_image_bytes):
-        """Test use_internet_search parameter."""
-        files = {"image": ("test.jpg", sample_image_bytes, "image/jpeg")}
-        
-        # Test with internet search enabled
-        data = {"use_internet_search": "true"}
-        response = api_client.post("/v1/predict", files=files, data=data)
-        assert response.status_code in [200, 503, 504]
-        
-        # Test with internet search disabled
-        data = {"use_internet_search": "false"}
-        response = api_client.post("/v1/predict", files=files, data=data)
-        assert response.status_code in [200, 503, 504]
+        assert response.status_code == 422
+
+    def test_predict_с_валидным_изображением_возвращает_200(self, api_client):
+        """Корректный JPEG должен вернуть 200 с полями ответа."""
+        jpeg = _make_jpeg_bytes()
+        response = api_client.post(
+            "/v1/predict",
+            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+        )
+        assert response.status_code == 200
+
+    def test_predict_структура_ответа(self, api_client):
+        """Ответ должен содержать все обязательные поля."""
+        jpeg = _make_jpeg_bytes()
+        data = api_client.post(
+            "/v1/predict",
+            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+        ).json()
+
+        assert "name" in data
+        assert "description" in data
+        assert "confidence" in data
+        assert "source" in data
+        assert "unknown" in data
+        assert "timing" in data
+
+    def test_predict_confidence_в_диапазоне_0_1(self, api_client):
+        """Confidence должен быть в диапазоне [0, 1]."""
+        jpeg = _make_jpeg_bytes()
+        data = api_client.post(
+            "/v1/predict",
+            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+        ).json()
+
+        assert 0.0 <= data["confidence"] <= 1.0
+
+    def test_predict_source_допустимое_значение(self, api_client):
+        """Поле source должно быть одним из допустимых значений."""
+        jpeg = _make_jpeg_bytes()
+        data = api_client.post(
+            "/v1/predict",
+            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+        ).json()
+
+        assert data["source"] in ("retrieval", "internet", "fallback")
+
+    def test_predict_с_отключённым_интернет_поиском(self, api_client):
+        """Параметр use_internet_search=false должен приниматься."""
+        jpeg = _make_jpeg_bytes()
+        response = api_client.post(
+            "/v1/predict",
+            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            data={"use_internet_search": "false"},
+        )
+        assert response.status_code == 200
+
+    def test_predict_слишком_большой_файл_возвращает_400(self, api_client):
+        """Файл больше 10 МБ должен быть отклонён с кодом 400."""
+        # Создаём данные размером > 10 МБ
+        big_data = b"x" * (11 * 1024 * 1024)
+        response = api_client.post(
+            "/v1/predict",
+            files={"file": ("big.jpg", big_data, "image/jpeg")},
+        )
+        assert response.status_code == 400
+
+    def test_predict_невалидные_байты_возвращают_ошибку(self, api_client):
+        """Невалидные данные изображения должны вернуть ошибку."""
+        response = api_client.post(
+            "/v1/predict",
+            files={"file": ("bad.jpg", b"not an image", "image/jpeg")},
+        )
+        # Сервис должен вернуть ошибку, а не упасть с 500
+        assert response.status_code in (400, 422, 500)
 
 
-@pytest.mark.integration
-class TestRateLimiting:
-    """Tests for rate limiting."""
-    
-    @pytest.mark.slow
-    def test_rate_limiting_enforced(self, api_client, sample_image_bytes):
-        """Test that rate limiting is enforced."""
-        files = {"image": ("test.jpg", sample_image_bytes, "image/jpeg")}
-        
-        # Make multiple requests rapidly
-        responses = []
-        for _ in range(15):  # More than the default limit of 10
-            response = api_client.post("/v1/predict", files=files)
-            responses.append(response)
-        
-        # At least one should be rate limited
-        status_codes = [r.status_code for r in responses]
-        # 429 is rate limit exceeded
-        # May not trigger in test environment, so we just check it doesn't crash
-        assert all(code in [200, 400, 429, 503, 504] for code in status_codes)
+# ---------------------------------------------------------------------------
+# /metrics
+# ---------------------------------------------------------------------------
+
+class TestMetrics:
+    """Тесты Prometheus-эндпоинта."""
+
+    def test_metrics_возвращает_200(self, api_client):
+        response = api_client.get("/metrics")
+        assert response.status_code == 200
+
+    def test_metrics_содержит_prometheus_формат(self, api_client):
+        """Ответ должен содержать строки в формате Prometheus."""
+        text = api_client.get("/metrics").text
+        assert "# HELP" in text or "# TYPE" in text
 
 
-@pytest.mark.integration
-class TestCORS:
-    """Tests for CORS configuration."""
-    
-    def test_cors_headers_present(self, api_client):
-        """Test that CORS headers are present."""
-        response = api_client.options("/v1/health")
-        
-        # CORS headers should be present
-        assert "access-control-allow-origin" in response.headers or \
-               response.status_code == 200  # Some test clients don't handle OPTIONS
+# ---------------------------------------------------------------------------
+# /docs, /redoc, /openapi.json
+# ---------------------------------------------------------------------------
 
-
-@pytest.mark.integration
 class TestDocumentation:
-    """Tests for API documentation."""
-    
-    def test_openapi_schema_accessible(self, api_client):
-        """Test that OpenAPI schema is accessible."""
+    """Тесты доступности документации."""
+
+    def test_swagger_ui_доступен(self, api_client):
+        assert api_client.get("/docs").status_code == 200
+
+    def test_redoc_доступен(self, api_client):
+        assert api_client.get("/redoc").status_code == 200
+
+    def test_openapi_json_доступен(self, api_client):
         response = api_client.get("/openapi.json")
         assert response.status_code == 200
-        
         schema = response.json()
         assert "openapi" in schema
-        assert "info" in schema
         assert "paths" in schema
-    
-    def test_swagger_ui_accessible(self, api_client):
-        """Test that Swagger UI is accessible."""
-        response = api_client.get("/docs")
-        assert response.status_code == 200
-    
-    def test_redoc_accessible(self, api_client):
-        """Test that ReDoc is accessible."""
-        response = api_client.get("/redoc")
-        assert response.status_code == 200

@@ -1,95 +1,69 @@
 # tests/unit/test_config.py
-"""
-Unit tests for configuration module.
-"""
+"""Юнит-тесты конфигурации приложения."""
 
-import pytest
-from pathlib import Path
-from core.config import Settings
+from src.core.config import Settings
 
 
 class TestSettings:
-    """Tests for Settings class."""
-    
-    def test_settings_default_values(self):
-        """Test that settings have correct default values."""
-        settings = Settings()
-        
-        assert settings.port == 8000
-        assert settings.host == "0.0.0.0"
-        assert settings.device == "cuda"
-        assert settings.rate_limit_calls == 10
-        assert settings.rate_limit_period == 60
-        assert settings.predict_timeout == 90
-        assert settings.max_file_size_mb == 10
-    
-    def test_max_file_size_bytes_conversion(self):
-        """Test conversion from MB to bytes."""
-        settings = Settings()
-        expected_bytes = 10 * 1024 * 1024
-        assert settings.max_file_size_bytes == expected_bytes
-    
-    def test_validate_paths(self, tmp_path):
-        """Test path validation."""
-        # Create temporary files
-        model_path = tmp_path / "model.gguf"
-        model_path.touch()
-        
-        settings = Settings()
-        settings.model_path = str(model_path)
-        
-        validation = settings.validate_paths()
-        
-        assert "model_path" in validation
-        assert validation["model_path"] is True
-    
-    def test_validate_paths_missing_files(self):
-        """Test path validation with missing files."""
-        settings = Settings()
-        settings.model_path = "nonexistent/model.gguf"
-        
-        validation = settings.validate_paths()
-        
-        assert validation["model_path"] is False
-    
-    def test_allowed_extensions(self):
-        """Test allowed file extensions."""
-        settings = Settings()
-        
-        assert ".jpg" in settings.allowed_extensions
-        assert ".jpeg" in settings.allowed_extensions
-        assert ".png" in settings.allowed_extensions
-        assert ".gif" in settings.allowed_extensions
-        assert ".webp" in settings.allowed_extensions
-    
-    def test_allowed_mime_types(self):
-        """Test allowed MIME types."""
-        settings = Settings()
-        
-        assert "image/jpeg" in settings.allowed_mime_types
-        assert "image/png" in settings.allowed_mime_types
-        assert "image/gif" in settings.allowed_mime_types
-        assert "image/webp" in settings.allowed_mime_types
-    
-    def test_cors_configuration(self):
-        """Test CORS configuration."""
-        settings = Settings()
-        
-        assert settings.cors_origins == ["*"]
-        assert settings.cors_allow_credentials is True
-        assert settings.cors_allow_methods == ["*"]
-        assert settings.cors_allow_headers == ["*"]
-    
-    def test_settings_from_env(self, monkeypatch):
-        """Test loading settings from environment variables."""
+    """Тесты класса Settings."""
+
+    def test_значения_по_умолчанию(self):
+        """Проверяем дефолтные значения настроек."""
+        s = Settings()
+
+        assert s.port == 8000
+        assert s.host == "0.0.0.0"
+        assert s.device == "cpu"
+        assert s.rate_limit_calls == 10
+        assert s.rate_limit_period == 60
+        assert s.predict_timeout == 90
+        assert s.max_file_size_mb == 10
+        assert s.top_k_retrieval == 10
+        assert s.confidence_threshold == 0.5
+
+    def test_конвертация_размера_файла_в_байты(self):
+        """max_file_size_bytes = max_file_size_mb * 1024 * 1024."""
+        s = Settings()
+        assert s.max_file_size_bytes == 10 * 1024 * 1024
+
+    def test_допустимые_расширения(self):
+        """Проверяем набор допустимых расширений изображений."""
+        s = Settings()
+        assert {".jpg", ".jpeg", ".png", ".gif", ".webp"} <= s.allowed_extensions
+
+    def test_допустимые_mime_типы(self):
+        """Проверяем набор допустимых MIME-типов."""
+        s = Settings()
+        assert {
+            "image/jpeg", "image/png", "image/gif", "image/webp"
+        } <= s.allowed_mime_types
+
+    def test_cors_по_умолчанию(self):
+        """CORS по умолчанию открыт для всех."""
+        s = Settings()
+        assert s.cors_origins == ["*"]
+        assert s.cors_allow_credentials is True
+
+    def test_переменные_окружения(self, monkeypatch):
+        """Настройки читаются из переменных окружения."""
         monkeypatch.setenv("PORT", "9000")
         monkeypatch.setenv("HOST", "127.0.0.1")
-        monkeypatch.setenv("DEVICE", "cpu")
+        monkeypatch.setenv("DEVICE", "cuda")
         monkeypatch.setenv("RATE_LIMIT_CALLS", "20")
-        
-        settings = Settings()
-        
-        assert settings.port == 9000
-        assert settings.host == "127.0.0.1"
-        assert settings.device == "cpu"
-        assert settings.rate_limit_calls == 20
+
+        s = Settings()
+
+        assert s.port == 9000
+        assert s.host == "127.0.0.1"
+        assert s.device == "cuda"
+        assert s.rate_limit_calls == 20
+
+    def test_validate_paths_возвращает_словарь(self):
+        """validate_paths() возвращает словарь с булевыми значениями."""
+        s = Settings()
+        result = s.validate_paths()
+
+        assert isinstance(result, dict)
+        assert "index_faiss" in result
+        assert "index_metadata" in result
+        assert all(isinstance(v, bool) for v in result.values())

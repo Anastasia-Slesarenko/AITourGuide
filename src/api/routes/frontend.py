@@ -2,8 +2,9 @@
 """Фронтенд-роуты: рендер шаблонов и обработка формы загрузки."""
 
 import logging
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Request, UploadFile, File, Form
+from typing import Any
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 from src.api.dependencies import get_guide
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Frontend"])
 
 
-def _build_sorted_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _build_sorted_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Строит список кандидатов (без победителя), отсортированных
     по p_yes убыванию.
@@ -31,8 +32,7 @@ def _build_sorted_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     p_yes_list = result.get("retrieved_p_yes") or []
 
     logger.info(
-        f"_build_sorted_candidates: images={len(images)}, "
-        f"p_yes_list={p_yes_list}"
+        f"_build_sorted_candidates: images={len(images)}, p_yes_list={p_yes_list}"
     )
 
     candidates = []
@@ -42,11 +42,13 @@ def _build_sorted_candidates(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             if i < len(p_yes_list) and p_yes_list[i] is not None
             else 0.0
         )
-        candidates.append({
-            "image": images[i],
-            "name": names[i] if i < len(names) else "",
-            "p_yes": p_yes,
-        })
+        candidates.append(
+            {
+                "image": images[i],
+                "name": names[i] if i < len(names) else "",
+                "p_yes": p_yes,
+            }
+        )
 
     candidates.sort(key=lambda c: c["p_yes"], reverse=True)
     logger.info(
@@ -69,7 +71,7 @@ async def index(request: Request):
 @router.post("/predict", response_class=HTMLResponse)
 async def predict_form(
     request: Request,
-    image: Optional[UploadFile] = File(default=None),
+    image: UploadFile | None = File(default=None),
     use_internet: bool = Form(default=False),
 ):
     """
@@ -78,7 +80,7 @@ async def predict_form(
     """
     result = None
     error = None
-    sorted_candidates: List[Dict[str, Any]] = []
+    sorted_candidates: list[dict[str, Any]] = []
 
     if not image:
         error = "Пожалуйста, загрузите изображение"
@@ -89,18 +91,25 @@ async def predict_form(
     else:
         try:
             guide = await get_guide()
-            image_bytes = await image.read()
-            result = await guide.predict(
-                image_input=image_bytes,
-                use_internet_search=use_internet,
-            )
-            if result.get("error"):
-                error = result["error"]
-            else:
-                sorted_candidates = _build_sorted_candidates(result)
-        except Exception as e:
-            logger.error(f"Ошибка обработки изображения: {e}")
-            error = f"Внутренняя ошибка: {str(e)}"
+        except HTTPException as e:
+            # Сервис не инициализирован — показываем понятное сообщение
+            error = f"Сервис недоступен: {e.detail}"
+            guide = None
+
+        if guide is not None:
+            try:
+                image_bytes = await image.read()
+                result = await guide.predict(
+                    image_input=image_bytes,
+                    use_internet_search=use_internet,
+                )
+                if result.get("error"):
+                    error = result["error"]
+                else:
+                    sorted_candidates = _build_sorted_candidates(result)
+            except Exception as e:
+                logger.error(f"Ошибка обработки изображения: {e}")
+                error = "Внутренняя ошибка сервера"
 
     return request.app.state.templates.TemplateResponse(
         request=request,

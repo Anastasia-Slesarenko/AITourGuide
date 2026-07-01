@@ -4,32 +4,38 @@
 # packages (bert-score, peft, mlflow, datasets, boto3, etc.)
 #
 # Install: pip install -r requirements-prod.txt
+#
+# NOTE: torch & torchvision are intentionally excluded here.
+# In Docker they are installed separately via PyTorch index
+# (see Dockerfile) to get the GPU build:
+#   pip install --index-url https://download.pytorch.org/whl/cu121 \
+#       torch==2.2.2 torchvision==0.17.2
+# For local CPU-only dev: pip install torch==2.2.2 torchvision==0.17.2
 # ============================================================
 
 # ── Deep Learning (inference only) ───────────────────────────
-torch==2.2.2
-torchvision==0.17.2   # Зафиксировано: >=0.17.2 могло подтянуть несовместимую версию
+# torch & torchvision: see note above — installed outside this file
 transformers==4.40.0
-numpy<2.0.0          # NumPy 2.x incompatible with PyTorch 2.2.2
+numpy<2.0.0           # NumPy 2.x incompatible with PyTorch 2.2.2
 sentencepiece>=0.1.99 # Required by SiglipTokenizer
 protobuf>=3.20.0      # Required by SiglipTokenizer (alongside sentencepiece)
 
 # ── Vision ───────────────────────────────────────────────────
-Pillow==11.3.0
+Pillow>=10.0.0        # 10.x+ compatible with torch 2.2.2; avoid strict pin
 
 # ── RAG / Vector search ──────────────────────────────────────
-faiss-cpu==1.8.0
-pandas>=2.0.0        # Required by indexing_v2.py (build_from_dataframe)
+faiss-cpu>=1.8.0      # 1.8.0 tested; 1.9.x also compatible
+pandas>=2.0.0         # Required by indexing_v2.py (build_from_dataframe)
 
 # ── HTTP clients ─────────────────────────────────────────────
-httpx>=0.27.0        # VLLMClient in ai_tour_guide.py
-aiohttp>=3.9.0       # WikipediaService in yandex_search.py
-requests>=2.31.0     # YandexSearchService (sync fallback)
+httpx>=0.27.0         # VLLMClient in ai_tour_guide.py
+aiohttp>=3.9.0        # WikipediaService in yandex_search.py
+requests>=2.31.0      # YandexSearchService & YandexTranslator (sync)
 
 # ── Async / utils ────────────────────────────────────────────
 aiofiles>=23.2.1
 cachetools>=5.3.0
-tqdm==4.67.1
+tqdm>=4.66.0
 
 # ── FastAPI & web server ──────────────────────────────────────
 fastapi>=0.109.0
@@ -42,5 +48,5 @@ jinja2>=3.1.0
 prometheus-client>=0.20.0        # Prometheus metrics exposition (/metrics)
 
 # ── Configuration ─────────────────────────────────────────────
-python-dotenv>=1.0.0
+python-dotenv>=1.0.0  # load_dotenv() in ai_tour_guide.py
 PyYAML>=6.0.1

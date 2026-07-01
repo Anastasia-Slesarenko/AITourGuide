@@ -18,8 +18,9 @@ help:
 	@echo "  make test             Run all tests"
 	@echo "  make test-unit        Run unit tests only"
 	@echo "  make test-integration Run integration tests only"
+	@echo "  make load-test        Run load test with Locust (headless)"
 	@echo "  make lint             Run linters"
-	@echo "  make format           Format code with black and isort"
+	@echo "  make format           Format code with ruff and black"
 	@echo "  make clean            Clean temporary files"
 	@echo ""
 	@echo "Docker:"
@@ -34,10 +35,12 @@ help:
 install:
 	@echo "📦 Installing production dependencies..."
 	pip install --upgrade pip
-	pip install -r requirements.txt
+	pip install -r requirements-prod.txt
 
-install-dev: install
+install-dev:
 	@echo "📦 Installing development dependencies..."
+	pip install --upgrade pip
+	pip install -r requirements-prod.txt
 	pip install -r requirements-dev.txt
 
 # ========================================
@@ -88,30 +91,38 @@ test-coverage:
 	pytest tests/ --cov=src --cov-report=html --cov-report=term
 	@echo "Coverage report generated in htmlcov/index.html"
 
+load-test:
+	@echo "🔥 Running load test (100 users, 10/s spawn rate, 60s)..."
+	@mkdir -p tests/load/results
+	locust -f tests/load/locustfile.py \
+		--host http://localhost:8000 \
+		--headless -u 100 -r 10 -t 60s \
+		--csv tests/load/results/report \
+		--html tests/load/results/report.html
+	@echo "✅ Results saved to tests/load/results/"
+
 # ========================================
 # CODE QUALITY
 # ========================================
 lint:
 	@echo "🔍 Running linters..."
-	@echo "  → flake8..."
-	flake8 src/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+	@echo "  → ruff..."
+	ruff check src/ tests/
 	@echo "  → mypy..."
 	mypy src/ --ignore-missing-imports
-	@echo "  → pylint..."
-	pylint src/ --disable=C0111,R0903,R0913,W0212
 
 format:
 	@echo "✨ Formatting code..."
-	@echo "  → isort..."
-	isort src/ tests/
+	@echo "  → ruff (fix imports + auto-fixes)..."
+	ruff check --fix src/ tests/
 	@echo "  → black..."
 	black src/ tests/
 	@echo "✅ Code formatted!"
 
 format-check:
 	@echo "🔍 Checking code formatting..."
+	ruff check src/ tests/
 	black --check src/ tests/
-	isort --check-only src/ tests/
 
 # ========================================
 # CLEANUP
@@ -190,7 +201,7 @@ setup-dev: install-dev
 update-deps:
 	@echo "📦 Updating dependencies..."
 	pip install --upgrade pip
-	pip install --upgrade -r requirements.txt
+	pip install --upgrade -r requirements-prod.txt
 	pip install --upgrade -r requirements-dev.txt
 
 freeze-deps:
