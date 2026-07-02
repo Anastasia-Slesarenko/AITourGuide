@@ -1478,15 +1478,29 @@ class AITourGuide:
 
             if candidate_uri is not None:
                 # Формат обучения: Query Photo + Candidate Photo.
-                # Переиспользуем prepare_vlm_messages() — идентичный промпт.
-                messages = await self.prepare_vlm_messages(
-                    query_image=image,
-                    candidate_image="__uri__",  # заглушка — uri уже готов
-                    candidate_caption=caption,
-                    candidate_name=landmark_name,
-                )
-                # Подменяем URI кандидата на Wikipedia thumbnail
-                messages[0]["content"][3]["image_url"]["url"] = candidate_uri
+                # Строим сообщения напрямую из готовых URI —
+                # НЕ вызываем prepare_vlm_messages() с заглушкой,
+                # иначе она попытается открыть файл "/data/images/__uri__".
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Query Photo:"},
+                            {"type": "image_url", "image_url": {"url": query_uri}},
+                            {"type": "text", "text": "Candidate Photo:"},
+                            {"type": "image_url", "image_url": {"url": candidate_uri}},
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"Question: Are these photos showing the same "
+                                    f'landmark: "{landmark_name}"?\n'
+                                    f"Candidate details: {caption}\n"
+                                    f"Answer only with Yes or No."
+                                ),
+                            },
+                        ],
+                    }
+                ]
                 logger.info(
                     f"VLM верификация: thumbnail режим "
                     f"(Query+Candidate) для '{landmark_name}'"

@@ -95,7 +95,7 @@ test-coverage:
 load-test:
 	@echo "🔥 Running load test (100 users, 10/s spawn rate, 60s)..."
 	@mkdir -p tests/load/results
-	locust -f tests/load/locustfile.py \
+	python3 -m locust -f tests/load/locustfile.py \
 		--host http://localhost:8000 \
 		--headless -u 100 -r 10 -t 60s \
 		--csv tests/load/results/report \
