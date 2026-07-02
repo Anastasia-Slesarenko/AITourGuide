@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration lint format clean run docker-build docker-up docker-down build-index download-models
+.PHONY: help install install-dev test test-unit test-integration lint format clean run docker-build docker-up docker-down docker-pull build-index download-models
 
 # ========================================
 # HELP
@@ -24,8 +24,9 @@ help:
 	@echo "  make clean            Clean temporary files"
 	@echo ""
 	@echo "Docker:"
-	@echo "  make docker-build     Build Docker image"
-	@echo "  make docker-up        Start Docker containers"
+	@echo "  make docker-build     Build Docker image locally"
+	@echo "  make docker-pull      Pull latest API image from ghcr.io, then start"
+	@echo "  make docker-up        Start Docker containers (build if image missing)"
 	@echo "  make docker-down      Stop Docker containers"
 	@echo ""
 
@@ -151,6 +152,15 @@ docker-build:
 	docker-compose -f docker/docker-compose.yml build
 
 docker-up:
+	@echo "🐳 Starting Docker containers..."
+	docker-compose -f docker/docker-compose.yml up -d
+	@echo "✅ Containers started!"
+	@echo "   API: http://localhost:8000"
+	@echo "   Docs: http://localhost:8000/docs"
+
+docker-pull:
+	@echo "🐳 Pulling latest API image from ghcr.io..."
+	docker-compose -f docker/docker-compose.yml pull api
 	@echo "🐳 Starting Docker containers..."
 	docker-compose -f docker/docker-compose.yml up -d
 	@echo "✅ Containers started!"
