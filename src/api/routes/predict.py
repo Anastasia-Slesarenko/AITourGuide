@@ -2,6 +2,7 @@
 """Эндпоинт предсказания достопримечательности по изображению."""
 
 import asyncio
+import io
 import logging
 
 from fastapi import (
@@ -13,6 +14,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_guide, get_rate_limiter
@@ -78,6 +80,14 @@ async def predict(
             status_code=400,
             detail=(f"Файл слишком большой. Максимум: {settings.max_file_size_mb} МБ"),
         )
+
+    try:
+        Image.open(io.BytesIO(content)).verify()
+    except (UnidentifiedImageError, Exception) as e:
+        raise HTTPException(
+            status_code=400,
+            detail="Невалидный файл изображения",
+        ) from e
 
     try:
         result = await asyncio.wait_for(

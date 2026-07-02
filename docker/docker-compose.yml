@@ -86,7 +86,7 @@ services:
   # FastAPI-приложение
   # ----------------------------------------------------------
   api:
-    image: ghcr.io/Anastasia-Slesarenko/AITourGuide/api:latest
+    image: ghcr.io/anastasia-slesarenko/aitourguide/api:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
