@@ -152,17 +152,17 @@ docker-build:
 	docker-compose -f docker/docker-compose.yml build
 
 docker-up:
-	@echo "🐳 Starting Docker containers..."
-	docker-compose -f docker/docker-compose.yml up -d
+	@echo "🐳 Starting Docker containers (building API image if needed)..."
+	docker-compose -f docker/docker-compose.yml up -d --build
 	@echo "✅ Containers started!"
 	@echo "   API: http://localhost:8000"
 	@echo "   Docs: http://localhost:8000/docs"
 
 docker-pull:
 	@echo "🐳 Pulling latest API image from ghcr.io..."
-	docker-compose -f docker/docker-compose.yml pull api
+	docker pull ghcr.io/anastasia-slesarenko/aitourguide/api:latest
 	@echo "🐳 Starting Docker containers..."
-	docker-compose -f docker/docker-compose.yml up -d
+	docker-compose -f docker/docker-compose.yml up -d --no-build
 	@echo "✅ Containers started!"
 	@echo "   API: http://localhost:8000"
 	@echo "   Docs: http://localhost:8000/docs"
