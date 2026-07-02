@@ -6,54 +6,7 @@ AI Tour Guide — сервис распознавания достопримеч
 Пайплайн: **SigLIP + FAISS** → **Qwen2-VL LoRA reranker (vLLM)** → **Yandex + Wikipedia** (при низкой уверенности).
 
 ## Схема архитектуры
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Client / Browser                         │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP/REST  multipart/form-data
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     FastAPI Server (CPU)                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │ Rate Limiter │  │     CORS     │  │  File validation     │  │
-│  │ (10 req/min) │  │  Middleware  │  │  (size, MIME type)   │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     AITourGuide Service                           │
-│                                                                   │
-│  1. Загрузка и валидация изображения                             │
-│           ▼                                                       │
-│  2. SigLIP encoding → 768-dim вектор                             │
-│           ▼                                                       │
-│  3. FAISS поиск → top-10 кандидатов                              │
-│           ▼                                                       │
-│  4. VLM reranking (параллельные запросы к vLLM)                  │
-│     Для каждого кандидата: P(yes) через logprobs                  │
-│           ▼                                                       │
-│  5. confidence = P(yes) лучшего кандидата                        │
-│           ▼                                                       │
-│  6. Если P(yes) < threshold (0.5):                               │
-│     Yandex Image Search → VLM (этап 1 без подсказок,             │
-│     этап 2 с pageTitle) → Wikipedia → VLM верификация            │
-│           ▼                                                       │
-│  7. Перевод EN→RU (Yandex Translate)                             │
-│           ▼                                                       │
-│  8. Формирование ответа                                          │
-└──────────┬──────────────────────┬───────────────────────────────┘
-           │                      │
-           ▼                      ▼
-┌──────────────────┐   ┌──────────────────────────────────────────┐
-│  LandmarkRetriever│   │           vLLM Server (GPU)              │
-│                  │   │  Qwen2-VL-2B-Instruct + LoRA adapter     │
-│  SigLIP model    │   │  OpenAI-compatible API (/v1/chat/        │
-│  FAISS index     │   │  completions)                            │
-│  gallery metadata│   │  logprobs для P(yes) вычисления          │
-└──────────────────┘   └──────────────────────────────────────────┘
-```
+![Architecture](architecture_diagram.png)
 
 ## Компоненты
 
@@ -114,13 +67,13 @@ Prometheus-метрики (синглтон `METRICS`):
 
 ```
 Фото → SigLIP (0.1–0.3 с) → FAISS (< 0.05 с) → VLM reranking (1–5 с)
-     → P(yes) ≥ 0.5 → ответ
+     → P(yes) ≥ threshold → ответ
 ```
 
 ### Путь через интернет-поиск (низкая уверенность)
 
 ```
-Фото → SigLIP → FAISS → VLM reranking → P(yes) < 0.5
+Фото → SigLIP → FAISS → VLM reranking → P(yes) < threshold
      → [параллельно] Yandex Image Search + VLM этап 1 (без подсказок)
      → VLM этап 2 (с pageTitle) → Wikipedia → VLM верификация
      → Yandex Translate → ответ

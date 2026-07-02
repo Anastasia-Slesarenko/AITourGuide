@@ -2,11 +2,12 @@
 """Эндпоинт /metrics для Prometheus-скрейпинга."""
 
 import logging
+
 from fastapi import APIRouter, Response
 from prometheus_client import (
-    generate_latest,
     CONTENT_TYPE_LATEST,
     REGISTRY,
+    generate_latest,
 )
 
 logger = logging.getLogger(__name__)

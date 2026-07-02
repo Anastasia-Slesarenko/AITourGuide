@@ -1,19 +1,23 @@
 # src/api/dependencies.py
 """Зависимости FastAPI для внедрения сервисов."""
 
-from typing import Optional
 from fastapi import HTTPException, Request
+
 from src.services.ai_tour_guide import AITourGuide
 
-
 # Глобальный экземпляр сервиса
-_guide: Optional[AITourGuide] = None
+_guide: AITourGuide | None = None
 
 
-def set_guide(guide: AITourGuide) -> None:
-    """Устанавливает глобальный экземпляр AITourGuide."""
+def set_guide(guide: AITourGuide | None) -> None:
+    """Устанавливает (или сбрасывает) глобальный экземпляр AITourGuide."""
     global _guide
     _guide = guide
+
+
+def get_guide_optional() -> AITourGuide | None:
+    """Возвращает экземпляр AITourGuide или None если не инициализирован."""
+    return _guide
 
 
 async def get_guide() -> AITourGuide:

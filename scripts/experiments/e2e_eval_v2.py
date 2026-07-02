@@ -277,12 +277,12 @@ def evaluate_e2e(
     step6_known_became_unknown = 0  # target_idx!=-1, но retrieval НЕ нашёл правильный
 
     for item in tqdm(dataset, desc="E2E Evaluation"):
-        # Ground truth landmark_id всегда в meta["landmark_id"]
+        # Истинный landmark_id всегда в meta["landmark_id"]
         meta = item.get("meta", {})
         true_landmark_id = meta.get("landmark_id")
         
         if not true_landmark_id:
-            print(f"⚠️  No landmark_id in meta for {item.get('query_image')}")
+            print(f"⚠️  Нет landmark_id в meta для {item.get('query_image')}")
             continue
 
         target_idx = item.get("target_idx", -1)
@@ -291,7 +291,7 @@ def evaluate_e2e(
         try:
             query_img = Image.open(img_path).convert("RGB")
         except Exception as e:
-            print(f"⚠️ Error loading {img_path}: {e}")
+            print(f"⚠️ Ошибка загрузки {img_path}: {e}")
             continue
 
         # Запускаем пайплайн (включает retrieval + reranking)
@@ -309,7 +309,7 @@ def evaluate_e2e(
 
         # Определяем тип сэмпла на основе retrieval (не target_idx!)
         if is_in_retrieval:
-            # Known sample: retrieval нашёл правильный landmark
+            # Известный объект: retrieval нашёл правильный landmark
             sample_type = "known"
             known_total += 1
             
@@ -335,7 +335,7 @@ def evaluate_e2e(
                         mrr_sum += 1.0 / rank
                         break
         else:
-            # Unknown sample: retrieval НЕ нашёл правильный landmark
+            # Неизвестный объект: retrieval НЕ нашёл правильный landmark
             sample_type = "unknown"
             unknown_total += 1
             

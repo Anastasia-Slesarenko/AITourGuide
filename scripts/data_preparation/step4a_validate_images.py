@@ -79,14 +79,14 @@ class Config:
     max_pixels: int = 256 * 256
     max_new_tokens: int = 50  # Только для VALID/CONFIDENCE
     
-    # Cross-object batching
+    # Батчинг по разным объектам (cross-object batching)
     batch_size: int = 32  # Большой батч из разных объектов
-    
+
     # Интервалы
     cache_flush_interval: int = 100
     save_interval: int = 500  # Сохранение каждые 500 изображений
-    
-    # Retry
+
+    # Повторные попытки
     max_retries: int = 3
     retry_delay: float = 1.0
     

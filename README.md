@@ -1,8 +1,8 @@
 # 🏛️ AI Tour Guide
 
-**Сервис распознавания достопримечательностей по фотографиям с генерацией описания на русском языке.**
+**Сервис распознавания достопримечательностей по фотографиям на русском языке.**
 
-Загружаете фото — получаете название объекта, описание из Wikipedia и уровень уверенности модели.
+Загружаете фото — получаете название объекта, описание и уровень уверенности модели.
 
 <div align="center">
 
@@ -17,15 +17,7 @@
 
 ## Схема работы сервиса
 
-<!-- TODO: вставить изображение схемы (например, docs/architecture_diagram.png) -->
-<!-- ![Architecture](docs/architecture_diagram.png) -->
-
-```
-Фото → SigLIP + FAISS (top-10 кандидатов)
-     → Qwen2-VL LoRA reranking (P(yes) для каждого кандидата)
-     → если P(yes) < 0.5: Yandex Image Search + Wikipedia
-     → название + описание на русском
-```
+![Architecture](docs/architecture_diagram.png)
 
 1. **SigLIP + FAISS** — векторный поиск по галерее, возвращает top-10 кандидатов
 2. **Qwen2-VL-2B LoRA reranker** — попарное сравнение фото запроса и кандидата, вычисляет P(yes) через logprobs
@@ -156,8 +148,9 @@ AITourGuide/
 │   ├── core/         # Конфигурация, логирование, метрики
 │   ├── rag/          # FAISS-индекс, LandmarkRetriever
 │   └── services/     # AITourGuide, YandexSearch, Wikipedia, Translator
-├── experiments/      # Обучение, оценка, экспорт моделей
-├── scripts/          # Подготовка данных, сборка индекса
+├── scripts/
+│   ├── experiments/  # Обучение, оценка, экспорт моделей
+│   └── data_preparation/  # Подготовка данных, сборка индекса
 ├── docker/           # Dockerfile, docker-compose, Prometheus, Grafana
 ├── config/           # YAML-конфиги (base, development, production)
 ├── tests/            # Unit и integration тесты

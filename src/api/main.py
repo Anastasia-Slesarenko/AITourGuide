@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from src.api.dependencies import set_guide
+from src.api.dependencies import get_guide_optional, set_guide
 from src.api.middleware import RateLimiter
 from src.api.routes import (
     frontend_router,
@@ -60,6 +60,8 @@ async def lifespan(app: FastAPI):
             top_k_retrieval=settings.top_k_retrieval,
             vlm_threshold=settings.confidence_threshold,
             enable_internet_search=settings.enable_internet_search,
+            yc_folder_id=settings.yc_folder_id,
+            yc_api_key=settings.yc_api_key,
         )
         set_guide(guide)
         logger.info("AITourGuide инициализирован успешно")
@@ -80,10 +82,9 @@ async def lifespan(app: FastAPI):
     # Завершение работы
     logger.info("Остановка AITourGuide...")
     try:
-        from src.api import dependencies
-
-        if dependencies._guide:
-            await dependencies._guide.cleanup()
+        guide_instance = get_guide_optional()
+        if guide_instance:
+            await guide_instance.cleanup()
             logger.info("Ресурсы AITourGuide освобождены")
     except Exception as e:
         logger.error(f"Ошибка при остановке: {e}")

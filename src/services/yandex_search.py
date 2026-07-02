@@ -1,22 +1,30 @@
+# src/services/yandex_search.py
+"""
+Сервисы для поиска информации о достопримечательностях.
+
+YandexSearchService — поиск по изображению через Yandex Image Search API.
+WikipediaService   — получение описаний статей через Wikipedia REST API.
+"""
+
+import asyncio
 import base64
 import hashlib
 import logging
 import os
 import re
-import asyncio
-from typing import Any, Dict, Set, Optional, Union
+from typing import Any, cast
 
 import aiohttp
 import requests
 from cachetools import TTLCache
 
 from .search_filters import (
-    OPENSEARCH_LIMIT,
     FULLTEXT_SEARCH_LIMIT,
-    is_likely_landmark,
-    is_relevant,
+    OPENSEARCH_LIMIT,
     clean_landmark_name,
     generate_search_variants,
+    is_likely_landmark,
+    is_relevant,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,9 +43,9 @@ class YandexSearchService:
     Сервис для поиска названий достопримечательностей
     по изображениям через Yandex API Search.
     """
+
     _URL_SEARCH_BY_IMAGE = (
-        "https://searchapi.api.cloud.yandex.net/v2/image/"
-        "search_by_image"
+        "https://searchapi.api.cloud.yandex.net/v2/image/search_by_image"
     )
 
     def __init__(
@@ -46,12 +54,10 @@ class YandexSearchService:
         yc_api_key: str,
         timeout: int = DEFAULT_TIMEOUT,
         max_results: int = DEFAULT_MAX_RESULTS,
-        cache_ttl_seconds: int = DEFAULT_CACHE_TTL
+        cache_ttl_seconds: int = DEFAULT_CACHE_TTL,
     ) -> None:
         if not yc_folder_id or not yc_api_key:
-            raise ValueError(
-                "yc_folder_id и yc_api_key обязательны"
-            )
+            raise ValueError("yc_folder_id и yc_api_key обязательны")
 
         self.yc_folder_id = yc_folder_id
         self.yc_api_key = yc_api_key
@@ -59,37 +65,36 @@ class YandexSearchService:
         self.max_results = max_results
         self.cache_ttl_seconds = cache_ttl_seconds
 
-        self._search_cache: Union[TTLCache, Dict] = TTLCache(
-            maxsize=MAX_CACHE_SIZE,
-            ttl=cache_ttl_seconds
+        self._search_cache: TTLCache | dict = TTLCache(
+            maxsize=MAX_CACHE_SIZE, ttl=cache_ttl_seconds
         )
 
-        self._session = requests.Session()
-        self._session.headers.update({
-            "Authorization": f"Api-Key {self.yc_api_key}",
-            "Content-Type": "application/json"
-        })
+        self._session: requests.Session | None = requests.Session()
+        self._session.headers.update(
+            {
+                "Authorization": f"Api-Key {self.yc_api_key}",
+                "Content-Type": "application/json",
+            }
+        )
 
     def close(self) -> None:
         """Явное закрытие HTTP сессии."""
-        if hasattr(self, '_session') and self._session:
+        if self._session is not None:
             self._session.close()
             self._session = None
 
     def __del__(self) -> None:
         self.close()
 
-    def __enter__(self) -> 'YandexSearchService':
+    def __enter__(self) -> "YandexSearchService":
         return self
 
     def __exit__(self, *args) -> None:
         self.close()
 
     def search_by_image(
-        self,
-        image: Union[str, bytes, Any],
-        num_results: int = DEFAULT_MAX_RESULTS
-    ) -> Optional[Set[str]]:
+        self, image: str | bytes | Any, num_results: int = DEFAULT_MAX_RESULTS
+    ) -> set[str] | None:
         """
         Находит названия достопримечательностей как заголовки
         страниц с похожими изображениями.
@@ -122,18 +127,17 @@ class YandexSearchService:
             else:
                 # PIL Image
                 from io import BytesIO
+
                 buffer = BytesIO()
-                image.save(buffer, format='JPEG')
+                image.save(buffer, format="JPEG")
                 image_bytes = buffer.getvalue()
 
             encoded_string = base64.b64encode(image_bytes).decode("utf-8")
-            image_hash = hashlib.sha256(
-                encoded_string.encode()
-            ).hexdigest()
+            image_hash = hashlib.sha256(encoded_string.encode()).hexdigest()
 
             if image_hash in self._search_cache:
                 logger.info("Возврат из кэша")
-                return self._search_cache[image_hash]
+                return cast("set[str]", self._search_cache[image_hash])
 
             payload = {
                 "folderId": self.yc_folder_id,
@@ -142,40 +146,25 @@ class YandexSearchService:
 
             logger.info("Отправка запроса к Yandex Search API")
 
-            if self._session:
-                response = self._session.post(
-                    self._URL_SEARCH_BY_IMAGE,
-                    json=payload,
-                    timeout=self.timeout
-                )
-            else:
-                headers = {
-                    "Authorization": f"Api-Key {self.yc_api_key}",
-                    "Content-Type": "application/json"
-                }
-                response = requests.post(
-                    self._URL_SEARCH_BY_IMAGE,
-                    json=payload,
-                    headers=headers,
-                    timeout=self.timeout
-                )
+            if self._session is None:
+                logger.error("HTTP сессия закрыта, запрос невозможен")
+                return None
+            response = self._session.post(
+                self._URL_SEARCH_BY_IMAGE, json=payload, timeout=self.timeout
+            )
 
             if response.status_code != 200:
                 logger.error(
-                    f"HTTP ошибка: {response.status_code} - "
-                    f"{response.text[:200]}"
+                    f"HTTP ошибка: {response.status_code} - {response.text[:200]}"
                 )
                 return None
 
             result_data = response.json()
-            landmark_names = self._extract_landmark_names(
-                result_data, num_results
-            )
+            landmark_names = self._extract_landmark_names(result_data, num_results)
             if landmark_names:
                 self._search_cache[image_hash] = landmark_names
                 logger.info(
-                    f"Найдено {len(landmark_names)} названий "
-                    f"достопримечательностей"
+                    f"Найдено {len(landmark_names)} названий достопримечательностей"
                 )
                 return landmark_names
             else:
@@ -196,10 +185,8 @@ class YandexSearchService:
             return None
 
     def _extract_landmark_names(
-        self,
-        response_data: Dict,
-        num_results: int = 5
-    ) -> Set[str]:
+        self, response_data: dict, num_results: int = 5
+    ) -> set[str]:
         """
         Извлекает названия достопримечательностей из ответа Yandex API.
 
@@ -210,7 +197,7 @@ class YandexSearchService:
         Returns:
             Названия найденных достопримечательностей
         """
-        landmark_names: Set[str] = set()
+        landmark_names: set[str] = set()
 
         for query in response_data.get("images", [])[:num_results]:
             page_title = query.get("pageTitle")
@@ -220,9 +207,7 @@ class YandexSearchService:
                     if is_likely_landmark(cleaned):
                         landmark_names.add(cleaned)
                     else:
-                        logger.debug(
-                            f"Filtered out non-landmark: '{cleaned}'"
-                        )
+                        logger.debug(f"Filtered out non-landmark: '{cleaned}'")
 
         return landmark_names
 
@@ -252,13 +237,12 @@ class WikipediaService:
         self.timeout = timeout
         self.min_relevance_ratio = min_relevance_ratio
 
-        self._cache: Union[TTLCache, Dict[str, str]] = TTLCache(
-            maxsize=MAX_CACHE_SIZE,
-            ttl=DEFAULT_CACHE_TTL
+        self._cache: TTLCache | dict[str, str] = TTLCache(
+            maxsize=MAX_CACHE_SIZE, ttl=DEFAULT_CACHE_TTL
         )
 
-        self._aiohttp_session: Optional[aiohttp.ClientSession] = None
-        self._semaphore: Optional[asyncio.Semaphore] = None
+        self._aiohttp_session: aiohttp.ClientSession | None = None
+        self._semaphore: asyncio.Semaphore | None = None
 
     async def aclose(self) -> None:
         """Явное закрытие async сессии."""
@@ -270,26 +254,20 @@ class WikipediaService:
         # Не закрываем async сессию из __del__ — небезопасно
         pass
 
-    async def __aenter__(self) -> 'WikipediaService':
+    async def __aenter__(self) -> "WikipediaService":
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         headers = {
-            'User-Agent': (
-                'AITourGuide/1.0 '
-                '(slesarenko221999@gmail.com) educational bot'
+            "User-Agent": (
+                "AITourGuide/1.0 (slesarenko221999@gmail.com) educational bot"
             )
         }
-        self._aiohttp_session = aiohttp.ClientSession(
-            timeout=timeout, headers=headers
-        )
+        self._aiohttp_session = aiohttp.ClientSession(timeout=timeout, headers=headers)
         return self
 
     async def __aexit__(self, *args) -> None:
         await self.aclose()
 
-    async def get_landmark_info(
-        self,
-        landmark_names: Set[str]
-    ) -> Dict[str, str]:
+    async def get_landmark_info(self, landmark_names: set[str]) -> dict[str, str]:
         """
         Параллельно ищет описание достопримечательностей.
         Сначала на предпочтительном языке, если не удаётся — на запасном.
@@ -303,19 +281,15 @@ class WikipediaService:
         return await self._get_landmark_info_async(landmark_names)
 
     # Оставляем алиас для обратной совместимости
-    async def get_landmark_info_async(
-        self,
-        landmark_names: Set[str]
-    ) -> Dict[str, str]:
+    async def get_landmark_info_async(self, landmark_names: set[str]) -> dict[str, str]:
         """Алиас для get_landmark_info (обратная совместимость)."""
         return await self.get_landmark_info(landmark_names)
 
     async def _get_landmark_info_async(
-        self,
-        landmark_names: Set[str]
-    ) -> Dict[str, str]:
+        self, landmark_names: set[str]
+    ) -> dict[str, str]:
         """Асинхронная обработка запросов для ускорения."""
-        results: Dict[str, str] = {}
+        results: dict[str, str] = {}
         queries_to_fetch = []
 
         for query in landmark_names:
@@ -334,36 +308,30 @@ class WikipediaService:
         close_session = False
         if self._aiohttp_session is None:
             timeout = aiohttp.ClientTimeout(total=self.timeout)
-            headers = {
-                'User-Agent': 'AITourGuide/1.0 '
-                '(slesarenko221999@gmail.com)'
-            }
+            headers = {"User-Agent": "AITourGuide/1.0 (slesarenko221999@gmail.com)"}
             self._aiohttp_session = aiohttp.ClientSession(
                 timeout=timeout, headers=headers
             )
             close_session = True
 
         try:
-            tasks = [
-                self._fetch_single_landmark(query)
-                for query in queries_to_fetch
-            ]
+            tasks = [self._fetch_single_landmark(query) for query in queries_to_fetch]
             task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for query, result in zip(queries_to_fetch, task_results):
-                if isinstance(result, Exception):
+            for query, result in zip(queries_to_fetch, task_results, strict=False):
+                if isinstance(result, BaseException):
                     logger.error(f"Ошибка при обработке '{query}': {result}")
                     continue
 
+                # result гарантированно tuple[str|None, str|None, str] здесь
+                # (BaseException уже отфильтрован выше через isinstance)
                 wiki_title, description, lang_used = result
                 if description:
                     key = wiki_title if wiki_title else query
                     results[key] = description
                     cache_key = f"{key}:{lang_used}"
                     self._cache[cache_key] = description
-                    logger.info(
-                        f"Описание найдено для '{key}' ({lang_used})"
-                    )
+                    logger.info(f"Описание найдено для '{key}' ({lang_used})")
                 else:
                     logger.warning(f"Не найдено описание для '{query}'")
         finally:
@@ -374,15 +342,16 @@ class WikipediaService:
         return results
 
     async def _fetch_single_landmark(
-        self,
-        query: str
-    ) -> tuple[Optional[str], Optional[str], str]:
+        self, query: str
+    ) -> tuple[str | None, str | None, str]:
         """
         Асинхронно получает описание для одной достопримечательности.
 
         Returns:
             (wiki_title, описание, использованный_язык)
         """
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.max_concurrent)
         async with self._semaphore:
             lang = self._detect_language(query)
 
@@ -390,9 +359,7 @@ class WikipediaService:
             if description:
                 return query, description, lang
 
-            desc_fallback = await self._try_get_summary(
-                query, self.fallback_lang
-            )
+            desc_fallback = await self._try_get_summary(query, self.fallback_lang)
             if desc_fallback:
                 return query, desc_fallback, self.fallback_lang
 
@@ -402,7 +369,7 @@ class WikipediaService:
         self,
         landmark_name: str,
         thumb_size: int = 500,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Возвращает URL thumbnail-изображения статьи Wikipedia.
 
@@ -422,19 +389,19 @@ class WikipediaService:
 
         for lang in (self.fallback_lang, self.language):
             url = self.BASE_URL.format(lang=lang)
-            params = {
+            params_thumb: dict[str, str] = {
                 "action": "query",
                 "format": "json",
                 "prop": "pageimages",
                 "piprop": "thumbnail",
-                "pithumbsize": thumb_size,
+                "pithumbsize": str(thumb_size),
                 "titles": landmark_name,
                 "redirects": "1",
                 "formatversion": "2",
             }
             try:
                 async with self._aiohttp_session.get(
-                    url, params=params
+                    url, params=params_thumb
                 ) as response:
                     if response.status != 200:
                         continue
@@ -442,7 +409,7 @@ class WikipediaService:
                     pages = data.get("query", {}).get("pages", [])
                     if pages:
                         thumb = pages[0].get("thumbnail", {})
-                        src = thumb.get("source")
+                        src: str | None = thumb.get("source")
                         if src:
                             logger.info(
                                 f"Wikipedia thumbnail для '{landmark_name}'"
@@ -457,17 +424,13 @@ class WikipediaService:
                             )
             except Exception as e:
                 logger.warning(
-                    f"Ошибка получения thumbnail для '{landmark_name}'"
-                    f" ({lang}): {e}"
+                    f"Ошибка получения thumbnail для '{landmark_name}' ({lang}): {e}"
                 )
         return None
 
     async def _try_get_summary(
-        self,
-        query: str,
-        lang: str,
-        try_search: bool = True
-    ) -> Optional[str]:
+        self, query: str, lang: str, try_search: bool = True
+    ) -> str | None:
         """
         Получает описание через REST API Wikipedia.
 
@@ -480,7 +443,10 @@ class WikipediaService:
             Описание или None
         """
         url = self.BASE_URL.format(lang=lang)
-        params = {
+        if self._aiohttp_session is None:
+            return None
+
+        params_extract: dict[str, str] = {
             "action": "query",
             "format": "json",
             "prop": "extracts",
@@ -489,17 +455,16 @@ class WikipediaService:
             "exsentences": "5",
             "titles": query,
             "redirects": "1",
-            "formatversion": "2"
+            "formatversion": "2",
         }
 
         try:
             async with self._aiohttp_session.get(
-                url, params=params
+                url, params=params_extract
             ) as response:
                 if response.status != 200:
                     logger.debug(
-                        f"Wikipedia API вернул статус {response.status} "
-                        f"для '{query}'"
+                        f"Wikipedia API вернул статус {response.status} для '{query}'"
                     )
                     return None
 
@@ -509,11 +474,9 @@ class WikipediaService:
                 if pages and len(pages) > 0:
                     page = pages[0]
                     if "missing" not in page:
-                        extract = page.get("extract")
+                        extract: str | None = cast(str | None, page.get("extract"))
                         if extract:
-                            if is_relevant(
-                                query, extract, self.min_relevance_ratio
-                            ):
+                            if is_relevant(query, extract, self.min_relevance_ratio):
                                 logger.debug(f"Найдено напрямую: '{query}'")
                                 return extract
                             else:
@@ -535,9 +498,7 @@ class WikipediaService:
             logger.error(f"Неожиданная ошибка: {e}")
             return None
 
-    async def _search_and_get(
-        self, query: str, lang: str
-    ) -> Optional[str]:
+    async def _search_and_get(self, query: str, lang: str) -> str | None:
         """
         Поиск статьи через opensearch и полнотекстовый поиск.
 
@@ -556,68 +517,56 @@ class WikipediaService:
 
         # 1. Opensearch для каждого варианта
         for variant in variants:
-            params_os = {
+            params_os: dict[str, str] = {
                 "action": "opensearch",
                 "format": "json",
                 "search": variant,
-                "limit": OPENSEARCH_LIMIT,
-                "namespace": 0,
+                "limit": str(OPENSEARCH_LIMIT),
+                "namespace": "0",
                 "suggest": "true",
             }
             try:
-                async with self._aiohttp_session.get(
-                    url, params=params_os
-                ) as resp:
+                async with self._aiohttp_session.get(url, params=params_os) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         titles = data[1] if len(data) > 1 else []
                         if titles:
-                            logger.debug(
-                                f"Opensearch with '{variant}' → {titles}"
-                            )
+                            logger.debug(f"Opensearch with '{variant}' → {titles}")
                             for title in titles:
                                 desc = await self._try_get_summary(
                                     title, lang, try_search=False
                                 )
                                 if desc:
-                                    logger.info(
-                                        f"Found via opensearch: '{title}'"
-                                    )
+                                    logger.info(f"Found via opensearch: '{title}'")
                                     return desc
             except Exception as e:
                 logger.debug(f"Opensearch error for '{variant}': {e}")
 
         # 2. Полнотекстовый поиск для каждого варианта
         for variant in variants:
-            params_full = {
+            params_full: dict[str, str] = {
                 "action": "query",
                 "format": "json",
                 "list": "search",
                 "srsearch": variant,
                 "srwhat": "text",
-                "srlimit": FULLTEXT_SEARCH_LIMIT,
-                "formatversion": 2,
+                "srlimit": str(FULLTEXT_SEARCH_LIMIT),
+                "formatversion": "2",
             }
             try:
-                async with self._aiohttp_session.get(
-                    url, params=params_full
-                ) as resp:
+                async with self._aiohttp_session.get(url, params=params_full) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         pages = data.get("query", {}).get("search", [])
                         if pages:
-                            titles = [p['title'] for p in pages]
-                            logger.debug(
-                                f"Fulltext with '{variant}' → {titles}"
-                            )
+                            titles = [p["title"] for p in pages]
+                            logger.debug(f"Fulltext with '{variant}' → {titles}")
                             for title in titles:
                                 desc = await self._try_get_summary(
                                     title, lang, try_search=False
                                 )
                                 if desc:
-                                    logger.info(
-                                        f"Found via fulltext: '{title}'"
-                                    )
+                                    logger.info(f"Found via fulltext: '{title}'")
                                     return desc
             except Exception as e:
                 logger.debug(f"Fulltext error for '{variant}': {e}")
@@ -634,7 +583,7 @@ class WikipediaService:
         Returns:
             Код языка ('ru' или 'en')
         """
-        if re.search(r'[а-яА-ЯёЁ]', query):
+        if re.search(r"[а-яА-ЯёЁ]", query):
             return self.language
         else:
             return self.fallback_lang
@@ -642,13 +591,12 @@ class WikipediaService:
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
 
     import logging as _logging
-    _logging.basicConfig(
-        level=_logging.DEBUG,
-        format='%(levelname)s: %(message)s'
-    )
+
+    _logging.basicConfig(level=_logging.DEBUG, format="%(levelname)s: %(message)s")
 
     print("🧪 Тест Yandex + Wikipedia Services")
     print("=" * 70)
@@ -662,7 +610,9 @@ if __name__ == "__main__":
         test_image = "images/475_3.jpg"
 
         if os.path.exists(test_image):
+
             async def test_async():
+                assert folder_id is not None and api_key is not None
                 with YandexSearchService(
                     yc_folder_id=folder_id,
                     yc_api_key=api_key,
@@ -675,13 +625,10 @@ if __name__ == "__main__":
                             print(f"  • {name}")
 
                         async with WikipediaService(
-                            language="ru",
-                            fallback_lang="en"
+                            language="ru", fallback_lang="en"
                         ) as wiki_service:
                             print("\nПолучение описаний...")
-                            descriptions = (
-                                await wiki_service.get_landmark_info(names)
-                            )
+                            descriptions = await wiki_service.get_landmark_info(names)
 
                             for i, name in enumerate(descriptions, 1):
                                 desc = descriptions[name]

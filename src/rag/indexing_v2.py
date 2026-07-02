@@ -46,15 +46,15 @@ import logging
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Any
 
 import faiss
 import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
-from tqdm import tqdm
 from torchvision import transforms
+from tqdm import tqdm
 from transformers import AutoProcessor, SiglipModel
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 # ==============================
 # Конфигурация
 # ==============================
+
 
 @dataclass
 class IndexConfig:
@@ -121,6 +122,7 @@ class IndexConfig:
 # SigLIP энкодер
 # ==============================
 
+
 class SigLIPEncoder:
     """
     Кодирует изображения через SigLIP с классификацией exterior/interior.
@@ -173,13 +175,15 @@ class SigLIPEncoder:
             raise
 
         if config.use_augmentation:
-            self.augment_fn = transforms.Compose([
-                transforms.ColorJitter(
-                    brightness=0.1, contrast=0.1, saturation=0.1
-                ),
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
-            ])
+            self.augment_fn = transforms.Compose(
+                [
+                    transforms.ColorJitter(
+                        brightness=0.1, contrast=0.1, saturation=0.1
+                    ),
+                    transforms.RandomHorizontalFlip(p=0.5),
+                    transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
+                ]
+            )
         else:
             self.augment_fn = None
 
@@ -194,7 +198,7 @@ class SigLIPEncoder:
         except Exception:
             pass
 
-    def _encode_text_prompts(self) -> Tuple[torch.Tensor, Any]:
+    def _encode_text_prompts(self) -> tuple[torch.Tensor, Any]:
         """Кодирует текстовые промпты для классификации."""
         text_inputs = self.processor(
             text=self.TEXT_PROMPTS,
@@ -209,8 +213,8 @@ class SigLIPEncoder:
         return text_embeds, text_inputs
 
     def encode_batch(
-        self, images: List[Image.Image]
-    ) -> List[Optional[Tuple[np.ndarray, str, float]]]:
+        self, images: list[Image.Image]
+    ) -> list[tuple[np.ndarray, str, float] | None]:
         """
         Кодирует батч изображений с классификацией exterior/interior.
 
@@ -235,7 +239,7 @@ class SigLIPEncoder:
                 probs = logits.softmax(dim=-1).cpu().numpy()
                 img_embs_np = img_embs.cpu().numpy()
 
-            results = []
+            results: list[tuple[np.ndarray, str, float] | None] = []
             for i in range(len(images)):
                 exterior_prob = probs[i][0:2].mean()
                 interior_prob = probs[i][2:4].mean()
@@ -253,7 +257,7 @@ class SigLIPEncoder:
                     label = "interior"
                     confidence = float(interior_prob)
 
-                results.append((img_embs_np[i], label, confidence))
+                results.append((np.array(img_embs_np[i]), label, confidence))
 
             return results
 
@@ -263,8 +267,8 @@ class SigLIPEncoder:
 
     @staticmethod
     def fuse_embeddings(
-        embeddings: List[np.ndarray],
-        weights: Optional[List[float]] = None,
+        embeddings: list[np.ndarray],
+        weights: list[float] | None = None,
     ) -> np.ndarray:
         """Объединяет несколько эмбеддингов с опциональными весами."""
         if not embeddings:
@@ -281,7 +285,7 @@ class SigLIPEncoder:
         if norm > 0:
             fused = fused / norm
 
-        return fused
+        return np.array(fused)
 
 
 # Псевдоним для обратной совместимости
@@ -291,6 +295,7 @@ ImageEncoder = SigLIPEncoder
 # ==============================
 # DINOv2 энкодер
 # ==============================
+
 
 class DINOv2Encoder:
     """
@@ -306,7 +311,7 @@ class DINOv2Encoder:
 
         logger.info(f"Загрузка DINOv2 модели: {config.model_name}")
         try:
-            from transformers import AutoModel, AutoImageProcessor
+            from transformers import AutoImageProcessor, AutoModel
 
             if _platform.system() == "Darwin":
                 logger.info("macOS — используем CPU с отключёнными потоками")
@@ -333,13 +338,15 @@ class DINOv2Encoder:
             raise
 
         if config.use_augmentation:
-            self.augment_fn = transforms.Compose([
-                transforms.ColorJitter(
-                    brightness=0.1, contrast=0.1, saturation=0.1
-                ),
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
-            ])
+            self.augment_fn = transforms.Compose(
+                [
+                    transforms.ColorJitter(
+                        brightness=0.1, contrast=0.1, saturation=0.1
+                    ),
+                    transforms.RandomHorizontalFlip(p=0.5),
+                    transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
+                ]
+            )
         else:
             self.augment_fn = None
 
@@ -355,8 +362,8 @@ class DINOv2Encoder:
             pass
 
     def encode_batch(
-        self, images: List[Image.Image]
-    ) -> List[Optional[Tuple[np.ndarray, str, float]]]:
+        self, images: list[Image.Image]
+    ) -> list[tuple[np.ndarray, str, float] | None]:
         """
         Кодирует батч изображений без классификации.
 
@@ -379,10 +386,7 @@ class DINOv2Encoder:
                 cls_embs = cls_embs / cls_embs.norm(dim=-1, keepdim=True)
                 cls_embs_np: np.ndarray = cls_embs.cpu().numpy()
 
-            return [
-                (cls_embs_np[i], "unknown", 1.0)
-                for i in range(len(images))
-            ]
+            return [(cls_embs_np[i], "unknown", 1.0) for i in range(len(images))]
 
         except Exception as e:
             logger.error(f"Ошибка кодирования DINOv2 батча: {e}")
@@ -390,8 +394,8 @@ class DINOv2Encoder:
 
     @staticmethod
     def fuse_embeddings(
-        embeddings: List[np.ndarray],
-        weights: Optional[List[float]] = None,
+        embeddings: list[np.ndarray],
+        weights: list[float] | None = None,
     ) -> np.ndarray:
         """Объединяет несколько эмбеддингов с опциональными весами."""
         if not embeddings:
@@ -408,16 +412,17 @@ class DINOv2Encoder:
         if norm > 0:
             fused = fused / norm
 
-        return fused
+        return np.array(fused)
 
 
 # ==============================
 # Фабрика энкодеров
 # ==============================
 
+
 def build_encoder(
     config: IndexConfig,
-) -> Union[SigLIPEncoder, DINOv2Encoder]:
+) -> SigLIPEncoder | DINOv2Encoder:
     """
     Создаёт энкодер на основе config.embedder_type.
 
@@ -438,10 +443,11 @@ def build_encoder(
 # Построитель индекса
 # ==============================
 
+
 class IndexBuilder:
     """Строит FAISS-индекс из данных о достопримечательностях."""
 
-    def __init__(self, config: Optional[IndexConfig] = None):
+    def __init__(self, config: IndexConfig | None = None):
         self.config = config or IndexConfig()
         self.encoder = build_encoder(self.config)
 
@@ -451,6 +457,7 @@ class IndexBuilder:
             if hasattr(self, "encoder"):
                 del self.encoder
             import gc
+
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -463,25 +470,23 @@ class IndexBuilder:
 
     def _load_and_process_images(
         self,
-        image_paths: List[str],
-        base_dir: Optional[Path] = None,
-    ) -> Tuple[List[np.ndarray], List[float], List[str]]:
+        image_paths: list[str],
+        base_dir: Path | None = None,
+    ) -> tuple[list[np.ndarray], list[float], list[str]]:
         """
         Загружает и кодирует изображения для одной достопримечательности.
 
         Returns:
             (embeddings, weights, valid_paths)
         """
-        images_to_process: List[Image.Image] = []
-        valid_indices: List[int] = []
+        images_to_process: list[Image.Image] = []
+        valid_indices: list[int] = []
 
         for i, img_path in enumerate(
             image_paths[: self.config.max_images_per_landmark]
         ):
             try:
-                full_path = (
-                    (base_dir / img_path) if base_dir else Path(img_path)
-                )
+                full_path = (base_dir / img_path) if base_dir else Path(img_path)
                 img = Image.open(full_path).convert("RGB")
                 images_to_process.append(img)
                 valid_indices.append(i)
@@ -508,13 +513,13 @@ class IndexBuilder:
                     except Exception as e:
                         logger.debug(f"Ошибка аугментации: {e}")
 
-        embeddings: List[np.ndarray] = []
-        weights: List[float] = []
-        valid_paths: List[str] = []
+        embeddings: list[np.ndarray] = []
+        weights: list[float] = []
+        valid_paths: list[str] = []
 
         for i in range(0, len(images_to_process), self.config.batch_size):
-            batch = images_to_process[i: i + self.config.batch_size]
-            batch_indices = valid_indices[i: i + self.config.batch_size]
+            batch = images_to_process[i : i + self.config.batch_size]
+            batch_indices = valid_indices[i : i + self.config.batch_size]
 
             results = self.encoder.encode_batch(batch)
 
@@ -542,9 +547,7 @@ class IndexBuilder:
 
         return embeddings, weights, valid_paths
 
-    def _calculate_confidence(
-        self, weights: List[float]
-    ) -> Dict[str, float]:
+    def _calculate_confidence(self, weights: list[float]) -> dict[str, float]:
         """Рассчитывает метрики уверенности из весов изображений."""
         if not weights:
             return {"confidence": 0.0, "max_conf": 0.0, "mean_conf": 0.0}
@@ -573,15 +576,15 @@ class IndexBuilder:
     def build_from_dataframe(
         self,
         df: pd.DataFrame,
-        image_base_dir: Optional[Path] = None,
-    ) -> Tuple[np.ndarray, List[Dict[str, Any]], faiss.Index]:
+        image_base_dir: Path | None = None,
+    ) -> tuple[np.ndarray, list[dict[str, Any]], faiss.Index]:
         """
         Строит индекс из pandas DataFrame.
 
         Ожидаемые колонки: landmark_id, name (или name_en), images.
         """
-        embeddings: List[np.ndarray] = []
-        metadata: List[Dict[str, Any]] = []
+        embeddings: list[np.ndarray] = []
+        metadata: list[dict[str, Any]] = []
 
         logger.info(f"Кодирование {len(df)} достопримечательностей...")
 
@@ -594,8 +597,8 @@ class IndexBuilder:
                 logger.warning(f"Нет изображений для {landmark_id}")
                 continue
 
-            img_embs, img_weights, valid_paths = (
-                self._load_and_process_images(image_paths, image_base_dir)
+            img_embs, img_weights, valid_paths = self._load_and_process_images(
+                image_paths, image_base_dir
             )
 
             if not img_embs:
@@ -605,7 +608,7 @@ class IndexBuilder:
             fused = self.encoder.fuse_embeddings(img_embs, img_weights)
             conf_metrics = self._calculate_confidence(img_weights)
 
-            meta_entry: Dict[str, Any] = {
+            meta_entry: dict[str, Any] = {
                 "lid": landmark_id,
                 "name": name,
                 "row_idx": idx,
@@ -617,12 +620,23 @@ class IndexBuilder:
             }
 
             optional_fields = [
-                "guide_description", "name_ru", "name_en", "name_de",
-                "wikidata_id", "wikidata_description_en",
-                "wikidata_description_ru", "coordinates",
-                "country_ru", "country_en", "city_ru", "city_en",
-                "landmark_type", "wikipedia_url_en", "wikipedia_url_ru",
-                "wikipedia_summary_en", "wikipedia_summary_ru",
+                "guide_description",
+                "name_ru",
+                "name_en",
+                "name_de",
+                "wikidata_id",
+                "wikidata_description_en",
+                "wikidata_description_ru",
+                "coordinates",
+                "country_ru",
+                "country_en",
+                "city_ru",
+                "city_en",
+                "landmark_type",
+                "wikipedia_url_en",
+                "wikipedia_url_ru",
+                "wikipedia_summary_en",
+                "wikipedia_summary_ru",
                 "landmark_summary_caption",
             ]
 
@@ -641,17 +655,15 @@ class IndexBuilder:
         index = faiss.IndexFlatIP(dim)
         index.add(embeddings_array)
 
-        logger.info(
-            f"Индекс построен: {index.ntotal} векторов (dim={dim})"
-        )
+        logger.info(f"Индекс построен: {index.ntotal} векторов (dim={dim})")
 
         return embeddings_array, metadata, index
 
     def build_from_json(
         self,
-        json_path: Union[str, Path],
-        image_base_dir: Optional[Path] = None,
-    ) -> Tuple[np.ndarray, List[Dict[str, Any]], faiss.Index]:
+        json_path: str | Path,
+        image_base_dir: Path | None = None,
+    ) -> tuple[np.ndarray, list[dict[str, Any]], faiss.Index]:
         """
         Строит индекс из JSON-файла.
 
@@ -659,7 +671,7 @@ class IndexBuilder:
         """
         logger.info(f"Загрузка данных из {json_path}")
 
-        with open(json_path, "r", encoding="utf-8") as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
 
         df = pd.DataFrame(data)
@@ -687,7 +699,7 @@ class IndexBuilder:
     def save(
         self,
         embeddings: np.ndarray,
-        metadata: List[Dict[str, Any]],
+        metadata: list[dict[str, Any]],
         index: faiss.Index,
     ) -> None:
         """Сохраняет индекс, эмбеддинги и метаданные на диск."""
@@ -706,7 +718,7 @@ class IndexBuilder:
         index_path: Path,
         embeddings_path: Path,
         metadata_path: Path,
-    ) -> Tuple[np.ndarray, List[Dict[str, Any]], faiss.Index]:
+    ) -> tuple[np.ndarray, list[dict[str, Any]], faiss.Index]:
         """Загружает индекс, эмбеддинги и метаданные с диска."""
         logger.info(f"Загрузка индекса из {index_path}")
 
@@ -724,6 +736,7 @@ class IndexBuilder:
 # ==============================
 # Обратная совместимость
 # ==============================
+
 
 class CLIPIndexBuilder:
     """
@@ -752,11 +765,11 @@ class CLIPIndexBuilder:
 
     def build_index(
         self,
-        facts_db: Dict[str, Dict[str, Any]],
+        facts_db: dict[str, dict[str, Any]],
         image_dir: str,
         max_images_per_landmark: int = 5,
         use_batch_encoding: bool = True,
-    ) -> Tuple[faiss.Index, List[str]]:
+    ) -> tuple[faiss.Index, list[str]]:
         """Строит индекс из facts_db (старый API)."""
         logger.info("Построение индекса через устаревший API...")
 
@@ -778,21 +791,19 @@ class CLIPIndexBuilder:
         lid_list = [meta["lid"] for meta in metadata]
         return index, lid_list
 
-    def save(
-        self, index: faiss.Index, lid_list: List[str], output_path: str
-    ) -> None:
+    def save(self, index: faiss.Index, lid_list: list[str], output_path: str) -> None:
         """Сохраняет индекс (старый API)."""
         faiss.write_index(index, f"{output_path}.faiss")
         with open(f"{output_path}.meta.pkl", "wb") as f:
-            pickle.dump(
-                {"lid_list": lid_list, "model_name": self.model_name}, f
-            )
+            pickle.dump({"lid_list": lid_list, "model_name": self.model_name}, f)
         logger.info(f"Индекс сохранён: {output_path}.faiss")
 
     @classmethod
     def load_index(
-        cls, index_path: str, model_name: str = None  # type: ignore
-    ) -> Tuple[faiss.Index, List[str], str]:
+        cls,
+        index_path: str,
+        model_name: str = None,  # type: ignore
+    ) -> tuple[faiss.Index, list[str], str]:
         """Загружает индекс (старый API)."""
         index = faiss.read_index(f"{index_path}.faiss")
         with open(f"{index_path}.meta.pkl", "rb") as f:
@@ -809,6 +820,7 @@ class CLIPIndexBuilder:
 # ==============================
 # Точка входа
 # ==============================
+
 
 def main():
     """Построение индекса из командной строки."""
@@ -838,9 +850,7 @@ def main():
     try:
         builder = IndexBuilder(config)
         image_base = Path(image_dir) if image_dir else None
-        embeddings, metadata, index = builder.build_from_json(
-            data_path, image_base
-        )
+        embeddings, metadata, index = builder.build_from_json(data_path, image_base)
         builder.save(embeddings, metadata, index)
 
         logger.info("Индекс успешно построен!")

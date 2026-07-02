@@ -3,7 +3,7 @@
 
 import time
 from collections import defaultdict
-from typing import Dict
+
 from fastapi import HTTPException, Request
 
 
@@ -18,7 +18,7 @@ class RateLimiter:
         """
         self.calls = calls
         self.period = period
-        self.requests: Dict[str, list] = defaultdict(list)
+        self.requests: dict[str, list] = defaultdict(list)
 
     def is_allowed(self, client_id: str) -> bool:
         """Проверяет, разрешён ли запрос для данного клиента."""

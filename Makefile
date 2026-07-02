@@ -20,7 +20,7 @@ help:
 	@echo "  make test-integration Run integration tests only"
 	@echo "  make load-test        Run load test with Locust (headless)"
 	@echo "  make lint             Run linters"
-	@echo "  make format           Format code with ruff and black"
+	@echo "  make format           Format code with ruff"
 	@echo "  make clean            Clean temporary files"
 	@echo ""
 	@echo "Docker:"
@@ -109,20 +109,18 @@ lint:
 	@echo "  → ruff..."
 	ruff check src/ tests/
 	@echo "  → mypy..."
-	mypy src/ --ignore-missing-imports
+	mypy src/
 
 format:
 	@echo "✨ Formatting code..."
-	@echo "  → ruff (fix imports + auto-fixes)..."
 	ruff check --fix src/ tests/
-	@echo "  → black..."
-	black src/ tests/
+	ruff format src/ tests/
 	@echo "✅ Code formatted!"
 
 format-check:
 	@echo "🔍 Checking code formatting..."
 	ruff check src/ tests/
-	black --check src/ tests/
+	ruff format --check src/ tests/
 
 # ========================================
 # CLEANUP

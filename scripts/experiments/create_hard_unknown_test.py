@@ -1,4 +1,4 @@
-# experiments/create_super_hard_unknown_test.py
+# scripts/experiments/create_hard_unknown_test.py
 import json
 from pathlib import Path
 

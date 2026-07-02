@@ -3,14 +3,13 @@
 
 import io
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-
 
 # ---------------------------------------------------------------------------
 # Изображения

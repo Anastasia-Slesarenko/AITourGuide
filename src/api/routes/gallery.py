@@ -30,8 +30,8 @@ async def gallery_image(image_path: str) -> FileResponse:
     try:
         full_path = (base / image_path).resolve()
         full_path.relative_to(base.resolve())
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Недопустимый путь")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Недопустимый путь") from e
 
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(

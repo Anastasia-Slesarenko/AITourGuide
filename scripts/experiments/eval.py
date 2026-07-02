@@ -34,7 +34,7 @@ from sklearn.metrics import (
     roc_auc_score, f1_score, precision_recall_curve, roc_curve
 )
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use('Agg')  # Неинтерактивный бэкенд (без GUI)
 import matplotlib.pyplot as plt
 
 
@@ -154,7 +154,7 @@ def compute_rerank_scores_batch(
             query_image.close()
             query_image = _resized
     except Exception as e:
-        print(f"⚠ Error loading query image {query_img_path}: {e}")
+        print(f"⚠ Ошибка загрузки query-изображения {query_img_path}: {e}")
         # Возвращаем пустые скоры и все индексы как failed
         return (
             [0.0] * len(candidates),
@@ -521,7 +521,7 @@ def evaluate_retrieval_only(
         mrr_sum / total_valid if total_valid > 0 else 0.0
     )
     
-    # NEW: Confidence interval для MRR
+    # Доверительный интервал для MRR
     if compute_ci and mrr_values:
         # FIX #20: передаём ci_seed для воспроизводимости bootstrap
         _, lower, upper = calculate_confidence_interval(
@@ -558,12 +558,12 @@ def calculate_mrr(
         target_idx = sample["target_idx"]
 
         if target_idx == -1:
-            continue  # Skip none-of-the-above samples
+            continue  # Пропускаем сэмплы "ни один из вариантов"
 
-        # Rank candidates by scores
+        # Ранжируем кандидатов по скорам
         ranked_indices = np.argsort(scores)[::-1]
 
-        # Find position of target
+        # Находим позицию целевого кандидата
         rank = np.where(ranked_indices == target_idx)[0][0] + 1
 
         reciprocal_ranks.append(1.0 / rank)
@@ -592,19 +592,19 @@ def calculate_ndcg(
         target_idx = sample["target_idx"]
         
         if target_idx == -1:
-            continue  # Skip none-of-the-above
-        
-        # Create relevance array (1 for target, 0 for others)
+            continue  # Пропускаем сэмплы "ни один из вариантов"
+
+        # Создаём массив релевантности (1 для цели, 0 для остальных)
         relevance = np.array([
             1.0 if i == target_idx else 0.0
             for i in range(len(scores))
         ])
         
-        # Rank by scores
+        # Ранжируем по скорам
         ranked_indices = np.argsort(scores)[::-1]
         ranked_relevance = relevance[ranked_indices]
-        
-        # Calculate DCG and IDCG for each K
+
+        # Вычисляем DCG и IDCG для каждого K
         for k in k_values:
             if k > len(scores):
                 k_actual = len(scores)
@@ -616,14 +616,14 @@ def calculate_ndcg(
             for i in range(k_actual):
                 dcg += ranked_relevance[i] / np.log2(i + 2)
             
-            # IDCG@K (ideal DCG - target at position 1)
-            idcg = 1.0 / np.log2(2)  # Only one relevant item
-            
+            # IDCG@K (идеальный DCG — цель на позиции 1)
+            idcg = 1.0 / np.log2(2)  # Только один релевантный документ
+
             # nDCG@K
             ndcg = dcg / idcg if idcg > 0 else 0.0
             ndcg_scores[k].append(ndcg)
     
-    # Average nDCG@K across all samples
+    # Среднее nDCG@K по всем сэмплам
     result = {}
     for k in k_values:
         if ndcg_scores[k]:
@@ -728,13 +728,13 @@ def calculate_additional_metrics_for_vlm_rerank(
         candidates = sample["candidates"]
         target_idx = sample["target_idx"]
 
-        # === RANK BY VLM SCORES ===
-        ranked_indices = np.argsort(vl_scores)[::-1]  # descending
+        # === РАНЖИРОВАНИЕ ПО VLM СКОРАМ ===
+        ranked_indices = np.argsort(vl_scores)[::-1]  # по убыванию
 
-        # === COLLECT DATA FOR METRICS ===
+        # === СБОР ДАННЫХ ДЛЯ МЕТРИК ===
         if target_idx != -1:
-            # --- Metrics for known landmarks ---
-            # Label: 1 for true target, 0 for others
+            # --- Метрики для известных достопримечательностей ---
+            # Метка: 1 для правильного кандидата, 0 для остальных
             labels_for_sample = [
                 1 if i == target_idx else 0
                 for i in range(len(candidates))
@@ -742,24 +742,23 @@ def calculate_additional_metrics_for_vlm_rerank(
             all_labels.extend(labels_for_sample)
             all_probs.extend(vl_scores)
 
-            # Rank of the true target
+            # Позиция правильного кандидата в ранжировании
             rank_of_target = np.where(ranked_indices == target_idx)[0][0] + 1
             all_ranks.append(rank_of_target)
 
-            # --- Metrics for Unknown task (positive class = KNOWN) ---
-            # This sample is "known" -> label = 1
+            # --- Метрики для задачи unknown (положительный класс = KNOWN) ---
+            # Этот сэмпл "известный" → метка = 1
             all_unknown_labels.append(1)
             
-            # FIXED: Use entropy-based confidence instead of just max score
-            # Lower entropy = more confident, higher entropy = less confident
+            # Используем confidence на основе энтропии (низкая энтропия = высокая уверенность)
             confidence_known = _compute_confidence_score(vl_scores)
             all_unknown_probs.append(confidence_known)
         else:
-            # --- Metrics for unknown landmarks ---
-            # This sample is "unknown" -> label = 0
+            # --- Метрики для неизвестных достопримечательностей ---
+            # Этот сэмпл "неизвестный" → метка = 0
             all_unknown_labels.append(0)
             
-            # FIXED: Use entropy-based confidence
+            # Confidence на основе энтропии
             confidence_known = _compute_confidence_score(vl_scores)
             all_unknown_probs.append(confidence_known)
 
@@ -839,7 +838,7 @@ def calculate_additional_metrics_for_vlm_rerank(
             metrics[f"{model_name}_unknown_f1"] = 0.0
             metrics[f"{model_name}_unknown_fpr_at_95tpr"] = 0.0
     else:
-        # AUROC is undefined if only one class is present
+        # AUROC не определён если присутствует только один класс
         metrics[f"{model_name}_unknown_auroc"] = 0.0
         metrics[f"{model_name}_unknown_f1"] = 0.0
         metrics[f"{model_name}_unknown_fpr_at_95tpr"] = 0.0
@@ -964,17 +963,17 @@ def create_calibration_plot(
             bin_confs.append((bin_lower + bin_upper) / 2)
             bin_counts.append(0)
     
-    # Create plot
+    # Создаём график
     fig, ax = plt.subplots(figsize=(8, 8))
-    
-    # Plot perfect calibration line
+
+    # Линия идеальной калибровки
     ax.plot([0, 1], [0, 1], 'k--', label='Perfect calibration', linewidth=2)
-    
-    # Plot actual calibration
+
+    # Фактическая калибровка
     ax.plot(bin_confs, bin_accs, 'o-', label=f'{model_name}',
             markersize=8, linewidth=2)
     
-    # Add bar chart showing sample counts
+    # Столбчатая диаграмма числа сэмплов
     ax2 = ax.twinx()
     ax2.bar(bin_confs, bin_counts, alpha=0.3, width=0.08,
             color='gray', label='Sample count')
@@ -989,7 +988,7 @@ def create_calibration_plot(
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     
-    # Save plot
+    # Сохраняем график
     os.makedirs(output_dir, exist_ok=True)
     plot_path = os.path.join(output_dir, f'calibration_{model_name}.png')
     plt.tight_layout()
@@ -1689,9 +1688,9 @@ def evaluate_rerank(
         results["lora_vlm"] = lora_metrics
         results["lora_by_type"] = lora_type_metrics
 
-    # Summary metrics for quick comparison
+    # Сводные метрики для быстрого сравнения
     results["summary"] = {
-        # Retrieval metrics (hit@k and recall@k are identical for single-label)
+        # Метрики retrieval (hit@k и recall@k идентичны при одном релевантном документе)
         "retrieval_hit_1": retrieval_metrics.get("retrieval_hit_1", 0),
         "retrieval_hit_3": retrieval_metrics.get("retrieval_hit_3", 0),
         "retrieval_hit_5": retrieval_metrics.get("retrieval_hit_5", 0),
@@ -1700,7 +1699,7 @@ def evaluate_rerank(
         "retrieval_recall_5": retrieval_metrics.get("retrieval_recall_5", 0),
         "retrieval_mrr": retrieval_metrics.get("retrieval_mrr", 0),
         
-        # Zero-shot VLM metrics
+        # Метрики zero-shot VLM
         "zero_shot_vlm_hit_1": vlm_metrics.get(
             "zero_shot_vlm_hit_1", 0
         ) if not skip_zero_shot else None,
@@ -1789,7 +1788,7 @@ def evaluate_rerank(
         ) if lora_metrics else None,
     }
 
-    # Remove None values for cleaner JSON
+    # Убираем None-значения для чистого JSON
     results["summary"] = {
         k: v for k, v in results["summary"].items() if v is not None
     }
@@ -1814,12 +1813,12 @@ def evaluate_rerank(
             "eval_" + os.path.basename(output_path).replace(".json", "")
         )
 
-        # Create plots directory
+        # Создаём директорию для графиков
         plots_dir = os.path.join(os.path.dirname(output_path), "plots")
         os.makedirs(plots_dir, exist_ok=True)
 
         with mlflow.start_run(run_name=run_name):
-            # Log parameters
+            # Логируем параметры
             mlflow.log_params({
                 "dataset": dataset_path,
                 "image_base_dir": image_base_dir,
@@ -1841,7 +1840,7 @@ def evaluate_rerank(
                 {k: float(v) for k, v in results["summary"].items()}
             )
 
-            # Create and log calibration plots
+            # Создаём и логируем calibration plots
             if not skip_zero_shot and vlm_metrics:
                 print("Создание calibration plot для zero-shot...")
                 # FIX #16: используем _s вместо sample, чтобы не перезаписывать

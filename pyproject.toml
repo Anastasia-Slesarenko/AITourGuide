@@ -60,34 +60,10 @@ markers = [
 asyncio_mode = "auto"
 
 # ========================================
-# BLACK CONFIGURATION
-# ========================================
-[tool.black]
-line-length = 88
-target-version = ['py310', 'py311', 'py312']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-  | data
-  | models
-  | experiments
-)/
-'''
-
-# ========================================
 # MYPY CONFIGURATION
 # ========================================
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -100,6 +76,11 @@ warn_unused_ignores = true
 warn_no_return = true
 follow_imports = "normal"
 ignore_missing_imports = true
+# Исключаем скрипты и эксперименты — там нет строгой типизации
+exclude = [
+    "scripts/",
+    "tests/load/",
+]
 
 [[tool.mypy.overrides]]
 module = [
@@ -108,6 +89,21 @@ module = [
     "faiss.*",
     "llama_cpp.*",
     "PIL.*",
+    "requests.*",
+    "aiohttp.*",
+    "cachetools.*",
+    "locust.*",
+    "mlflow.*",
+    "peft.*",
+    "datasets.*",
+    "sklearn.*",
+    "scipy.*",
+    "matplotlib.*",
+    "boto3.*",
+    "botocore.*",
+    "qwen_vl_utils.*",
+    "sentencepiece.*",
+    "prometheus_client.*",
 ]
 ignore_missing_imports = true
 
@@ -121,7 +117,7 @@ omit = [
     "*/test_*.py",
     "*/__pycache__/*",
     "*/site-packages/*",
-    "experiments/*",
+    "scripts/experiments/*",
 ]
 
 [tool.coverage.report]

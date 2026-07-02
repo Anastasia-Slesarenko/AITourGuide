@@ -2,7 +2,7 @@
 """Эндпоинт проверки состояния сервиса."""
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Depends
 
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/v1", tags=["Health"])
     summary="Проверка состояния",
     description="Проверяет доступность сервиса и его компонентов.",
 )
-async def health_check(guide: AITourGuide = Depends(get_guide)) -> Dict[str, Any]:
+async def health_check(guide: AITourGuide = Depends(get_guide)) -> dict[str, Any]:
     """Возвращает полный статус сервиса: компоненты, конфиг, метрики."""
     try:
         return await guide.health_check()

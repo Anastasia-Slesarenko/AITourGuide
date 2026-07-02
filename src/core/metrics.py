@@ -12,7 +12,7 @@ ValueError: Duplicated timeseries при повторном создании AIT
     METRICS.requests_total.labels(status="success").inc()
 """
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 
 class _AITourGuideMetrics:

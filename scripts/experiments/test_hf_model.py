@@ -203,7 +203,7 @@ def get_yes_probability(
     inputs = {k: v.to(model.device) if hasattr(v, 'to') else v
               for k, v in inputs.items()}
 
-    # Forward pass — получаем logits
+    # Прямой проход — получаем logits
     with torch.no_grad():
         outputs = model(**inputs)
 
@@ -330,7 +330,7 @@ def main_test(
     print(f"⏱️  Инференс: {infer_time:.2f} сек")
     print(f"⏱️  Общее время: {load_time + infer_time:.2f} сек")
 
-    # Unknown detection
+    # Определение неизвестного объекта
     top_score = ranked_results[0]["p_yes"] if ranked_results else 0.0
     is_unknown = not ranked_results or top_score < RERANK_THRESHOLD
     if is_unknown:
@@ -339,7 +339,7 @@ def main_test(
             f"(top P(yes)={top_score:.4f} < {RERANK_THRESHOLD})"
         )
 
-    # Hit@1
+    # Точность Hit@1
     top_1_is_correct = (
         not is_unknown
         and str(ranked_results[0]["landmark_id"]) == str(true_lid)

@@ -2,8 +2,8 @@
 """Конфигурация приложения через переменные окружения."""
 
 from pathlib import Path
+
 from pydantic_settings import BaseSettings
-from typing import Set
 
 
 class Settings(BaseSettings):
@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     top_k_retrieval: int = 10
     confidence_threshold: float = 0.5
     enable_internet_search: bool = True
+
+    # Yandex Cloud API (перевод и поиск по изображению)
+    yc_folder_id: str = ""
+    yc_api_key: str = ""
 
     # Пути к фронтенду
     templates_dir: str = "src/api/templates"
@@ -65,9 +69,12 @@ class Settings(BaseSettings):
     cors_allow_headers: list[str] = ["*"]
 
     # Допустимые форматы файлов
-    allowed_extensions: Set[str] = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-    allowed_mime_types: Set[str] = {
-        "image/jpeg", "image/png", "image/gif", "image/webp"
+    allowed_extensions: set[str] = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    allowed_mime_types: set[str] = {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
     }
 
     @property
@@ -97,9 +104,7 @@ class Settings(BaseSettings):
         """Проверяет наличие обязательных файлов индекса."""
         return {
             "index_faiss": (self.index_dir_abs / "gallery_index.faiss").exists(),
-            "index_metadata": (
-                self.index_dir_abs / "gallery_metadata.json"
-            ).exists(),
+            "index_metadata": (self.index_dir_abs / "gallery_metadata.json").exists(),
         }
 
     class Config:

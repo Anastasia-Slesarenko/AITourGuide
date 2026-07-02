@@ -2,7 +2,7 @@
 Примеры использования AITourGuide
 """
 import asyncio
-import sys 
+import sys
 from pathlib import Path
 
 # Добавляем корневую папку AIGuide в sys.path
@@ -10,14 +10,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.ai_tour_guide import AITourGuide, AITourGuideConfig
 
-
 # ============================================
 # ПРИМЕР 1: Базовое использование
 # ============================================
 
 async def basic_example():
     """Простой пример распознавания одного изображения."""
-    
+
     # Создание конфигурации
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
@@ -28,13 +27,13 @@ async def basic_example():
         confidence_threshold=0.78,
         top_k_retrieval=10,
     )
-    
+
     # Инициализация сервиса
     guide = AITourGuide(config)
-    
+
     # Предсказание
     result = await guide.predict("images/475_3.jpg")
-    
+
     print(f"Название: {result['name']}")
     print(f"Описание: {result['description']}")
     print(f"Уверенность: {result['confidence']:.2%}")
@@ -48,14 +47,14 @@ async def basic_example():
 
 async def context_manager_example():
     """Пример с автоматической очисткой ресурсов."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     # Async context manager - автоматически очистит ресурсы
     async with AITourGuide(config) as guide:
         result = await guide.predict("images/475_3.jpg")
@@ -64,7 +63,7 @@ async def context_manager_example():
         print(f"Уверенность: {result['confidence']:.2%}")
         print(f"Источник: {result['source']}")
         print(f"Время: {sum(result['timing'].values()):.2f}s")
-    
+
     # Ресурсы автоматически освобождены
 
 
@@ -74,26 +73,26 @@ async def context_manager_example():
 
 async def batch_example():
     """Обработка нескольких изображений."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     guide = AITourGuide(config)
-    
+
     # Список изображений
     image_paths = [
         "images/14_1.jpg", #Театр Делакорта
         "images/50_1.jpg", #Раймунд-театр
         "images/22_3.jpg", #Кастильо-де-Санта-Крус
     ]
-    
+
     # Пакетная обработка
     results = await guide.predict_batch(image_paths)
-    
+
     for i, result in enumerate(results):
         print(f"\n--- Изображение {i+1} ---")
         print(f"Название: {result['name']}")
@@ -109,13 +108,13 @@ async def batch_example():
 
 async def custom_confidence_example():
     """Пример с кастомными параметрами расчета уверенности."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
-        
+
         # Кастомные параметры confidence
         confidence_threshold=0.85,  # Более строгий порог
         gap_multiplier=15.0,  # Больший вес для gap между кандидатами
@@ -127,10 +126,10 @@ async def custom_confidence_example():
             "position": 0.15,
         }
     )
-    
+
     guide = AITourGuide(config)
     result = await guide.predict("images/475_3.jpg")
-    
+
     print(f"Уверенность: {result['confidence']:.2%}")
     print(f"Источник: {result['source']}")
 
@@ -141,22 +140,22 @@ async def custom_confidence_example():
 
 async def no_internet_search_example():
     """Пример без использования интернет-поиска."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     guide = AITourGuide(config)
-    
+
     # Отключаем интернет-поиск
     result = await guide.predict(
         "images/962_5.jpg",
         use_internet_search=False
     )
-    
+
     print(f"Результат (только RAG): {result['name']}")
     print(f"Описание: {result['description']}")
     print(f"Уверенность: {result['confidence']:.2%}")
@@ -170,16 +169,16 @@ async def no_internet_search_example():
 
 async def metrics_example():
     """Пример работы с метриками производительности."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     guide = AITourGuide(config)
-    
+
     # Обработка нескольких изображений
     image_paths = [
         "images/14_1.jpg", #Театр Делакорта
@@ -188,7 +187,7 @@ async def metrics_example():
     ]
     for image_path in image_paths:
         await guide.predict(image_path)
-    
+
     # Получение метрик
     metrics = guide.get_metrics()
     print("\n=== Метрики производительности ===")
@@ -200,7 +199,7 @@ async def metrics_example():
     print(f"Среднее время retrieval: {metrics['avg_retrieval_time']:.3f}s")
     print(f"Среднее время генерации: {metrics['avg_generation_time']:.3f}s")
     print(f"Среднее общее время: {metrics['avg_total_time']:.3f}s")
-    
+
     # Сброс метрик
     guide.reset_metrics()
 
@@ -211,26 +210,26 @@ async def metrics_example():
 
 def health_check_example():
     """Проверка состояния сервиса."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     guide = AITourGuide(config)
-    
+
     # Проверка здоровья
     health = guide.health_check()
-    
+
     print(f"Статус: {health['status']}")
     print(f"Готов: {health['ready']}")
-    print(f"\nКомпоненты:")
+    print("\nКомпоненты:")
     for component, info in health['components'].items():
         print(f"  {component}: {info['status']}")
-    
-    print(f"\nКонфигурация:")
+
+    print("\nКонфигурация:")
     print(f"  Device: {health['config']['device']}")
     print(f"  Confidence threshold: {health['config']['confidence_threshold']}")
 
@@ -241,19 +240,19 @@ def health_check_example():
 
 async def error_handling_example():
     """Пример обработки ошибок."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     guide = AITourGuide(config)
-    
+
     # Попытка обработать несуществующий файл
     result = await guide.predict("nonexistent.jpg")
-    
+
     if result['error']:
         print(f"Ошибка: {result['error']}")
         # Ошибка логируется внутренне, но не раскрывается пользователю
@@ -267,34 +266,34 @@ async def error_handling_example():
 
 async def detailed_result_example():
     """Пример детального анализа результата."""
-    
+
     config = AITourGuideConfig(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
         mmproj_path="models/qwen2-vl-2b-r16/mmproj-model-f16.gguf",
         index_path="rag/clip_index",
         facts_db_path="rag/facts_db.pkl",
     )
-    
+
     guide = AITourGuide(config)
     result = await guide.predict("images/962_5.jpg")
-    
+
     print("=== Детальный результат ===\n")
-    
+
     print(f"Название: {result['name']}")
     print(f"Описание: {result['description']}\n")
-    
+
     print(f"Уверенность: {result['confidence']:.2%}")
     print(f"Источник: {result['source']}\n")
-    
+
     print("Retrieved кандидаты:")
     for i, (name, score) in enumerate(
         zip(result['retrieved_names'][:5], result['retrieved_scores'][:5])
     ):
         print(f"  {i+1}. {name} (score: {score:.4f})")
-    
+
     if result['search_query']:
         print(f"\nПоисковый запрос: {result['search_query']}")
-    
+
     print("\nВремя выполнения:")
     for stage, time_sec in result['timing'].items():
         print(f"  {stage}: {time_sec:.3f}s")
@@ -307,7 +306,7 @@ async def detailed_result_example():
 
 async def backward_compatibility_example():
     """Пример использования через kwargs (старый способ)."""
-    
+
     # Старый способ - через kwargs (все еще работает)
     guide = AITourGuide(
         model_path="models/qwen2-vl-2b-r16/model-q5_k_m.gguf",
@@ -317,7 +316,7 @@ async def backward_compatibility_example():
         device="cuda",
         confidence_threshold=0.70,
     )
-    
+
     result = await guide.predict("images/962_5.jpg")
     print(f"Результат: {result['name']}")
 
@@ -338,9 +337,9 @@ if __name__ == "__main__":
     print("8. Обработка ошибок")
     print("9. Детальный анализ результата")
     print("10. Обратная совместимость")
-    
+
     choice = input("\nВведите номер примера (1-10): ")
-    
+
     examples = {
         "1": basic_example,
         "2": context_manager_example,
@@ -353,7 +352,7 @@ if __name__ == "__main__":
         "9": detailed_result_example,
         "10": backward_compatibility_example,
     }
-    
+
     if choice in examples:
         example_func = examples[choice]
         if choice == "7":

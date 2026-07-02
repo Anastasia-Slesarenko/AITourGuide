@@ -3,18 +3,22 @@
 
 import asyncio
 import logging
-from typing import Dict
 
 from fastapi import (
-    APIRouter, File, UploadFile, Form,
-    HTTPException, Depends, Request,
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
 )
 from pydantic import BaseModel, Field
 
-from src.services.ai_tour_guide import AITourGuide
 from src.api.dependencies import get_guide, get_rate_limiter
-from src.api.middleware import check_rate_limit, RateLimiter
+from src.api.middleware import RateLimiter, check_rate_limit
 from src.core.config import settings
+from src.services.ai_tour_guide import AITourGuide
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +30,12 @@ class PredictionResponse(BaseModel):
 
     name: str = Field(..., description="Название достопримечательности")
     description: str = Field(..., description="Описание достопримечательности")
-    confidence: float = Field(
-        ..., ge=0.0, le=1.0, description="Уверенность (0–1)"
-    )
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Уверенность (0–1)")
     unknown: bool = Field(
-        False,
-        description="True если достопримечательность не распознана"
+        False, description="True если достопримечательность не распознана"
     )
-    source: str = Field(
-        ..., description="Источник: retrieval / internet / fallback"
-    )
-    timing: Dict[str, float] = Field(
+    source: str = Field(..., description="Источник: retrieval / internet / fallback")
+    timing: dict[str, float] = Field(
         ..., description="Время выполнения этапов в секундах"
     )
 
@@ -54,9 +53,7 @@ class PredictionResponse(BaseModel):
 )
 async def predict(
     request: Request,
-    image: UploadFile = File(
-        ..., description="Фотография достопримечательности"
-    ),
+    image: UploadFile = File(..., description="Фотография достопримечательности"),
     use_internet_search: bool = Form(
         True,
         description="Включить поиск в интернете при низкой уверенности",
@@ -79,10 +76,7 @@ async def predict(
     if len(content) > settings.max_file_size_bytes:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Файл слишком большой. "
-                f"Максимум: {settings.max_file_size_mb} МБ"
-            ),
+            detail=(f"Файл слишком большой. Максимум: {settings.max_file_size_mb} МБ"),
         )
 
     try:
@@ -93,18 +87,18 @@ async def predict(
             ),
             timeout=settings.predict_timeout,
         )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as e:
         logger.error("Таймаут предсказания")
         raise HTTPException(
             status_code=504,
             detail=f"Таймаут после {settings.predict_timeout} секунд",
-        )
-    except Exception:
+        ) from e
+    except Exception as e:
         logger.exception("Ошибка предсказания")
         raise HTTPException(
             status_code=500,
             detail="Внутренняя ошибка сервера",
-        )
+        ) from e
 
     return PredictionResponse(
         name=result.get("name", ""),

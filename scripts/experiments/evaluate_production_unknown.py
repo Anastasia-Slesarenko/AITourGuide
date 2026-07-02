@@ -1,4 +1,4 @@
-# experiments/evaluate_production_unknown.py
+# scripts/experiments/evaluate_production_unknown.py
 """
 Оценивает none accuracy на production-like hard unknown сэмплах.
 

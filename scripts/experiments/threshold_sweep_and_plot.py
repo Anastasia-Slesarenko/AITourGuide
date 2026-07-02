@@ -62,7 +62,7 @@ def stratified_cal_eval_split(predictions: list, cal_ratio: float = 0.5, seed: i
 
 
 # ============================================================
-# SWEEP ЛОГИКА
+# ЛОГИКА ПЕРЕБОРА ПОРОГОВ
 # ============================================================
 def run_sweep(predictions: list):
     """Вычисляет метрики для каждого порога в заданном диапазоне."""
@@ -92,8 +92,8 @@ def run_sweep(predictions: list):
         # Known Accuracy: доля known, правильно принятых (pred=1 и true=1)
         true_positives = ((true_is_known == 1) & (pred_is_known == 1)).sum()
         known_acc = true_positives / n_known if n_known > 0 else 0.0
-        
-        # F1 Macro
+
+        # F1 Macro (среднее по классам)
         f1 = f1_score(true_is_known, pred_is_known, average="macro", zero_division=0)
         
         results.append({

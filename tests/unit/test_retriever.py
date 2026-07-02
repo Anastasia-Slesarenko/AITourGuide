@@ -1,9 +1,10 @@
 # tests/unit/test_retriever.py
 """Юнит-тесты LandmarkRetriever и вспомогательной логики."""
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
-from unittest.mock import MagicMock
 
 
 class TestEmbeddingNormalization:
@@ -35,24 +36,39 @@ class TestLandmarkRetrieverUnit:
         Создаём экземпляр LandmarkRetriever с замоканными зависимостями
         (SigLIP-модель, FAISS-индекс, метаданные).
         """
-        from src.rag.landmark_retriever import LandmarkRetriever
+        from src.rag.landmark_retriever import (
+            GalleryImageMetadata,
+            LandmarkRetriever,
+        )
 
         mock_index = MagicMock()
         mock_index.d = 768
-
         mock_index_builder = MagicMock()
 
-        metadata = [
-            MagicMock(landmark_id="1", landmark_name="Eiffel Tower"),
-            MagicMock(landmark_id="2", landmark_name="Colosseum"),
-        ]
+        # Создаём минимальные метаданные нужного типа
+        meta1 = GalleryImageMetadata(
+            image_id=0,
+            image_path="eiffel.jpg",
+            landmark_id="1",
+            landmark_name="Eiffel Tower",
+            caption_landmark="",
+            caption="",
+        )
+        meta2 = GalleryImageMetadata(
+            image_id=1,
+            image_path="colosseum.jpg",
+            landmark_id="2",
+            landmark_name="Colosseum",
+            caption_landmark="",
+            caption="",
+        )
 
-        retriever = LandmarkRetriever.__new__(LandmarkRetriever)  # type: ignore[call-arg]
-        retriever.gallery_index = mock_index  # type: ignore[attr-defined]
-        retriever.gallery_metadata = metadata  # type: ignore[attr-defined]
-        retriever.index_builder = mock_index_builder  # type: ignore[attr-defined]
-        retriever.aggregation_mode = "weighted_top2"  # type: ignore[attr-defined]
-        retriever.aggregation_alpha = 0.7  # type: ignore[attr-defined]
+        retriever = LandmarkRetriever.__new__(LandmarkRetriever)
+        retriever.gallery_index = mock_index
+        retriever.gallery_metadata = [meta1, meta2]
+        retriever.index_builder = mock_index_builder
+        retriever.aggregation_mode = "weighted_top2"
+        retriever.aggregation_alpha = 0.7
         return retriever
 
     def test_gallery_metadata_не_пустой(self, mock_retriever):

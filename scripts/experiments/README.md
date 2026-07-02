@@ -20,10 +20,10 @@
 python scripts/data_preparation/step6_setup_dataset.py
 
 # 2. Запустите обучение с дефолтными параметрами
-python experiments/train.py
+python scripts/experiments/train.py
 
 # 3. Оцените модель
-python experiments/eval.py --checkpoint checkpoints/qwen2vl-rerank-lora/best_model
+python scripts/experiments/eval.py --checkpoint checkpoints/qwen2vl-rerank-lora/best_model
 ```
 
 ## 📦 Требования
@@ -51,7 +51,7 @@ pip install -r requirements-dev.txt
 ## 📁 Структура проекта
 
 ```
-experiments/
+scripts/experiments/
 ├── train.py              # Основной скрипт обучения
 ├── train_config.py       # Конфигурации экспериментов
 ├── eval.py              # Скрипт оценки модели
@@ -147,7 +147,7 @@ config.data.image_dir = "path/to/images"
 ### Базовое обучение
 
 ```python
-python experiments/train.py
+python scripts/experiments/train.py
 ```
 
 ### С кастомными параметрами
@@ -202,7 +202,7 @@ for lr in [1e-5, 5e-5, 1e-4]:
 ### Полная оценка
 
 ```bash
-python experiments/eval.py \
+python scripts/experiments/eval.py \
     --checkpoint checkpoints/qwen2vl-rerank-lora/experiment_name \
     --val_dataset data/processed/val.json \
     --image_dir images \

@@ -1,4 +1,4 @@
-# experiments/e2e_eval.py
+# scripts/experiments/e2e_eval.py
 """
 End-to-End оценка полного пайплайна распознавания достопримечательностей.
 

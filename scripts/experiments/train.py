@@ -1,5 +1,5 @@
 """
-Training script for Qwen2-VL reranking model with LoRA fine-tuning.
+Скрипт обучения Qwen2-VL reranking-модели с LoRA fine-tuning.
 """
 
 import warnings
@@ -90,10 +90,10 @@ def build_rerank_prompt(
 
         return query_image, candidate_image, messages
     except FileNotFoundError as e:
-        print(f"⚠️ Image file not found: {e}")
+        print(f"⚠️ Файл изображения не найден: {e}")
         return None, None, None
     except Exception as e:
-        print(f"⚠️ Error loading images: {e}")
+        print(f"⚠️ Ошибка загрузки изображений: {e}")
         return None, None, None
 
 
@@ -113,7 +113,7 @@ def make_collate_fn(
 
     def _collate(batch):
         # batch: [{"query_image": str, "candidates": [...], "target_idx": int}, ...]
-        # Превращаем в список пар (query_img, candidate, label)
+        # Разворачиваем в список пар (query_img, candidate, label)
         flat_batch = []
         for sample in batch:
             query_img_path = sample["query_image"]
@@ -313,7 +313,7 @@ class RerankTrainer(Trainer):
         _tokenizer = getattr(processor, "tokenizer", processor)
         yes_id = _tokenizer.convert_tokens_to_ids("Yes")
         no_id = _tokenizer.convert_tokens_to_ids("No")
-        # Fallback на encode если convert_tokens_to_ids вернул UNK
+        # Запасной вариант: encode() если convert_tokens_to_ids вернул UNK
         _unk_id = getattr(_tokenizer, "unk_token_id", None)
         if yes_id == _unk_id or no_id == _unk_id:
             yes_id = _tokenizer.encode("Yes", add_special_tokens=False)[0]
@@ -753,7 +753,7 @@ class MetricsCallback(TrainerCallback):
             fixed_image_size=self.fixed_image_size,
         )
 
-        # Log to console
+        # Вывод в консоль
         print(f"📈 Eval Loss: {metrics['eval_loss']:.4f}")
         print(f"📈 Eval Hit_1: {metrics['eval_hit_1']:.3f}")
         print(f"📈 Eval MRR: {metrics['eval_mrr']:.3f}")
@@ -762,12 +762,12 @@ class MetricsCallback(TrainerCallback):
         print(f"📈 Eval Easy Acc: {metrics['eval_easy_accuracy']:.3f}")
         print(f"📈 Eval Semi-Hard Acc: {metrics['eval_semi_hard_accuracy']:.3f}")
 
-        # Track metrics
+        # Сохраняем историю метрик
         self.eval_steps_list.append(state.global_step)
         for k, v in metrics.items():
             self.metrics_history[k].append(v)
 
-        # Log to MLflow
+        # Логируем в MLflow
         if MLFLOW_AVAILABLE:
             try:
                 mlflow.log_metrics({
@@ -801,9 +801,9 @@ class MetricsCallback(TrainerCallback):
                 train_loss_values=self.train_loss_values
             )
         except Exception as e:
-            print(f"⚠️ Plotting error: {e}")
+            print(f"⚠️ Ошибка построения графика: {e}")
 
-        # Early stopping based on a primary metric (e.g., eval_mrr)
+        # Early stopping по основной метрике (eval_mrr)
         primary_metric_value = metrics["eval_mrr"]
         if primary_metric_value > self.best_primary_metric:
             self.best_primary_metric = primary_metric_value
@@ -903,7 +903,7 @@ def run_experiment(
         torch.cuda.empty_cache()
         gc.collect()
 
-        # Load model and processor
+        # Загружаем модель и процессор
         processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", use_fast=True)
         model = Qwen2VLForConditionalGeneration.from_pretrained(
             "Qwen/Qwen2-VL-2B-Instruct",
@@ -922,7 +922,7 @@ def run_experiment(
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
 
-        # Load datasets
+        # Загружаем датасеты
         train_dataset = RerankDataset(TRAIN_DATASET_FILE, IMAGE_DIR)
         val_dataset = RerankDataset(VAL_DATASET_FILE, IMAGE_DIR)
         # image_base_dir уже сохраняется в RerankDataset.__init__ как self.image_base_dir
@@ -930,7 +930,7 @@ def run_experiment(
         train_dataset.image_base_dir = IMAGE_DIR
         val_dataset.image_base_dir = IMAGE_DIR
 
-        # Collate function
+        # Функция сборки батча (collate)
         # FIX batch_size>1: передаём fixed_image_size для корректного батчинга
         # PERF: max_pairs_per_sample ограничивает число пар на сэмпл
         data_collator = make_collate_fn(
@@ -993,7 +993,7 @@ def run_experiment(
 
         trainer.train()
 
-        # Save final model
+        # Сохраняем финальную модель
         model.save_pretrained(output_dir)
         processor.save_pretrained(output_dir)
         if MLFLOW_AVAILABLE:

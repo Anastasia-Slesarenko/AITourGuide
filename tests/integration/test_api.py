@@ -5,6 +5,7 @@
 """
 
 import io
+
 from PIL import Image
 
 
@@ -19,6 +20,7 @@ def _make_jpeg_bytes(width: int = 224, height: int = 224) -> bytes:
 # ---------------------------------------------------------------------------
 # /v1/health
 # ---------------------------------------------------------------------------
+
 
 class TestHealth:
     """Тесты эндпоинта проверки состояния сервиса."""
@@ -41,6 +43,7 @@ class TestHealth:
 # /v1/predict
 # ---------------------------------------------------------------------------
 
+
 class TestPredict:
     """Тесты эндпоинта распознавания достопримечательности."""
 
@@ -54,7 +57,7 @@ class TestPredict:
         jpeg = _make_jpeg_bytes()
         response = api_client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
         )
         assert response.status_code == 200
 
@@ -63,7 +66,7 @@ class TestPredict:
         jpeg = _make_jpeg_bytes()
         data = api_client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
         ).json()
 
         assert "name" in data
@@ -78,7 +81,7 @@ class TestPredict:
         jpeg = _make_jpeg_bytes()
         data = api_client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
         ).json()
 
         assert 0.0 <= data["confidence"] <= 1.0
@@ -88,7 +91,7 @@ class TestPredict:
         jpeg = _make_jpeg_bytes()
         data = api_client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
         ).json()
 
         assert data["source"] in ("retrieval", "internet", "fallback")
@@ -98,7 +101,7 @@ class TestPredict:
         jpeg = _make_jpeg_bytes()
         response = api_client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
             data={"use_internet_search": "false"},
         )
         assert response.status_code == 200
@@ -109,7 +112,7 @@ class TestPredict:
         big_data = b"x" * (11 * 1024 * 1024)
         response = api_client.post(
             "/v1/predict",
-            files={"file": ("big.jpg", big_data, "image/jpeg")},
+            files={"image": ("big.jpg", big_data, "image/jpeg")},
         )
         assert response.status_code == 400
 
@@ -117,15 +120,16 @@ class TestPredict:
         """Невалидные данные изображения должны вернуть ошибку."""
         response = api_client.post(
             "/v1/predict",
-            files={"file": ("bad.jpg", b"not an image", "image/jpeg")},
+            files={"image": ("bad.jpg", b"not an image", "image/jpeg")},
         )
-        # Сервис должен вернуть ошибку, а не упасть с 500
-        assert response.status_code in (400, 422, 500)
+        # Сервис должен вернуть ошибку (400 или 422), но не падать с 500
+        assert response.status_code in (400, 422)
 
 
 # ---------------------------------------------------------------------------
 # /metrics
 # ---------------------------------------------------------------------------
+
 
 class TestMetrics:
     """Тесты Prometheus-эндпоинта."""
@@ -143,6 +147,7 @@ class TestMetrics:
 # ---------------------------------------------------------------------------
 # /docs, /redoc, /openapi.json
 # ---------------------------------------------------------------------------
+
 
 class TestDocumentation:
     """Тесты доступности документации."""

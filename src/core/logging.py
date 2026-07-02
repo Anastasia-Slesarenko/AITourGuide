@@ -6,7 +6,6 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 
 class JSONFormatter(logging.Formatter):
@@ -37,10 +36,10 @@ class ColoredFormatter(logging.Formatter):
     """Форматтер с цветным выводом для консоли."""
 
     COLORS = {
-        "DEBUG": "\033[36m",     # Голубой
-        "INFO": "\033[32m",      # Зелёный
-        "WARNING": "\033[33m",   # Жёлтый
-        "ERROR": "\033[31m",     # Красный
+        "DEBUG": "\033[36m",  # Голубой
+        "INFO": "\033[32m",  # Зелёный
+        "WARNING": "\033[33m",  # Жёлтый
+        "ERROR": "\033[31m",  # Красный
         "CRITICAL": "\033[35m",  # Пурпурный
     }
     RESET = "\033[0m"
@@ -55,7 +54,7 @@ class ColoredFormatter(logging.Formatter):
 def setup_logging(
     level: str = "INFO",
     log_format: str = "text",
-    log_file: Optional[str] = None,
+    log_file: str | None = None,
     enable_colors: bool = True,
 ) -> None:
     """
@@ -78,8 +77,7 @@ def setup_logging(
     console_handler.setLevel(numeric_level)
 
     fmt = (
-        "%(asctime)s - %(name)s - %(levelname)s - "
-        "%(message)s [%(filename)s:%(lineno)d]"
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s [%(filename)s:%(lineno)d]"
     )
     if log_format == "json":
         console_handler.setFormatter(JSONFormatter())
@@ -101,10 +99,12 @@ def setup_logging(
         if log_format == "json":
             file_handler.setFormatter(JSONFormatter())
         else:
-            file_handler.setFormatter(logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - "
-                "%(message)s [%(filename)s:%(lineno)d]"
-            ))
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s - %(name)s - %(levelname)s - "
+                    "%(message)s [%(filename)s:%(lineno)d]"
+                )
+            )
 
         root_logger.addHandler(file_handler)
 
