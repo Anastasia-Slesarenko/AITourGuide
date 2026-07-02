@@ -56,7 +56,7 @@ class APIUser(HttpUser):
         jpeg = _make_jpeg_bytes()
         with self.client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
             data={"use_internet_search": "false"},
             name="/v1/predict (no internet)",
             catch_response=True,
@@ -82,7 +82,7 @@ class APIUser(HttpUser):
         jpeg = _make_jpeg_bytes()
         with self.client.post(
             "/v1/predict",
-            files={"file": ("photo.jpg", jpeg, "image/jpeg")},
+            files={"image": ("photo.jpg", jpeg, "image/jpeg")},
             data={"use_internet_search": "true"},
             name="/v1/predict (with internet)",
             catch_response=True,
