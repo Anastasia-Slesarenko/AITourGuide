@@ -11,6 +11,7 @@
 
 import asyncio
 import base64
+import hashlib
 import logging
 import math
 import re
@@ -25,7 +26,7 @@ from pathlib import Path
 from typing import Any, Union, cast
 
 import httpx
-from cachetools import LRUCache
+from cachetools import LRUCache, TTLCache
 from PIL import Image
 
 from src.core.metrics import METRICS
@@ -397,6 +398,12 @@ class AITourGuide:
         # Ограничен 500 записями чтобы не допустить утечки памяти
         # при большой галерее.
         self._gallery_image_cache: LRUCache = LRUCache(maxsize=500)
+
+        # TTL-кэш результатов predict по MD5 входных байтов.
+        # Исключает повторную обработку одинаковых изображений.
+        # maxsize=200 — при ~100KB на фото ≈ 20MB памяти на кэш.
+        # ttl=3600 — результат актуален 1 час.
+        self._predict_cache: TTLCache = TTLCache(maxsize=200, ttl=3600)
 
         self._is_ready = True
         logger.info("AITourGuide готов")
@@ -1678,6 +1685,19 @@ class AITourGuide:
             if isinstance(image_input, bytes)
             else str(image_input)
         )
+
+        # Кеш по MD5 — только для bytes-входа (файловые пути не кешируем,
+        # т.к. содержимое файла может измениться).
+        _cache_key: str | None = None
+        if isinstance(image_input, bytes):
+            _cache_key = hashlib.md5(image_input).hexdigest()
+            if _cache_key in self._predict_cache:
+                logger.info(
+                    f"[{correlation_id}] Возврат из predict-кеша "
+                    f"(md5={_cache_key[:8]}…)"
+                )
+                return dict(self._predict_cache[_cache_key])
+
         logger.info(f"[{correlation_id}] Предсказание для {input_id}")
 
         try:
@@ -1805,6 +1825,15 @@ class AITourGuide:
 
             result["timing"] = timing
             _update_metrics(result, image_size_bytes=_image_size)
+
+            # Кешируем только успешные результаты (без error)
+            if _cache_key and not result.get("error"):
+                self._predict_cache[_cache_key] = result
+                logger.debug(
+                    f"[{correlation_id}] Результат закешован "
+                    f"(md5={_cache_key[:8]}…, "
+                    f"кэш: {len(self._predict_cache)} записей)"
+                )
 
             logger.info(f"[{correlation_id}] Готово за {sum(timing.values()):.3f}с")
             return result

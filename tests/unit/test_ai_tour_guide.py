@@ -14,6 +14,7 @@ from src.services.ai_tour_guide import AITourGuide
 # Фикстура: минимальный AITourGuide без реальных моделей
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def guide():
     """
@@ -35,6 +36,7 @@ def guide():
 # _parse_logprobs_p_yes
 # ---------------------------------------------------------------------------
 
+
 class TestParseLogprobsPYes:
     """Тесты парсинга P(yes) из logprobs vLLM."""
 
@@ -46,51 +48,47 @@ class TestParseLogprobsPYes:
         if no_logprob is not None:
             top_lp.append({"token": "No", "logprob": no_logprob})
 
-        return {
-            "choices": [{
-                "logprobs": {
-                    "content": [{"top_logprobs": top_lp}]
-                }
-            }]
-        }
+        return {"choices": [{"logprobs": {"content": [{"top_logprobs": top_lp}]}}]}
 
-    def test_равные_logprobs_дают_p_yes_05(self, guide):
+    def test_equal_logprobs_give_p_yes_05(self, guide):
         """Если logit_yes == logit_no, P(yes) должен быть 0.5."""
         response = self._make_response(yes_logprob=-1.0, no_logprob=-1.0)
         p = guide._parse_logprobs_p_yes(response)
         assert p == pytest.approx(0.5, abs=1e-6)
 
-    def test_высокий_yes_logprob_даёт_p_yes_близкий_к_1(self, guide):
+    def test_high_yes_logprob_gives_p_yes_near_1(self, guide):
         """Если logit_yes >> logit_no, P(yes) должен быть близок к 1."""
         response = self._make_response(yes_logprob=0.0, no_logprob=-10.0)
         p = guide._parse_logprobs_p_yes(response)
         assert p > 0.99
 
-    def test_только_yes_токен_даёт_p_yes_1(self, guide):
+    def test_only_yes_token_gives_p_yes_1(self, guide):
         """Если есть только Yes-токен, P(yes) = 1.0."""
         resp = self._make_response(yes_logprob=-0.5)
         assert guide._parse_logprobs_p_yes(resp) == 1.0
 
-    def test_только_no_токен_даёт_p_yes_0(self, guide):
+    def test_only_no_token_gives_p_yes_0(self, guide):
         """Если есть только No-токен, P(yes) = 0.0."""
         resp = self._make_response(no_logprob=-0.5)
         assert guide._parse_logprobs_p_yes(resp) == 0.0
 
-    def test_пустые_logprobs_возвращают_none(self, guide):
+    def test_empty_logprobs_returns_none(self, guide):
         """Если logprobs отсутствуют, метод возвращает None."""
         resp: dict = {"choices": [{"logprobs": {}}]}
         assert guide._parse_logprobs_p_yes(resp) is None
 
-    def test_нет_yes_и_no_токенов_возвращает_none(self, guide):
+    def test_no_yes_or_no_tokens_returns_none(self, guide):
         """Если в top_logprobs нет ни Yes, ни No — возвращаем None."""
         response = {
-            "choices": [{
-                "logprobs": {
-                    "content": [{"top_logprobs": [
-                        {"token": "Maybe", "logprob": -1.0}
-                    ]}]
+            "choices": [
+                {
+                    "logprobs": {
+                        "content": [
+                            {"top_logprobs": [{"token": "Maybe", "logprob": -1.0}]}
+                        ]
+                    }
                 }
-            }]
+            ]
         }
         assert guide._parse_logprobs_p_yes(response) is None
 
@@ -99,45 +97,41 @@ class TestParseLogprobsPYes:
 # _text_response_to_p_yes
 # ---------------------------------------------------------------------------
 
+
 class TestTextResponseToPYes:
     """Тесты текстового fallback для P(yes)."""
 
     def _make_text_response(self, text: str) -> dict:
         return {"choices": [{"message": {"content": text}}]}
 
-    def test_yes_ответ(self, guide):
-        assert guide._text_response_to_p_yes(
-            self._make_text_response("Yes")
-        ) == 0.9
+    def test_yes_response(self, guide):
+        assert guide._text_response_to_p_yes(self._make_text_response("Yes")) == 0.9
 
-    def test_no_ответ(self, guide):
-        assert guide._text_response_to_p_yes(
-            self._make_text_response("No")
-        ) == 0.1
+    def test_no_response(self, guide):
+        assert guide._text_response_to_p_yes(self._make_text_response("No")) == 0.1
 
-    def test_неизвестный_ответ(self, guide):
-        assert guide._text_response_to_p_yes(
-            self._make_text_response("Maybe")
-        ) == 0.5
+    def test_unknown_response(self, guide):
+        assert guide._text_response_to_p_yes(self._make_text_response("Maybe")) == 0.5
 
 
 # ---------------------------------------------------------------------------
 # _needs_translation
 # ---------------------------------------------------------------------------
 
+
 class TestNeedsTranslation:
     """Тесты определения необходимости перевода."""
 
-    def test_английский_текст_требует_перевода(self, guide):
+    def test_english_text_needs_translation(self, guide):
         assert guide._needs_translation("Eiffel Tower in Paris") is True
 
-    def test_русский_текст_не_требует_перевода(self, guide):
+    def test_russian_text_no_translation_needed(self, guide):
         assert guide._needs_translation("Эйфелева башня в Париже") is False
 
-    def test_пустая_строка_не_требует_перевода(self, guide):
+    def test_empty_string_no_translation_needed(self, guide):
         assert guide._needs_translation("") is False
 
-    def test_смешанный_текст_с_большой_долей_кириллицы(self, guide):
+    def test_mixed_text_high_cyrillic_ratio(self, guide):
         # Более 30% кириллицы — перевод не нужен
         text = "Исаакиевский собор (Saint Isaac's Cathedral)"
         assert guide._needs_translation(text) is False
@@ -147,22 +141,23 @@ class TestNeedsTranslation:
 # _validate_vlm_answer
 # ---------------------------------------------------------------------------
 
+
 class TestValidateVlmAnswer:
     """Тесты валидации ответа VLM на запрос названия."""
 
-    def test_нормальное_название_проходит(self, guide):
+    def test_valid_name_passes(self, guide):
         assert guide._validate_vlm_answer("Eiffel Tower") == "Eiffel Tower"
 
-    def test_unknown_возвращает_none(self, guide):
+    def test_unknown_returns_none(self, guide):
         assert guide._validate_vlm_answer("unknown") is None
 
-    def test_пустая_строка_возвращает_none(self, guide):
+    def test_empty_string_returns_none(self, guide):
         assert guide._validate_vlm_answer("") is None
 
-    def test_слишком_длинный_ответ_возвращает_none(self, guide):
+    def test_too_long_answer_returns_none(self, guide):
         # Более 8 слов — скорее всего не название
         long = "This is a very long answer that is not a landmark name at all"
         assert guide._validate_vlm_answer(long) is None
 
-    def test_кавычки_убираются(self, guide):
+    def test_quotes_are_stripped(self, guide):
         assert guide._validate_vlm_answer('"Notre-Dame"') == "Notre-Dame"

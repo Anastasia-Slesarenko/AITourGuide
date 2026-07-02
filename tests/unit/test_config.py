@@ -7,7 +7,7 @@ from src.core.config import Settings
 class TestSettings:
     """Тесты класса Settings."""
 
-    def test_значения_по_умолчанию(self):
+    def test_default_values(self):
         """Проверяем дефолтные значения настроек."""
         s = Settings()
 
@@ -21,30 +21,33 @@ class TestSettings:
         assert s.top_k_retrieval == 10
         assert s.confidence_threshold == 0.5
 
-    def test_конвертация_размера_файла_в_байты(self):
+    def test_file_size_conversion_to_bytes(self):
         """max_file_size_bytes = max_file_size_mb * 1024 * 1024."""
         s = Settings()
         assert s.max_file_size_bytes == 10 * 1024 * 1024
 
-    def test_допустимые_расширения(self):
+    def test_allowed_extensions(self):
         """Проверяем набор допустимых расширений изображений."""
         s = Settings()
         assert {".jpg", ".jpeg", ".png", ".gif", ".webp"} <= s.allowed_extensions
 
-    def test_допустимые_mime_типы(self):
+    def test_allowed_mime_types(self):
         """Проверяем набор допустимых MIME-типов."""
         s = Settings()
         assert {
-            "image/jpeg", "image/png", "image/gif", "image/webp"
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
         } <= s.allowed_mime_types
 
-    def test_cors_по_умолчанию(self):
+    def test_cors_defaults(self):
         """CORS по умолчанию открыт для всех."""
         s = Settings()
         assert s.cors_origins == ["*"]
         assert s.cors_allow_credentials is True
 
-    def test_переменные_окружения(self, monkeypatch):
+    def test_environment_variables(self, monkeypatch):
         """Настройки читаются из переменных окружения."""
         monkeypatch.setenv("PORT", "9000")
         monkeypatch.setenv("HOST", "127.0.0.1")
@@ -58,7 +61,7 @@ class TestSettings:
         assert s.device == "cuda"
         assert s.rate_limit_calls == 20
 
-    def test_validate_paths_возвращает_словарь(self):
+    def test_validate_paths_returns_dict(self):
         """validate_paths() возвращает словарь с булевыми значениями."""
         s = Settings()
         result = s.validate_paths()

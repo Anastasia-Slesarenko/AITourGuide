@@ -10,7 +10,7 @@ import pytest
 class TestEmbeddingNormalization:
     """Проверяем L2-нормализацию эмбеддингов."""
 
-    def test_нормализованный_вектор_имеет_норму_1(self):
+    def test_normalized_vector_has_unit_norm(self):
         """После L2-нормализации норма вектора должна быть равна 1."""
         vec = np.random.rand(1, 768).astype("float32")
         norm = np.linalg.norm(vec, axis=-1, keepdims=True)
@@ -19,7 +19,7 @@ class TestEmbeddingNormalization:
         result_norm = np.linalg.norm(normalized, axis=-1)
         assert np.allclose(result_norm, 1.0, atol=1e-6)
 
-    def test_нулевой_вектор_не_нормализуется(self):
+    def test_zero_vector_cannot_be_normalized(self):
         """Нулевой вектор нельзя нормализовать — проверяем что не падает."""
         vec = np.zeros((1, 768), dtype="float32")
         norm = np.linalg.norm(vec, axis=-1, keepdims=True)
@@ -71,11 +71,11 @@ class TestLandmarkRetrieverUnit:
         retriever.aggregation_alpha = 0.7
         return retriever
 
-    def test_gallery_metadata_не_пустой(self, mock_retriever):
+    def test_gallery_metadata_not_empty(self, mock_retriever):
         """Метаданные галереи должны содержать хотя бы один объект."""
         assert len(mock_retriever.gallery_metadata) > 0
 
-    def test_encode_query_вызывает_encoder(self, mock_retriever, sample_image):
+    def test_encode_query_calls_encoder(self, mock_retriever, sample_image):
         """_encode_query должен вызывать index_builder.encoder.encode_batch."""
         vec = np.random.rand(1, 768).astype("float32")
         vec /= np.linalg.norm(vec, axis=-1, keepdims=True)

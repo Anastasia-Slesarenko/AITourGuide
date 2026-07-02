@@ -25,16 +25,16 @@ def _make_jpeg_bytes(width: int = 224, height: int = 224) -> bytes:
 class TestHealth:
     """Тесты эндпоинта проверки состояния сервиса."""
 
-    def test_health_возвращает_200(self, api_client):
+    def test_health_returns_200(self, api_client):
         response = api_client.get("/v1/health")
         assert response.status_code == 200
 
-    def test_health_содержит_статус(self, api_client):
+    def test_health_contains_status(self, api_client):
         data = api_client.get("/v1/health").json()
         assert "status" in data
         assert data["status"] in ("healthy", "degraded", "not_ready")
 
-    def test_health_содержит_компоненты(self, api_client):
+    def test_health_contains_components(self, api_client):
         data = api_client.get("/v1/health").json()
         assert "components" in data
 
@@ -47,12 +47,12 @@ class TestHealth:
 class TestPredict:
     """Тесты эндпоинта распознавания достопримечательности."""
 
-    def test_predict_без_файла_возвращает_422(self, api_client):
+    def test_predict_without_file_returns_422(self, api_client):
         """Запрос без файла должен вернуть 422 Unprocessable Entity."""
         response = api_client.post("/v1/predict")
         assert response.status_code == 422
 
-    def test_predict_с_валидным_изображением_возвращает_200(self, api_client):
+    def test_predict_with_valid_image_returns_200(self, api_client):
         """Корректный JPEG должен вернуть 200 с полями ответа."""
         jpeg = _make_jpeg_bytes()
         response = api_client.post(
@@ -61,7 +61,7 @@ class TestPredict:
         )
         assert response.status_code == 200
 
-    def test_predict_структура_ответа(self, api_client):
+    def test_predict_response_structure(self, api_client):
         """Ответ должен содержать все обязательные поля."""
         jpeg = _make_jpeg_bytes()
         data = api_client.post(
@@ -76,7 +76,7 @@ class TestPredict:
         assert "unknown" in data
         assert "timing" in data
 
-    def test_predict_confidence_в_диапазоне_0_1(self, api_client):
+    def test_predict_confidence_in_range_0_1(self, api_client):
         """Confidence должен быть в диапазоне [0, 1]."""
         jpeg = _make_jpeg_bytes()
         data = api_client.post(
@@ -86,7 +86,7 @@ class TestPredict:
 
         assert 0.0 <= data["confidence"] <= 1.0
 
-    def test_predict_source_допустимое_значение(self, api_client):
+    def test_predict_source_valid_value(self, api_client):
         """Поле source должно быть одним из допустимых значений."""
         jpeg = _make_jpeg_bytes()
         data = api_client.post(
@@ -96,7 +96,7 @@ class TestPredict:
 
         assert data["source"] in ("retrieval", "internet", "fallback")
 
-    def test_predict_с_отключённым_интернет_поиском(self, api_client):
+    def test_predict_with_internet_search_disabled(self, api_client):
         """Параметр use_internet_search=false должен приниматься."""
         jpeg = _make_jpeg_bytes()
         response = api_client.post(
@@ -106,7 +106,7 @@ class TestPredict:
         )
         assert response.status_code == 200
 
-    def test_predict_слишком_большой_файл_возвращает_400(self, api_client):
+    def test_predict_oversized_file_returns_400(self, api_client):
         """Файл больше 10 МБ должен быть отклонён с кодом 400."""
         # Создаём данные размером > 10 МБ
         big_data = b"x" * (11 * 1024 * 1024)
@@ -116,7 +116,7 @@ class TestPredict:
         )
         assert response.status_code == 400
 
-    def test_predict_невалидные_байты_возвращают_ошибку(self, api_client):
+    def test_predict_invalid_bytes_returns_error(self, api_client):
         """Невалидные данные изображения должны вернуть ошибку."""
         response = api_client.post(
             "/v1/predict",
@@ -134,11 +134,11 @@ class TestPredict:
 class TestMetrics:
     """Тесты Prometheus-эндпоинта."""
 
-    def test_metrics_возвращает_200(self, api_client):
+    def test_metrics_returns_200(self, api_client):
         response = api_client.get("/metrics")
         assert response.status_code == 200
 
-    def test_metrics_содержит_prometheus_формат(self, api_client):
+    def test_metrics_contains_prometheus_format(self, api_client):
         """Ответ должен содержать строки в формате Prometheus."""
         text = api_client.get("/metrics").text
         assert "# HELP" in text or "# TYPE" in text
@@ -152,13 +152,13 @@ class TestMetrics:
 class TestDocumentation:
     """Тесты доступности документации."""
 
-    def test_swagger_ui_доступен(self, api_client):
+    def test_swagger_ui_available(self, api_client):
         assert api_client.get("/docs").status_code == 200
 
-    def test_redoc_доступен(self, api_client):
+    def test_redoc_available(self, api_client):
         assert api_client.get("/redoc").status_code == 200
 
-    def test_openapi_json_доступен(self, api_client):
+    def test_openapi_json_available(self, api_client):
         response = api_client.get("/openapi.json")
         assert response.status_code == 200
         schema = response.json()

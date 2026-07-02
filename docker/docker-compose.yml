@@ -68,6 +68,8 @@ services:
         --trust-remote-code
         --attention-backend TRITON_ATTN
         --enable-prefix-caching
+        --max-num-seqs 16
+        --max-num-batched-tokens 4096
 
     ports:
       - "30000:30000"

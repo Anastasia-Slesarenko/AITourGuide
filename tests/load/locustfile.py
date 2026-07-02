@@ -48,7 +48,7 @@ class APIUser(HttpUser):
         self.client.get("/v1/health")
 
     @task(5)
-    def predict_без_интернет_поиска(self):
+    def predict_no_internet(self):
         """
         Основной сценарий: распознавание без интернет-поиска.
         Вес 5 — самый частый запрос.
@@ -64,17 +64,17 @@ class APIUser(HttpUser):
             if response.status_code == 200:
                 data = response.json()
                 if "confidence" not in data:
-                    response.failure("Нет поля confidence в ответе")
+                    response.failure("Missing field: confidence")
                 else:
                     response.success()
             elif response.status_code == 429:
                 # Rate limit — не считаем ошибкой
                 response.success()
             else:
-                response.failure(f"Неожиданный статус: {response.status_code}")
+                response.failure(f"Unexpected status: {response.status_code}")
 
     @task(2)
-    def predict_с_интернет_поиском(self):
+    def predict_with_internet(self):
         """
         Сценарий с интернет-поиском.
         Вес 2 — реже, т.к. медленнее.
@@ -90,7 +90,7 @@ class APIUser(HttpUser):
             if response.status_code in (200, 429, 504):
                 response.success()
             else:
-                response.failure(f"Неожиданный статус: {response.status_code}")
+                response.failure(f"Unexpected status: {response.status_code}")
 
     @task(3)
     def health_check(self):
