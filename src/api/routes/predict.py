@@ -82,8 +82,9 @@ async def predict(
         )
 
     try:
-        Image.open(io.BytesIO(content)).verify()
-    except (UnidentifiedImageError, Exception) as e:
+        img = Image.open(io.BytesIO(content))
+        img.load()
+    except (UnidentifiedImageError, OSError) as e:
         raise HTTPException(
             status_code=400,
             detail="Невалидный файл изображения",
