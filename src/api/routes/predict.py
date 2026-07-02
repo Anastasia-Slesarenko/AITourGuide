@@ -1,7 +1,6 @@
 # src/api/routes/predict.py
 """Эндпоинт предсказания достопримечательности по изображению."""
 
-import asyncio
 import io
 import logging
 
@@ -91,14 +90,11 @@ async def predict(
         ) from e
 
     try:
-        result = await asyncio.wait_for(
-            guide.predict(
-                image_input=content,
-                use_internet_search=use_internet_search,
-            ),
-            timeout=settings.predict_timeout,
+        result = await guide.predict(
+            image_input=content,
+            use_internet_search=use_internet_search,
         )
-    except asyncio.TimeoutError as e:
+    except TimeoutError as e:
         logger.error("Таймаут предсказания")
         raise HTTPException(
             status_code=504,

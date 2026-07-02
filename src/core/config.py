@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -107,11 +107,12 @@ class Settings(BaseSettings):
             "index_metadata": (self.index_dir_abs / "gallery_metadata.json").exists(),
         }
 
-    class Config:
-        env_file = ".env"
-        env_prefix = ""
-        extra = "ignore"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
 
 # Глобальный экземпляр настроек
