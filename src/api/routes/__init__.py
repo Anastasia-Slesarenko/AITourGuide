@@ -1,7 +1,5 @@
 # src/api/routes/__init__.py
-"""
-API routes for AITourGuide.
-"""
+"""Маршруты (routes) API для AITourGuide."""
 
 from .frontend import router as frontend_router
 from .gallery import router as gallery_router

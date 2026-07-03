@@ -93,11 +93,11 @@ test-coverage:
 	@echo "Coverage report generated in htmlcov/index.html"
 
 load-test:
-	@echo "🔥 Running load test (100 users, 10/s spawn rate, 60s)..."
+	@echo "🔥 Running load test (100 users, 10/s spawn rate, 3m, stats reset after ramp-up)..."
 	@mkdir -p tests/load/results
 	python3 -m locust -f tests/load/locustfile.py \
 		--host http://localhost:8000 \
-		--headless -u 100 -r 10 -t 60s \
+		--headless -u 100 -r 10 -t 3m --reset-stats \
 		--csv tests/load/results/report \
 		--html tests/load/results/report.html
 	@echo "✅ Results saved to tests/load/results/"

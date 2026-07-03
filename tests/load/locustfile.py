@@ -44,8 +44,21 @@ class APIUser(HttpUser):
     wait_time = between(1, 5)
 
     def on_start(self):
-        """Проверяем доступность сервиса перед началом теста."""
+        """
+        Проверяем доступность сервиса и прогреваем модель перед началом теста.
+
+        Первый /v1/predict загружает модель в память (cold start, до ~30 с).
+        Делаем его здесь, чтобы прогрев не попадал в измеряемую нагрузку
+        (в паре с флагом --reset-stats это даёт чистые P50/P95/P99 по плато).
+        """
         self.client.get("/v1/health")
+        warmup_jpeg = _make_jpeg_bytes()
+        self.client.post(
+            "/v1/predict",
+            files={"image": ("warmup.jpg", warmup_jpeg, "image/jpeg")},
+            data={"use_internet_search": "false"},
+            name="/v1/predict (warmup)",
+        )
 
     @task(5)
     def predict_no_internet(self):

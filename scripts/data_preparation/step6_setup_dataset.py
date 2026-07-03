@@ -1,52 +1,54 @@
 """
-Step 6: Dataset generation script for landmark recognition with FAISS-based
-hard negative mining.
+Шаг 6: Скрипт генерации датасета для распознавания достопримечательностей
+с hard negative mining на основе FAISS.
 
-This script inherits from src.rag.landmark_retriever and adds training-specific
-logic:
+Скрипт наследуется от src.rag.landmark_retriever и добавляет логику,
+специфичную для обучения:
 - Hard negative mining
-- Label generation (target_idx)
-- Train/val/test splitting
-- Sample generation with unknown ratio
+- Генерация меток (target_idx)
+- Разбиение на train/val/test
+- Генерация сэмплов с долей unknown
 
-Prerequisites:
-    - Requires landmarks_with_guide_descriptions.json from step5
-    - Input file contains validated images with captions
+Предварительные требования:
+    - Требуется landmarks_with_guide_descriptions.json из шага 5
+    - Входной файл содержит валидированные изображения с caption'ами
 
-This script:
-1. Loads landmark data with validated images
-2. Splits images into gallery/query roles (production-correct)
-3. Builds FAISS index from gallery images only
-4. Generates training samples with hard negatives
-5. Saves samples and training index for reuse
+Этот скрипт:
+1. Загружает данные достопримечательностей с валидированными изображениями
+2. Распределяет изображения по ролям gallery/query (корректно для продакшена)
+3. Строит FAISS-индекс только из gallery-изображений
+4. Генерирует обучающие сэмплы с hard negatives
+5. Сохраняет сэмплы и обучающий индекс для повторного использования
 
-Training Index Reuse:
-    The script saves a training gallery index (gallery images only) that can be
-    reused for experiments with different parameters:
+Повторное использование обучающего индекса:
+    Скрипт сохраняет обучающий gallery-индекс (только gallery-изображения),
+    который можно переиспользовать для экспериментов с разными параметрами:
 
-    - training_gallery_index.faiss: FAISS index
-    - training_gallery_metadata.json: Image metadata
+    - training_gallery_index.faiss: FAISS-индекс
+    - training_gallery_metadata.json: метаданные изображений
     - training_gallery_embeddings.npy: SigLIP embeddings
 
-    To reuse existing index (default):
+    Чтобы переиспользовать существующий индекс (по умолчанию):
         config.reuse_training_index = True
         config.force_rebuild_index = False
 
-    To force rebuild:
+    Чтобы принудительно перестроить:
         config.force_rebuild_index = True
 
-    NOTE: This is NOT the production index. For production, use
-    LandmarkRetriever.build_index_from_landmarks() which includes ALL images.
+    ВНИМАНИЕ: Это НЕ продакшен-индекс. Для продакшена используйте
+    LandmarkRetriever.build_index_from_landmarks(), который включает ВСЕ
+    изображения.
 
-Usage:
+Использование:
     python step6_setup_dataset.py
 """
 
 from __future__ import annotations
 
 # ---------------------------------------------------------------
-# macOS segfault prevention: ALL thread/process env vars MUST be
-# set before any native library (numpy, torch, faiss) is imported.
+# Предотвращение segfault на macOS: ВСЕ переменные окружения для
+# потоков/процессов ДОЛЖНЫ быть заданы до импорта любой нативной
+# библиотеки (numpy, torch, faiss).
 # ---------------------------------------------------------------
 import os
 import platform as _platform
@@ -184,10 +186,10 @@ class DatasetConfig:
     semi_hard_threshold: float = 0.75  # 0.75 <= score < 0.85 → semi-hard
     # score < 0.75 → easy
 
-    # Text processing
+    # Обработка текста
     evidence_max_length: int = 80
 
-    # Random seed
+    # Зерно генератора случайных чисел (random seed)
     random_seed: int = 42
 
     def __post_init__(self):
@@ -257,14 +259,14 @@ class DatasetConfig:
 
 
 # ======================
-# TEXT PROCESSING
+# ОБРАБОТКА ТЕКСТА
 # ======================
 class TextProcessor:
-    """Handles text processing for landmark descriptions."""
+    """Обрабатывает текст описаний достопримечательностей."""
 
     @staticmethod
     def get_landmark_summary_caption(row: pd.Series) -> str:
-        """Get landmark_summary_caption from row."""
+        """Возвращает landmark_summary_caption из строки."""
         caption = row.get("landmark_summary_caption", "")
         if caption and isinstance(caption, str) and caption.strip():
             return str(caption)
@@ -274,10 +276,10 @@ class TextProcessor:
     def get_image_and_caption_for_candidate(
         row: pd.Series, valid_images: list[str]
     ) -> tuple[str, str, str]:
-        """Get random image and caption for a candidate landmark.
+        """Возвращает случайное изображение и caption для landmark-кандидата.
 
-        Returns:
-            Tuple of (candidate_image, caption, caption_landmark)
+        Возвращает:
+            Кортеж (candidate_image, caption, caption_landmark)
         """
         if not valid_images:
             return "", str(row.get("name", "")), str(row.get("name", ""))
@@ -311,7 +313,7 @@ class TextProcessor:
 
 
 # ======================
-# IMAGE ROLE ASSIGNMENT
+# НАЗНАЧЕНИЕ РОЛЕЙ ИЗОБРАЖЕНИЙ
 # ======================
 @dataclass
 class LandmarkImageSplit:
@@ -330,18 +332,18 @@ class LandmarkImageSplit:
     landmark_name: str
     total_images: int
 
-    # Image role assignments
+    # Назначение ролей изображениям
     gallery_images: list[str] = field(default_factory=list)
     query_train_images: list[str] = field(default_factory=list)
     query_val_images: list[str] = field(default_factory=list)
     query_test_images: list[str] = field(default_factory=list)
 
-    # Capability flags
+    # Флаги возможностей
     retrieval_only: bool = False  # True если только 1 изображение
     supports_contrastive: bool = False  # True если >= 3 изображений
     supports_reranking: bool = True  # True если >= 2 изображений
 
-    # Metadata (preserved from original)
+    # Метаданные (сохранены из оригинала)
     confidence: float = 0.0
     mean_conf: float = 0.0
     max_conf: float = 0.0
@@ -353,7 +355,7 @@ class LandmarkImageSplit:
         return self.query_train_images + self.query_val_images + self.query_test_images
 
     def validate(self) -> None:
-        """Validate no overlap between gallery and query images."""
+        """Проверяет отсутствие пересечения между gallery и query изображениями."""
         gallery_set = set(self.gallery_images)
         query_set = set(self.get_all_query_images())
 
@@ -379,7 +381,7 @@ class LandmarkImageSplit:
 
 
 # ======================
-# DATA SPLITTER
+# РАЗБИЕНИЕ ДАННЫХ
 # ======================
 class ImageRoleSplitter:
     """
@@ -396,17 +398,17 @@ class ImageRoleSplitter:
         self.config = config
         self.max_gallery_per_landmark = max_gallery_per_landmark
 
-        # Statistics
+        # Статистика
         self.stats = {
             "total_landmarks": 0,
-            "retrieval_only": 0,  # 1 image
-            "two_image_train": 0,  # 2 images -> train
-            "two_image_val": 0,  # 2 images -> val
-            "two_image_test": 0,  # 2 images -> test
-            "three_image_train": 0,  # 3 images -> train
-            "three_image_val": 0,  # 3 images -> val
-            "three_image_test": 0,  # 3 images -> test
-            "full_split": 0,  # 4+ images
+            "retrieval_only": 0,  # 1 изображение
+            "two_image_train": 0,  # 2 изображения -> train
+            "two_image_val": 0,  # 2 изображения -> val
+            "two_image_test": 0,  # 2 изображения -> test
+            "three_image_train": 0,  # 3 изображения -> train
+            "three_image_val": 0,  # 3 изображения -> val
+            "three_image_test": 0,  # 3 изображения -> test
+            "full_split": 0,  # 4+ изображений
             "total_gallery_images": 0,
             "total_query_train": 0,
             "total_query_val": 0,
@@ -454,7 +456,7 @@ class ImageRoleSplitter:
             elif rand_val < (
                 self.config.two_image_train_ratio + self.config.two_image_val_ratio
             ):
-                # Val split
+                # Val выборка
                 split_type = "val"
                 result = {
                     "gallery": [shuffled[0]],
@@ -577,10 +579,10 @@ class ImageRoleSplitter:
                 logger.warning(f"Landmark {landmark_id} has no images, skipping")
                 continue
 
-            # Apply adaptive split strategy
+            # Применяем адаптивную стратегию распределения
             split_result = self._split_images_for_landmark(images, landmark_id)
 
-            # Create LandmarkImageSplit object
+            # Создаём объект LandmarkImageSplit
             split = LandmarkImageSplit(
                 landmark_id=landmark_id,
                 landmark_name=name,
@@ -599,19 +601,19 @@ class ImageRoleSplitter:
                 row_idx=idx,
             )
 
-            # Validate
+            # Валидация
             split.validate()
 
             splits.append(split)
 
-            # Update statistics
+            # Обновляем статистику
             self.stats["total_landmarks"] += 1
             self.stats["total_gallery_images"] += len(split.gallery_images)
             self.stats["total_query_train"] += len(split.query_train_images)
             self.stats["total_query_val"] += len(split.query_val_images)
             self.stats["total_query_test"] += len(split.query_test_images)
 
-            # Update statistics based on actual split
+            # Обновляем статистику на основе фактического распределения
             if len(images) == 1:
                 self.stats["retrieval_only"] += 1
             elif len(images) == 2:
@@ -631,20 +633,20 @@ class ImageRoleSplitter:
             else:
                 self.stats["full_split"] += 1
 
-        # Log statistics
+        # Логируем статистику
         self._log_statistics()
 
         return splits
 
     def _log_statistics(self) -> None:
-        """Log detailed statistics about the split."""
+        """Логирует подробную статистику распределения."""
         logger.info("=" * 60)
         logger.info("СТАТИСТИКА РАСПРЕДЕЛЕНИЯ РОЛЕЙ ИЗОБРАЖЕНИЙ")
         logger.info("=" * 60)
         logger.info(f"Всего объектов: {self.stats['total_landmarks']}")
         logger.info(f"  - Только retrieval (1 фото): {self.stats['retrieval_only']}")
 
-        # 2-image landmarks breakdown
+        # Разбивка для объектов с 2 изображениями
         two_img_total = (
             self.stats["two_image_train"]
             + self.stats["two_image_val"]
@@ -665,7 +667,7 @@ class ImageRoleSplitter:
                 f"({100 * self.stats['two_image_test'] / two_img_total:.1f}%)"
             )
 
-        # 3-image landmarks breakdown
+        # Разбивка для объектов с 3 изображениями
         three_img_total = (
             self.stats["three_image_train"]
             + self.stats["three_image_val"]
@@ -696,30 +698,30 @@ class ImageRoleSplitter:
 
 
 # ======================
-# GALLERY INDEX BUILDER
+# ПОСТРОИТЕЛЬ GALLERY-ИНДЕКСА
 # ======================
-# Note: GalleryImageMetadata is imported from src.rag.landmark_retriever
+# Примечание: GalleryImageMetadata импортируется из src.rag.landmark_retriever
 
 
 class GalleryIndexBuilder:
     """
-    Builds image-level FAISS index from gallery images only.
+    Строит FAISS-индекс на уровне изображений только из gallery-изображений.
 
-    Key differences from old approach:
-    - OLD: One embedding per landmark (mean pooling)
-    - NEW: One embedding per gallery image
+    Ключевые отличия от старого подхода:
+    - СТАРО: один embedding на объект (mean pooling)
+    - НОВО: один embedding на каждое gallery-изображение
 
-    - OLD: Index contains all images
-    - NEW: Index contains ONLY gallery images
+    - СТАРО: индекс содержит все изображения
+    - НОВО: индекс содержит ТОЛЬКО gallery-изображения
 
-    - OLD: Retrieval returns landmarks
-    - NEW: Retrieval returns images, then aggregate by landmark_id
+    - СТАРО: retrieval возвращает объекты
+    - НОВО: retrieval возвращает изображения, затем агрегирует по landmark_id
 
-    This matches production behavior where:
-    1. Query image → SigLIP embedding
-    2. FAISS search → top-k gallery images
-    3. Group by landmark_id → max similarity per landmark
-    4. Return top landmarks
+    Это соответствует продакшен-поведению, где:
+    1. Query-изображение → SigLIP embedding
+    2. FAISS-поиск → top-k gallery-изображений
+    3. Группировка по landmark_id → max similarity на объект
+    4. Возврат top объектов
     """
 
     def __init__(
@@ -730,14 +732,14 @@ class GalleryIndexBuilder:
         gallery_augmentation_threshold: int = 4,
     ):
         """
-        Args:
-            index_builder: IndexBuilder from src.rag.indexing_v2
-            batch_size: Batch size for encoding images
-            gallery_augmentations: N augmented versions per gallery image
-                (0 = disabled). Applied only for landmarks with fewer
-                images than gallery_augmentation_threshold.
-            gallery_augmentation_threshold: Augment only if landmark
-                has fewer gallery images than this value.
+        Аргументы:
+            index_builder: IndexBuilder из src.rag.indexing_v2
+            batch_size: размер батча для кодирования изображений
+            gallery_augmentations: N аугментированных версий на gallery-изображение
+                (0 = отключено). Применяется только для объектов, у которых
+                изображений меньше, чем gallery_augmentation_threshold.
+            gallery_augmentation_threshold: аугментировать только если у объекта
+                меньше gallery-изображений, чем это значение.
         """
         self.index_builder = index_builder
         self.batch_size = batch_size
@@ -756,14 +758,14 @@ class GalleryIndexBuilder:
     @staticmethod
     def encode_single_image(image_path: Path, encoder) -> np.ndarray | None:
         """
-        Encode a single image with proper resource management.
+        Кодирует одно изображение с корректным управлением ресурсами.
 
-        Args:
-            image_path: Path to image file
-            encoder: Encoder instance with encode_batch method
+        Аргументы:
+            image_path: путь к файлу изображения
+            encoder: экземпляр encoder с методом encode_batch
 
-        Returns:
-            Image embedding or None if encoding failed
+        Возвращает:
+            Embedding изображения или None, если кодирование не удалось
         """
         try:
             from PIL import Image
@@ -782,19 +784,19 @@ class GalleryIndexBuilder:
 
     def encode_images_batch(self, image_paths: list[Path]) -> list[np.ndarray | None]:
         """
-        Encode multiple images in batches with proper resource management.
+        Кодирует несколько изображений батчами с корректным управлением ресурсами.
 
-        Args:
-            image_paths: List of image paths to encode
+        Аргументы:
+            image_paths: список путей к изображениям для кодирования
 
-        Returns:
-            List of embeddings (None for failed images)
+        Возвращает:
+            Список embeddings (None для изображений с ошибкой)
         """
         from PIL import Image
 
         all_embeddings = []
 
-        # Add progress bar for encoding
+        # Добавляем progress bar для кодирования
         num_batches = (len(image_paths) + self.batch_size - 1) // self.batch_size
         pbar = tqdm(total=len(image_paths), desc="Encoding gallery images", unit="img")
 
@@ -803,7 +805,7 @@ class GalleryIndexBuilder:
             batch_images = []
             failed_indices = set()
 
-            # Load batch images with proper resource management
+            # Загружаем изображения батча с корректным управлением ресурсами
             for idx, img_path in enumerate(batch_paths):
                 try:
                     with Image.open(img_path) as raw_img:
@@ -813,14 +815,14 @@ class GalleryIndexBuilder:
                     failed_indices.add(idx)
                     batch_images.append(None)
 
-            # Encode batch (only valid images)
+            # Кодируем батч (только валидные изображения)
             valid_images = [img for img in batch_images if img is not None]
 
             if valid_images:
                 try:
                     results = self.index_builder.encoder.encode_batch(valid_images)
 
-                    # Map results back to original batch positions
+                    # Сопоставляем результаты обратно с исходными позициями в батче
                     result_idx = 0
                     for idx in range(len(batch_paths)):
                         if idx in failed_indices:
@@ -839,13 +841,13 @@ class GalleryIndexBuilder:
 
                 except Exception as e:
                     logger.error(f"Batch encoding failed: {e}")
-                    # Add None for all images in failed batch
+                    # Добавляем None для всех изображений неудавшегося батча
                     all_embeddings.extend([None] * len(batch_paths))
             else:
-                # All images in batch failed to load
+                # Все изображения в батче не удалось загрузить
                 all_embeddings.extend([None] * len(batch_paths))
 
-            # Close loaded images to prevent memory leak
+            # Закрываем загруженные изображения во избежание утечки памяти
             for img in batch_images:
                 if img is not None:
                     try:
@@ -853,7 +855,7 @@ class GalleryIndexBuilder:
                     except Exception:
                         pass
 
-            # Update progress bar
+            # Обновляем progress bar
             pbar.update(len(batch_paths))
 
         pbar.close()
@@ -863,21 +865,21 @@ class GalleryIndexBuilder:
         self, splits: list[LandmarkImageSplit], df: pd.DataFrame, image_base_dir: Path
     ) -> tuple[np.ndarray, list[GalleryImageMetadata], faiss.Index]:
         """
-        Build FAISS index from gallery images in splits.
+        Строит FAISS-индекс из gallery-изображений в splits.
 
-        Args:
-            splits: List of LandmarkImageSplit objects
-            df: Original dataframe with landmark data
-            image_base_dir: Base directory for images
+        Аргументы:
+            splits: список объектов LandmarkImageSplit
+            df: исходный датафрейм с данными объектов
+            image_base_dir: базовая директория для изображений
 
-        Returns:
-            embeddings: (N, D) array of gallery image embeddings
-            metadata: List of GalleryImageMetadata, one per gallery image
-            index: FAISS index containing gallery embeddings
+        Возвращает:
+            embeddings: массив (N, D) embeddings gallery-изображений
+            metadata: список GalleryImageMetadata, по одному на gallery-изображение
+            index: FAISS-индекс, содержащий gallery embeddings
         """
         logger.info("Building gallery index from image splits...")
 
-        # Collect all gallery images with metadata
+        # Собираем все gallery-изображения с метаданными
         gallery_data = []
         image_id = 0
 
@@ -885,13 +887,13 @@ class GalleryIndexBuilder:
             if not split.gallery_images:
                 continue
 
-            # Get row from dataframe
+            # Получаем строку из датафрейма
             row = df.iloc[split.row_idx]
 
-            # Get caption_landmark for this landmark
+            # Получаем caption_landmark для этого объекта
             caption_landmark = TextProcessor.get_landmark_summary_caption(row)
 
-            # Build image path to caption mapping from valid_images
+            # Строим отображение path изображения → caption из valid_images
             valid_images = row.get("valid_images", [])
             image_caption_map = {}
             for img_data in valid_images:
@@ -904,7 +906,7 @@ class GalleryIndexBuilder:
                         )
 
             for img_path in split.gallery_images:
-                # Get specific caption for this image
+                # Получаем конкретный caption для этого изображения
                 caption = image_caption_map.get(img_path, row.get("name", ""))
 
                 gallery_data.append(
@@ -925,7 +927,7 @@ class GalleryIndexBuilder:
                 )
                 image_id += 1
 
-            # Update statistics
+            # Обновляем статистику
             self.stats["total_landmarks"] += 1
             self.stats["total_gallery_images"] += len(split.gallery_images)
 
@@ -944,7 +946,7 @@ class GalleryIndexBuilder:
             f"from {self.stats['total_landmarks']} landmarks"
         )
 
-        # Encode gallery images using batching
+        # Кодируем gallery-изображения батчами
         logger.info(f"Encoding gallery images in batches of {self.batch_size}...")
         if self.gallery_augmentations > 0:
             logger.info(
@@ -956,7 +958,7 @@ class GalleryIndexBuilder:
         embeddings_list = []
         metadata_list = []
 
-        # Prepare paths and validate existence
+        # Подготавливаем пути и проверяем существование
         valid_items = []
         image_paths = []
 
@@ -970,7 +972,7 @@ class GalleryIndexBuilder:
 
         logger.info(f"Found {len(image_paths)} valid images to encode")
 
-        # Encode original gallery images in batches
+        # Кодируем исходные gallery-изображения батчами
         embeddings = self.encode_images_batch(image_paths)
         logger.info("Gallery image encoding complete. Processing results...")
 
@@ -993,14 +995,14 @@ class GalleryIndexBuilder:
 
         from PIL import Image as PILImage
 
-        # Streaming augmentation: process one image at a time,
-        # accumulate into small batches, encode, then discard.
-        # This avoids loading all augmented images into RAM at once.
+        # Потоковая аугментация: обрабатываем по одному изображению за раз,
+        # накапливаем в небольшие батчи, кодируем, затем отбрасываем.
+        # Это позволяет не загружать все аугментированные изображения в RAM сразу.
         aug_stream_images: list = []
         aug_stream_metas: list = []
 
         def _flush_aug_batch() -> None:
-            """Encode and flush current augmentation batch."""
+            """Кодирует и сбрасывает текущий батч аугментации."""
             if not aug_stream_images:
                 return
             try:
@@ -1022,7 +1024,7 @@ class GalleryIndexBuilder:
                 aug_stream_images.clear()
                 aug_stream_metas.clear()
 
-        # Count items that need augmentation for progress bar
+        # Подсчитываем элементы, требующие аугментации, для progress bar
         items_to_augment = [
             (item, emb)
             for item, emb in zip(valid_items, embeddings)
@@ -1047,7 +1049,7 @@ class GalleryIndexBuilder:
 
             embeddings_list.append(embedding)
 
-            # Create metadata
+            # Создаём метаданные
             meta = GalleryImageMetadata(
                 image_id=item["image_id"],
                 image_path=item["image_path"],
@@ -1064,7 +1066,7 @@ class GalleryIndexBuilder:
             )
             metadata_list.append(meta)
 
-            # Stream augmentation: generate and immediately batch
+            # Потоковая аугментация: генерируем и сразу батчим
             should_augment = (
                 do_augment
                 and item["num_gallery_images"] < self.gallery_augmentation_threshold
@@ -1083,7 +1085,7 @@ class GalleryIndexBuilder:
                             except Exception as e:
                                 logger.debug(f"Augmentation failed: {e}")
 
-                            # Flush when batch is full
+                            # Сбрасываем, когда батч заполнен
                             if len(aug_stream_images) >= self.batch_size:
                                 _flush_aug_batch()
                 except Exception as e:
@@ -1094,7 +1096,7 @@ class GalleryIndexBuilder:
         if aug_pbar is not None:
             aug_pbar.close()
 
-        # Flush remaining augmented images
+        # Сбрасываем оставшиеся аугментированные изображения
         _flush_aug_batch()
 
         if self.stats["total_augmented_images"] > 0:
@@ -1105,28 +1107,28 @@ class GalleryIndexBuilder:
         if not embeddings_list:
             raise ValueError("No gallery images were successfully encoded")
 
-        # Stack embeddings
+        # Складываем embeddings в стек
         embeddings = np.vstack(embeddings_list)
         logger.info(f"Encoded {len(embeddings)} gallery images")
 
-        # Build FAISS index
+        # Строим FAISS-индекс
         logger.info("Building FAISS index...")
         dim = embeddings.shape[1]
-        index = faiss.IndexFlatIP(dim)  # Inner product (cosine similarity)
+        index = faiss.IndexFlatIP(dim)  # Скалярное произведение (cosine similarity)
 
-        # Normalize embeddings for cosine similarity
+        # Нормализуем embeddings для cosine similarity
         faiss.normalize_L2(embeddings)
         index.add(embeddings)
 
         logger.info(f"FAISS index built with {index.ntotal} vectors")
 
-        # Log statistics
+        # Логируем статистику
         self._log_statistics()
 
         return embeddings, metadata_list, index
 
     def _log_statistics(self) -> None:
-        """Log gallery index statistics."""
+        """Логирует статистику gallery-индекса."""
         logger.info("=" * 60)
         logger.info("СТАТИСТИКА GALLERY-ИНДЕКСА")
         if self.stats.get("total_augmented_images", 0) > 0:
@@ -1160,37 +1162,37 @@ class GalleryIndexBuilder:
         aggregation_alpha: float = 0.7,
     ) -> list[tuple[str, float, list[tuple[float, GalleryImageMetadata]]]]:
         """
-        Search gallery index and aggregate results by landmark_id.
+        Ищет по gallery-индексу и агрегирует результаты по landmark_id.
 
-        This simulates production retrieval:
-        1. FAISS returns top-k gallery images
-        2. Group by landmark_id
-        3. Aggregate scores per landmark using configurable strategy
-        4. Return top landmarks with their gallery images AND scores
+        Имитирует продакшен-retrieval:
+        1. FAISS возвращает top-k gallery-изображений
+        2. Группировка по landmark_id
+        3. Агрегация оценок на объект по настраиваемой стратегии
+        4. Возврат top объектов с их gallery-изображениями И оценками
 
-        Args:
-            query_embedding: (D,) query embedding
-            gallery_index: FAISS index of gallery images
-            gallery_metadata: Metadata for each gallery image
-            k: Number of images to retrieve
-            aggregation_mode: Score aggregation strategy
-            aggregation_alpha: Alpha parameter for weighted_top2
+        Аргументы:
+            query_embedding: query embedding размерности (D,)
+            gallery_index: FAISS-индекс gallery-изображений
+            gallery_metadata: метаданные каждого gallery-изображения
+            k: число изображений для retrieval
+            aggregation_mode: стратегия агрегации оценок
+            aggregation_alpha: параметр alpha для weighted_top2
 
-        Returns:
-            List of (landmark_id, aggregated_score, scores_and_metas) tuples,
-            where scores_and_metas is List[Tuple[float, GalleryImageMetadata]],
-            sorted by aggregated_score descending
+        Возвращает:
+            Список кортежей (landmark_id, aggregated_score, scores_and_metas),
+            где scores_and_metas — это List[Tuple[float, GalleryImageMetadata]],
+            отсортированных по aggregated_score по убыванию
         """
-        # Normalize query
+        # Нормализуем query
         query_norm = query_embedding.copy()
         faiss.normalize_L2(query_norm.reshape(1, -1))
 
-        # Search FAISS
+        # Поиск через FAISS
         distances, indices = gallery_index.search(
             query_norm.reshape(1, -1), min(k, gallery_index.ntotal)
         )
 
-        # Group by landmark_id
+        # Группировка по landmark_id
         landmark_scores: dict[str, list[tuple[float, GalleryImageMetadata]]] = {}
 
         for dist, idx in zip(distances[0], indices[0]):
@@ -1205,10 +1207,10 @@ class GalleryIndexBuilder:
 
             landmark_scores[lid].append((float(dist), meta))
 
-        # Aggregate scores per landmark
+        # Агрегируем оценки на объект
         landmark_results = []
         for lid, scores_and_metas in landmark_scores.items():
-            # Extract scores
+            # Извлекаем оценки
             scores = [score for score, _ in scores_and_metas]
 
             # Агрегируем оценки через aggregate_scores из landmark_retriever
@@ -1216,37 +1218,37 @@ class GalleryIndexBuilder:
                 scores, mode=aggregation_mode, alpha=aggregation_alpha
             )
 
-            # CRITICAL FIX: Keep scores with metadata for downstream selection
-            # Return scores_and_metas instead of just gallery_images
+            # КРИТИЧНО: сохраняем оценки вместе с метаданными для последующего выбора
+            # Возвращаем scores_and_metas, а не только gallery_images
             landmark_results.append((lid, aggregated_score, scores_and_metas))
 
-        # Sort by aggregated_score descending
+        # Сортируем по aggregated_score по убыванию
         landmark_results.sort(key=lambda x: x[1], reverse=True)
 
         return landmark_results
 
 
 # ======================
-# RETRIEVAL-BASED SAMPLE GENERATOR (NEW)
+# ГЕНЕРАТОР СЭМПЛОВ НА ОСНОВЕ RETRIEVAL (НОВЫЙ)
 # ======================
 class RetrievalBasedSampleGenerator:
     """
-    Generates training samples using natural retrieval.
+    Генерирует обучающие сэмплы, используя естественный retrieval.
 
-    Key differences from old SampleGenerator:
-    - OLD: Manually inject positive candidate
-    - NEW: Positive must come from retrieval naturally
+    Ключевые отличия от старого SampleGenerator:
+    - СТАРО: positive-кандидат вставляется вручную
+    - НОВО: positive должен приходить из retrieval естественным образом
 
-    - OLD: Query image can be same as positive image
-    - NEW: Query image must differ from all candidate images
+    - СТАРО: query-изображение может совпадать с positive-изображением
+    - НОВО: query-изображение должно отличаться от всех изображений кандидатов
 
-    - OLD: target.name for identification
-    - NEW: target_idx for multiple-choice classification
+    - СТАРО: target.name для идентификации
+    - НОВО: target_idx для multiple-choice классификации
 
-    This matches production where:
-    1. User uploads query image
-    2. System retrieves candidates via FAISS
-    3. Reranker selects best match from candidates
+    Это соответствует продакшену, где:
+    1. Пользователь загружает query-изображение
+    2. Система извлекает кандидатов через FAISS
+    3. Reranker выбирает лучшее совпадение среди кандидатов
     """
 
     def __init__(
@@ -1265,23 +1267,23 @@ class RetrievalBasedSampleGenerator:
         self.landmark_splits = landmark_splits
         self.index_builder = index_builder
 
-        # Build lookup maps
+        # Строим таблицы поиска
         self.lid_to_split = {split.landmark_id: split for split in landmark_splits}
         self.lid_to_row = {
             split.landmark_id: split.row_idx for split in landmark_splits
         }
 
-        # Statistics
+        # Статистика
         self.stats = {
             "total_generated": 0,
             "positive_in_candidates": 0,
             "none_of_the_above": 0,
             "failed_retrieval": 0,
-            "query_in_candidates": 0,  # Should be 0!
+            "query_in_candidates": 0,  # Должно быть 0!
         }
 
     def _encode_query_image(self, image_path: Path) -> np.ndarray | None:
-        """Encode a single query image using shared encoding method."""
+        """Кодирует одно query-изображение общим методом кодирования."""
         return GalleryIndexBuilder.encode_single_image(
             image_path, self.index_builder.encoder
         )
@@ -1296,24 +1298,24 @@ class RetrievalBasedSampleGenerator:
         for_hard_unknown: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """
-        Retrieve candidates using FAISS and aggregate by landmark.
+        Извлекает кандидатов через FAISS и агрегирует по объекту.
 
-        Args:
-            query_embedding: Query embedding
-            query_landmark_id: Ground truth landmark ID
-            query_image_path: Query image path
-            k: Number of images to retrieve
-            for_unknown: If True, exclude top-k for realistic unknown samples
-            for_hard_unknown: If True, keep only candidates with
-                retrieval_score >= config.hard_unknown_min_score and
-                exclude the correct landmark. Simulates production scenario
-                where retrieval is confident but the object is not in DB.
+        Аргументы:
+            query_embedding: query embedding
+            query_landmark_id: истинный ID объекта (ground truth)
+            query_image_path: путь к query-изображению
+            k: число изображений для retrieval
+            for_unknown: если True, исключить top-k для реалистичных unknown-сэмплов
+            for_hard_unknown: если True, оставить только кандидатов с
+                retrieval_score >= config.hard_unknown_min_score и
+                исключить правильный объект. Имитирует продакшен-сценарий,
+                где retrieval уверен, но объекта нет в БД.
 
-        Returns:
-            candidates: List of candidate dicts
-            target_idx: Index of correct answer, or -1 if not in candidates
+        Возвращает:
+            candidates: список словарей кандидатов
+            target_idx: индекс правильного ответа или -1, если его нет среди кандидатов
         """
-        # Search gallery index with configured aggregation
+        # Ищем по gallery-индексу с настроенной агрегацией
         results = GalleryIndexBuilder.search_and_aggregate(
             query_embedding=query_embedding,
             gallery_index=self.gallery_index,
@@ -1326,18 +1328,18 @@ class RetrievalBasedSampleGenerator:
         if not results:
             return [], -1
 
-        # For unknown samples: skip top-k to get realistic distractors
+        # Для unknown-сэмплов: пропускаем top-k, чтобы получить реалистичные distractor'ы
         start_rank = 0
         if for_unknown:
             start_rank = self.config.unknown_exclude_topk
-            # Ensure we have enough results
+            # Убеждаемся, что результатов достаточно
             if start_rank >= len(results):
                 start_rank = max(0, len(results) - self.config.max_candidates)
 
-        # For hard_unknown: filter to only high-score candidates and
-        # exclude the correct landmark. This creates the hardest possible
-        # unknown scenario: retrieval is very confident, but the object
-        # is genuinely not in the database.
+        # Для hard_unknown: фильтруем только высокооценённых кандидатов и
+        # исключаем правильный объект. Это создаёт максимально сложный
+        # unknown-сценарий: retrieval очень уверен, но объекта
+        # действительно нет в базе данных.
         if for_hard_unknown:
             results = [
                 (lid, score, imgs)
@@ -1348,23 +1350,23 @@ class RetrievalBasedSampleGenerator:
             if not results:
                 return [], -1
 
-        # Build candidates from retrieval results
+        # Строим кандидатов из результатов retrieval
         candidates = []
         target_idx = -1
 
         for rank, (lid, max_score, gallery_imgs) in enumerate(results):
-            # Skip top-k for unknown samples
+            # Пропускаем top-k для unknown-сэмплов
             if rank < start_rank:
                 continue
-            # Select one gallery image for this landmark
-            # gallery_imgs is List[Tuple[float, GalleryImageMetadata]]
+            # Выбираем одно gallery-изображение для этого объекта
+            # gallery_imgs — это List[Tuple[float, GalleryImageMetadata]]
 
-            # Sort by individual scores descending
+            # Сортируем по индивидуальным оценкам по убыванию
             scores_and_metas_sorted = sorted(
                 gallery_imgs, key=lambda x: x[0], reverse=True
             )
 
-            # Filter out query image first (CRITICAL)
+            # Сначала отфильтровываем query-изображение (КРИТИЧНО)
             valid_gallery = [
                 (score, img_meta)
                 for score, img_meta in scores_and_metas_sorted
@@ -1372,7 +1374,7 @@ class RetrievalBasedSampleGenerator:
             ]
 
             if not valid_gallery:
-                # All gallery images are same as query (shouldn't happen)
+                # Все gallery-изображения совпадают с query (не должно происходить)
                 logger.warning(
                     f"Query image {query_image_path} found in all gallery "
                     f"images for landmark {lid}"
@@ -1380,24 +1382,24 @@ class RetrievalBasedSampleGenerator:
                 self.stats["query_in_candidates"] += 1
                 continue
 
-            # Sample from top-k valid images
+            # Сэмплируем из top-k валидных изображений
             topk = min(self.config.candidate_image_sample_topk, len(valid_gallery))
             candidate_pool = valid_gallery[:topk]
 
-            # Randomly select one from the pool (deterministic via seed)
+            # Случайно выбираем одно из пула (детерминированно через seed)
             selected_score, selected_img_meta = random.choice(candidate_pool)
 
-            # Determine candidate type based on configured mode
+            # Определяем тип кандидата на основе настроенного режима
             if self.config.hardness_classification_mode == "score_based":
-                # Score-based classification (stable across densities)
+                # Классификация на основе score (стабильна при разной плотности)
                 if max_score >= self.config.hard_threshold:
                     cand_type = "hard"
                 elif max_score >= self.config.semi_hard_threshold:
                     cand_type = "semi_hard"
                 else:
                     cand_type = "easy"
-            else:  # rank_based (legacy)
-                # Rank-based classification (original behavior)
+            else:  # rank_based (устаревший)
+                # Классификация на основе rank (исходное поведение)
                 if rank < 5:
                     cand_type = "hard"
                 elif rank < 15:
@@ -1405,26 +1407,26 @@ class RetrievalBasedSampleGenerator:
                 else:
                     cand_type = "easy"
 
-            # Create candidate
+            # Создаём кандидата
             candidate = {
                 "name": selected_img_meta.landmark_name,
                 "landmark_id": lid,
                 "image": selected_img_meta.image_path,
                 "caption": selected_img_meta.caption,
                 "caption_landmark": selected_img_meta.caption_landmark,
-                "retrieval_score": float(max_score),  # Aggregated landmark score
-                "image_score": float(selected_score),  # Individual image score
+                "retrieval_score": float(max_score),  # Агрегированная оценка объекта
+                "image_score": float(selected_score),  # Оценка отдельного изображения
                 "retrieval_rank": rank,
                 "candidate_type": cand_type,
             }
 
             candidates.append(candidate)
 
-            # Check if this is the target
+            # Проверяем, является ли это target
             if lid == query_landmark_id:
                 target_idx = len(candidates) - 1
 
-            # Stop if we have enough candidates
+            # Останавливаемся, когда кандидатов достаточно
             if len(candidates) >= self.config.max_candidates:
                 break
 
@@ -1439,24 +1441,24 @@ class RetrievalBasedSampleGenerator:
         force_hard_unknown: bool = False,
     ) -> dict[str, Any] | None:
         """
-        Generate a single training sample.
+        Генерирует один обучающий сэмпл.
 
-        Args:
-            query_image_path: Path to query image
-            query_landmark_id: Ground truth landmark ID
-            image_base_dir: Base directory for images
-            force_unknown: If True, create none-of-the-above sample
-                using outside_topk strategy (low retrieval scores).
-            force_hard_unknown: If True, create hard none-of-the-above
-                sample using only candidates with retrieval_score >=
-                config.hard_unknown_min_score. Simulates production
-                scenario where retrieval is confident but object is
-                not in the database.
+        Аргументы:
+            query_image_path: путь к query-изображению
+            query_landmark_id: истинный ID объекта (ground truth)
+            image_base_dir: базовая директория для изображений
+            force_unknown: если True, создать none-of-the-above сэмпл
+                по стратегии outside_topk (низкие retrieval-оценки).
+            force_hard_unknown: если True, создать сложный none-of-the-above
+                сэмпл, используя только кандидатов с retrieval_score >=
+                config.hard_unknown_min_score. Имитирует продакшен-
+                сценарий, где retrieval уверен, но объекта нет
+                в базе данных.
 
-        Returns:
-            Sample dict or None if generation failed
+        Возвращает:
+            Словарь сэмпла или None, если генерация не удалась
         """
-        # Encode query image
+        # Кодируем query-изображение
         full_path = image_base_dir / query_image_path
         query_embedding = self._encode_query_image(full_path)
 
@@ -1464,7 +1466,7 @@ class RetrievalBasedSampleGenerator:
             self.stats["failed_retrieval"] += 1
             return None
 
-        # Retrieve candidates
+        # Извлекаем кандидатов
         candidates, target_idx = self._retrieve_candidates(
             query_embedding=query_embedding,
             query_landmark_id=query_landmark_id,
@@ -1476,10 +1478,10 @@ class RetrievalBasedSampleGenerator:
             self.stats["failed_retrieval"] += 1
             return None
 
-        # Decide if this should be a positive or unknown sample
+        # Решаем, должен ли это быть positive или unknown сэмпл
         if force_hard_unknown:
-            # Hard unknown: re-retrieve keeping only high-score candidates
-            # and excluding the correct landmark.
+            # Hard unknown: повторно извлекаем, оставляя только высокооценённых
+            # кандидатов и исключая правильный объект.
             candidates, target_idx = self._retrieve_candidates(
                 query_embedding=query_embedding,
                 query_landmark_id=query_landmark_id,
@@ -1489,11 +1491,11 @@ class RetrievalBasedSampleGenerator:
             )
 
             if not candidates:
-                # Not enough high-score negatives — skip this sample
+                # Недостаточно высокооценённых negatives — пропускаем этот сэмпл
                 self.stats["failed_retrieval"] += 1
                 return None
 
-            # target_idx must be -1 (correct landmark was excluded)
+            # target_idx должен быть -1 (правильный объект был исключён)
             target_idx = -1
 
             if len(candidates) > self.config.max_candidates:
@@ -1502,10 +1504,10 @@ class RetrievalBasedSampleGenerator:
             self.stats["none_of_the_above"] += 1
 
         elif force_unknown:
-            # Generate realistic unknown sample
+            # Генерируем реалистичный unknown-сэмпл
             if self.config.unknown_generation_strategy == "outside_topk":
-                # Re-retrieve with for_unknown=True to get realistic
-                # distractors (low retrieval scores)
+                # Повторно извлекаем с for_unknown=True, чтобы получить
+                # реалистичные distractor'ы (низкие retrieval-оценки)
                 candidates, target_idx = self._retrieve_candidates(
                     query_embedding=query_embedding,
                     query_landmark_id=query_landmark_id,
@@ -1518,56 +1520,56 @@ class RetrievalBasedSampleGenerator:
                     self.stats["failed_retrieval"] += 1
                     return None
 
-                # target_idx should be -1 (positive not in top-k)
-                # But verify and force if needed
+                # target_idx должен быть -1 (positive не входит в top-k)
+                # Но проверяем и принудительно исправляем при необходимости
                 if target_idx != -1:
-                    # Positive accidentally in excluded range, remove it
+                    # Positive случайно попал в исключаемый диапазон, удаляем его
                     candidates.pop(target_idx)
                     target_idx = -1
 
-                # Ensure we have max_candidates
+                # Убеждаемся, что имеем max_candidates
                 if len(candidates) > self.config.max_candidates:
                     candidates = candidates[: self.config.max_candidates]
 
-            else:  # manual_removal (legacy)
-                # Old behavior: remove target if it's in candidates
+            else:  # manual_removal (устаревший)
+                # Старое поведение: удаляем target, если он среди кандидатов
                 if target_idx != -1:
                     candidates.pop(target_idx)
                     target_idx = -1
 
-                # Ensure we have max_candidates
+                # Убеждаемся, что имеем max_candidates
                 if len(candidates) > self.config.max_candidates:
                     candidates = candidates[: self.config.max_candidates]
 
             self.stats["none_of_the_above"] += 1
 
         elif target_idx == -1:
-            # Positive naturally not in candidates (rare)
-            # Treat as unknown sample
+            # Positive естественным образом отсутствует среди кандидатов (редко)
+            # Трактуем как unknown-сэмпл
             if len(candidates) > self.config.max_candidates:
                 candidates = candidates[: self.config.max_candidates]
             self.stats["none_of_the_above"] += 1
 
         else:
-            # Positive sample
-            # Shuffle candidates to randomize target position
-            # But keep track of target
+            # Positive-сэмпл
+            # Перемешиваем кандидатов, чтобы рандомизировать позицию target
+            # Но отслеживаем target
             target_candidate = candidates[target_idx]
             target_landmark_id = target_candidate.get("landmark_id")
             random.shuffle(candidates)
 
-            # Find new position of target (optimized with landmark_id)
+            # Находим новую позицию target (оптимизировано через landmark_id)
             target_idx = -1
             for idx, cand in enumerate(candidates):
                 if cand.get("landmark_id") == target_landmark_id:
                     target_idx = idx
                     break
 
-            # Ensure we have exactly max_candidates
+            # Убеждаемся, что имеем ровно max_candidates
             if len(candidates) > self.config.max_candidates:
-                # If target would be removed, keep it
+                # Если target был бы удалён, сохраняем его
                 if target_idx >= self.config.max_candidates:
-                    # Swap target with last kept candidate
+                    # Меняем target местами с последним оставляемым кандидатом
                     candidates[self.config.max_candidates - 1] = target_candidate
                     target_idx = self.config.max_candidates - 1
 
@@ -1575,14 +1577,14 @@ class RetrievalBasedSampleGenerator:
 
             self.stats["positive_in_candidates"] += 1
 
-        # Get landmark metadata
+        # Получаем метаданные объекта
         split = self.lid_to_split.get(query_landmark_id)
         if not split:
             return None
 
         row = self.df.iloc[split.row_idx]
 
-        # Build sample
+        # Строим сэмпл
         sample = {
             "query_image": query_image_path,
             "candidates": candidates,
@@ -1628,22 +1630,22 @@ class RetrievalBasedSampleGenerator:
         hard_unknown_ratio: float = 0.0,
     ) -> list[dict[str, Any]]:
         """
-        Generate samples for a specific split (train/val/test).
+        Генерирует сэмплы для конкретной выборки (train/val/test).
 
-        Args:
-            split_type: "train", "val", or "test"
-            image_base_dir: Base directory for images
-            unknown_ratio: Fraction of samples that should be
-                none-of-the-above (low retrieval score distractors).
-            hard_unknown_ratio: Fraction of samples that should be
-                hard none-of-the-above (high retrieval score distractors,
-                score >= config.hard_unknown_min_score). These teach the
-                model to reject even visually similar candidates.
-                Evaluated before unknown_ratio — probabilities are
-                independent (a sample can only be one type).
+        Аргументы:
+            split_type: "train", "val" или "test"
+            image_base_dir: базовая директория для изображений
+            unknown_ratio: доля сэмплов, которые должны быть
+                none-of-the-above (distractor'ы с низким retrieval score).
+            hard_unknown_ratio: доля сэмплов, которые должны быть
+                сложными none-of-the-above (distractor'ы с высоким retrieval
+                score, score >= config.hard_unknown_min_score). Они учат
+                модель отклонять даже визуально похожих кандидатов.
+                Оценивается раньше unknown_ratio — вероятности
+                независимы (сэмпл может быть только одного типа).
 
-        Returns:
-            List of samples
+        Возвращает:
+            Список сэмплов
         """
         logger.info(f"Generating {split_type} samples...")
         logger.info(
@@ -1654,7 +1656,7 @@ class RetrievalBasedSampleGenerator:
         samples = []
 
         for split in tqdm(self.landmark_splits, desc=f"Generating {split_type}"):
-            # Get query images for this split
+            # Получаем query-изображения для этой выборки
             if split_type == "train":
                 query_images = split.query_train_images
             elif split_type == "val":
@@ -1668,9 +1670,9 @@ class RetrievalBasedSampleGenerator:
                 continue
 
             for query_img in query_images:
-                # Determine sample type via independent random draws.
-                # hard_unknown is checked first; if not triggered,
-                # regular unknown is checked.
+                # Определяем тип сэмпла через независимые случайные розыгрыши.
+                # Сначала проверяется hard_unknown; если не сработал,
+                # проверяется обычный unknown.
                 rand_val = random.random()
                 if rand_val < hard_unknown_ratio:
                     force_hard_unknown = True
@@ -1699,7 +1701,7 @@ class RetrievalBasedSampleGenerator:
         return samples
 
     def _log_statistics(self) -> None:
-        """Log generation statistics."""
+        """Логирует статистику генерации."""
         logger.info("=" * 60)
         logger.info("СТАТИСТИКА ГЕНЕРАЦИИ СЭМПЛОВ")
         logger.info("=" * 60)
@@ -1712,19 +1714,19 @@ class RetrievalBasedSampleGenerator:
 
 
 # ======================
-# FILE WRITER
+# ЗАПИСЬ ФАЙЛОВ
 # ======================
 class FileWriter:
-    """Handles writing samples to JSON files."""
+    """Отвечает за запись сэмплов в JSON-файлы."""
 
     @staticmethod
     def save_json(path: Path, data: Any) -> None:
-        """Save data to JSON file."""
+        """Сохраняет данные в JSON-файл."""
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
-            # Log appropriate message based on data type
+            # Логируем подходящее сообщение в зависимости от типа данных
             if isinstance(data, list):
                 logger.info(f"Saved {len(data)} samples to {path}")
             else:
@@ -1735,32 +1737,32 @@ class FileWriter:
 
 
 # ======================
-# CONTRASTIVE SAMPLE GENERATOR (NEW)
+# ГЕНЕРАТОР CONTRASTIVE-СЭМПЛОВ (НОВЫЙ)
 # ======================
 class ImageLevelContrastiveGenerator:
     """
-    Generates contrastive learning samples with proper image-level constraints.
+    Генерирует сэмплы contrastive-обучения с корректными ограничениями на уровне изображений.
 
-    Key requirements:
-    - anchor = query image (from query_images)
-    - positive = gallery image of same landmark (from gallery_images)
-    - negative = gallery image of different landmark
-    - Only for landmarks with >= 3 images (supports_contrastive=True)
-    - NO query/gallery leakage
+    Ключевые требования:
+    - anchor = query-изображение (из query_images)
+    - positive = gallery-изображение того же объекта (из gallery_images)
+    - negative = gallery-изображение другого объекта
+    - Только для объектов с >= 3 изображениями (supports_contrastive=True)
+    - НЕТ утечки query/gallery
 
-    This ensures:
-    - Anchor != positive (different images)
-    - Positive comes from gallery (not query set)
-    - Negative comes from gallery (not query set)
+    Это гарантирует:
+    - Anchor != positive (разные изображения)
+    - Positive берётся из gallery (не из query-набора)
+    - Negative берётся из gallery (не из query-набора)
     """
 
     def __init__(self, landmark_splits: list[LandmarkImageSplit]):
         self.landmark_splits = landmark_splits
 
-        # Build lookup
+        # Строим таблицу поиска
         self.lid_to_split = {split.landmark_id: split for split in landmark_splits}
 
-        # Statistics
+        # Статистика
         self.stats = {
             "total_generated": 0,
             "skipped_no_support": 0,
@@ -1772,48 +1774,48 @@ class ImageLevelContrastiveGenerator:
         self, samples: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """
-        Generate contrastive samples from reranking samples.
+        Генерирует contrastive-сэмплы из reranking-сэмплов.
 
-        Args:
-            samples: List of samples from RetrievalBasedSampleGenerator
+        Аргументы:
+            samples: список сэмплов из RetrievalBasedSampleGenerator
 
-        Returns:
-            List of contrastive triplets
+        Возвращает:
+            Список contrastive-триплетов
         """
         contrastive_samples = []
 
         for sample in samples:
-            # Get landmark info
+            # Получаем информацию об объекте
             landmark_id = sample["meta"]["landmark_id"]
             anchor_image = sample["query_image"]
 
-            # Get split info
+            # Получаем информацию о split
             split = self.lid_to_split.get(landmark_id)
             if not split:
                 continue
 
-            # Check if landmark supports contrastive learning
+            # Проверяем, поддерживает ли объект contrastive-обучение
             if not split.supports_contrastive:
                 self.stats["skipped_no_support"] += 1
                 continue
 
-            # Get positive from gallery images
-            # CRITICAL: positive must be from gallery, not query
+            # Получаем positive из gallery-изображений
+            # КРИТИЧНО: positive должен быть из gallery, а не из query
             if not split.gallery_images:
                 self.stats["skipped_no_gallery"] += 1
                 continue
 
             positive_image = random.choice(split.gallery_images)
 
-            # Validate: anchor != positive
+            # Валидация: anchor != positive
             if anchor_image == positive_image:
                 logger.warning(
                     f"Anchor equals positive for {landmark_id}: {anchor_image}"
                 )
                 continue
 
-            # Get negative from candidates
-            # Prefer candidates from different landmarks
+            # Получаем negative из кандидатов
+            # Предпочитаем кандидатов из других объектов
             negative_candidates = [
                 c
                 for c in sample["candidates"]
@@ -1824,11 +1826,11 @@ class ImageLevelContrastiveGenerator:
                 self.stats["skipped_no_negative"] += 1
                 continue
 
-            # Select negative (prefer hard negatives)
+            # Выбираем negative (предпочитаем hard negatives)
             negative = random.choice(negative_candidates)
             negative_image = negative["image"]
 
-            # Create contrastive sample
+            # Создаём contrastive-сэмпл
             contrastive_sample = {
                 "anchor": anchor_image,
                 "positive": positive_image,
@@ -1848,7 +1850,7 @@ class ImageLevelContrastiveGenerator:
         return contrastive_samples
 
     def _log_statistics(self) -> None:
-        """Log generation statistics."""
+        """Логирует статистику генерации."""
         logger.info("=" * 60)
         logger.info("СТАТИСТИКА ГЕНЕРАЦИИ CONTRASTIVE-СЭМПЛОВ")
         logger.info("=" * 60)
@@ -1860,13 +1862,13 @@ class ImageLevelContrastiveGenerator:
 
 
 # ======================
-# RETRIEVAL EVALUATION
+# ОЦЕНКА RETRIEVAL
 # ======================
 @dataclass
 class RetrievalMetrics:
-    """Container for retrieval evaluation metrics."""
+    """Контейнер для метрик оценки retrieval."""
 
-    # Global metrics
+    # Глобальные метрики
     recall_at_1: float = 0.0
     recall_at_5: float = 0.0
     recall_at_10: float = 0.0
@@ -1874,22 +1876,22 @@ class RetrievalMetrics:
     map_score: float = 0.0  # Mean Average Precision
     ndcg_at_10: float = 0.0  # Normalized Discounted Cumulative Gain
     positive_retrieval_rate: float = 0.0
-    retrieval_ceiling: float = 0.0  # Max possible recall (positive in top-k)
+    retrieval_ceiling: float = 0.0  # Макс. возможный recall (positive в top-k)
 
-    # Sample counts
+    # Счётчики сэмплов
     total_queries: int = 0
     queries_with_positive: int = 0
 
-    # Hardness distribution
+    # Распределение по сложности
     hard_negatives: int = 0
     semi_hard_negatives: int = 0
     easy_negatives: int = 0
 
-    # Per-category metrics (by image count)
+    # Метрики по категориям (по числу изображений)
     metrics_by_image_count: dict[str, dict[str, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for logging."""
+        """Преобразует в словарь для логирования."""
         return {
             "recall@1": self.recall_at_1,
             "recall@5": self.recall_at_5,
@@ -1911,7 +1913,7 @@ class RetrievalMetrics:
 
 
 class RetrievalEvaluator:
-    """Evaluates retrieval performance with detailed metrics."""
+    """Оценивает качество retrieval с подробными метриками."""
 
     def __init__(self, landmark_splits: list[LandmarkImageSplit]):
         self.landmark_splits = landmark_splits
@@ -1920,7 +1922,7 @@ class RetrievalEvaluator:
         }
 
     def _get_image_count_category(self, num_images: int) -> str:
-        """Get category label for image count."""
+        """Возвращает метку категории по числу изображений."""
         if num_images == 1:
             return "1_image"
         elif num_images == 2:
@@ -1932,7 +1934,7 @@ class RetrievalEvaluator:
 
     @staticmethod
     def _compute_average_precision(target_idx: int, num_candidates: int) -> float:
-        """Compute Average Precision for single query."""
+        """Вычисляет Average Precision для одного запроса."""
         if target_idx == -1:
             return 0.0
         rank = target_idx + 1
@@ -1940,7 +1942,7 @@ class RetrievalEvaluator:
 
     @staticmethod
     def _compute_dcg(relevances: list[float], k: int = 10) -> float:
-        """Compute Discounted Cumulative Gain."""
+        """Вычисляет Discounted Cumulative Gain."""
         dcg = 0.0
         for i, rel in enumerate(relevances[:k], start=1):
             dcg += rel / np.log2(i + 1)
@@ -1948,7 +1950,7 @@ class RetrievalEvaluator:
 
     @staticmethod
     def _compute_ndcg(target_idx: int, num_candidates: int, k: int = 10) -> float:
-        """Compute Normalized Discounted Cumulative Gain."""
+        """Вычисляет Normalized Discounted Cumulative Gain."""
         if target_idx == -1:
             return 0.0
 
@@ -1965,7 +1967,7 @@ class RetrievalEvaluator:
     def evaluate_samples(
         self, samples: list[dict[str, Any]], split_name: str = "unknown"
     ) -> RetrievalMetrics:
-        """Evaluate retrieval performance on generated samples."""
+        """Оценивает качество retrieval на сгенерированных сэмплах."""
         logger.info(f"Evaluating retrieval for {split_name} split...")
 
         metrics = RetrievalMetrics()
@@ -1993,7 +1995,7 @@ class RetrievalEvaluator:
             metrics.total_queries += 1
             category_stats[category]["total"] += 1
 
-            # Count negative hardness distribution
+            # Подсчитываем распределение negatives по сложности
             for cand in candidates:
                 cand_type = cand.get("candidate_type", "unknown")
                 if cand_type == "hard":
@@ -2067,7 +2069,7 @@ class RetrievalEvaluator:
         return metrics
 
     def _log_metrics(self, metrics: RetrievalMetrics, split_name: str) -> None:
-        """Log detailed metrics."""
+        """Логирует подробные метрики."""
         logger.info("=" * 70)
         logger.info(f"RETRIEVAL EVALUATION: {split_name.upper()}")
         logger.info("=" * 70)
@@ -2136,7 +2138,7 @@ class RetrievalEvaluator:
         val_metrics: RetrievalMetrics,
         test_metrics: RetrievalMetrics,
     ) -> None:
-        """Log comparison of metrics across splits."""
+        """Логирует сравнение метрик по всем выборкам."""
         logger.info("=" * 70)
         logger.info("RETRIEVAL METRICS COMPARISON")
         logger.info("=" * 70)
@@ -2174,22 +2176,22 @@ class RetrievalEvaluator:
 
 
 # ======================
-# VALIDATION
+# ВАЛИДАЦИЯ
 # ======================
 class DatasetValidator:
     """
-    Validates dataset for production-correct closed-set retrieval.
+    Валидирует датасет для продакшен-корректного closed-set retrieval.
 
-    Checks:
-    - No gallery-query overlap
-    - No query-candidate overlap
-    - Target_idx consistency
-    - Contrastive triplet validity
+    Проверки:
+    - Нет пересечения gallery-query
+    - Нет пересечения query-candidate
+    - Согласованность target_idx
+    - Валидность contrastive-триплетов
     """
 
     @staticmethod
     def validate_splits(splits: list[LandmarkImageSplit]) -> bool:
-        """Validate image role splits."""
+        """Валидирует распределение ролей изображений."""
         logger.info("Validating image role splits...")
 
         errors = []
@@ -2201,7 +2203,7 @@ class DatasetValidator:
 
         if errors:
             logger.error(f"Split validation failed: {len(errors)} errors")
-            for err in errors[:10]:  # Show first 10
+            for err in errors[:10]:  # Показываем первые 10
                 logger.error(f"  - {err}")
             return False
 
@@ -2210,7 +2212,7 @@ class DatasetValidator:
 
     @staticmethod
     def validate_samples(samples: list[dict[str, Any]]) -> bool:
-        """Validate generated samples."""
+        """Валидирует сгенерированные сэмплы."""
         logger.info(f"Validating {len(samples)} samples...")
 
         errors = []
@@ -2221,13 +2223,13 @@ class DatasetValidator:
             candidates = sample.get("candidates", [])
             target_idx = sample.get("target_idx", -1)
 
-            # Check query not in candidates
+            # Проверяем, что query не входит в кандидатов
             for cand in candidates:
                 if cand.get("image") == query_img:
                     query_in_candidates += 1
                     errors.append(f"Sample {i}: query image in candidates: {query_img}")
 
-            # Check target_idx validity
+            # Проверяем корректность target_idx
             if target_idx != -1:
                 if target_idx < 0 or target_idx >= len(candidates):
                     errors.append(
@@ -2253,7 +2255,7 @@ class DatasetValidator:
 
     @staticmethod
     def validate_contrastive(contrastive_samples: list[dict[str, Any]]) -> bool:
-        """Validate contrastive samples."""
+        """Валидирует contrastive-сэмплы."""
         logger.info(f"Validating {len(contrastive_samples)} contrastive...")
 
         errors = []
@@ -2263,15 +2265,15 @@ class DatasetValidator:
             positive = sample.get("positive")
             negative = sample.get("negative")
 
-            # Check anchor != positive
+            # Проверяем anchor != positive
             if anchor == positive:
                 errors.append(f"Contrastive {i}: anchor equals positive: {anchor}")
 
-            # Check anchor != negative
+            # Проверяем anchor != negative
             if anchor == negative:
                 errors.append(f"Contrastive {i}: anchor equals negative: {anchor}")
 
-            # Check positive != negative
+            # Проверяем positive != negative
             if positive == negative:
                 errors.append(f"Contrastive {i}: positive equals negative: {positive}")
 
@@ -2294,12 +2296,12 @@ class DatasetValidator:
         val_contrastive: list[dict],
         test_contrastive: list[dict],
     ) -> None:
-        """Log comprehensive dataset summary."""
+        """Логирует полную сводку по датасету."""
         logger.info("=" * 70)
         logger.info("FINAL DATASET SUMMARY")
         logger.info("=" * 70)
 
-        # Splits summary
+        # Сводка по splits
         total_gallery = sum(len(s.gallery_images) for s in splits)
         total_train_q = sum(len(s.query_train_images) for s in splits)
         total_val_q = sum(len(s.query_val_images) for s in splits)
@@ -2313,21 +2315,21 @@ class DatasetValidator:
         )
         logger.info("")
 
-        # Samples summary
+        # Сводка по сэмплам
         logger.info("Reranking samples:")
         logger.info(f"  Train: {len(train_samples)}")
         logger.info(f"  Val: {len(val_samples)}")
         logger.info(f"  Test: {len(test_samples)}")
         logger.info("")
 
-        # Contrastive summary
+        # Сводка по contrastive
         logger.info("Contrastive samples:")
         logger.info(f"  Train: {len(train_contrastive)}")
         logger.info(f"  Val: {len(val_contrastive)}")
         logger.info(f"  Test: {len(test_contrastive)}")
         logger.info("")
 
-        # Target distribution
+        # Распределение target
         train_positive = sum(1 for s in train_samples if s["target_idx"] != -1)
         train_unknown = len(train_samples) - train_positive
 
@@ -2351,16 +2353,16 @@ class DatasetValidator:
         landmark_splits: list[LandmarkImageSplit],
     ) -> tuple[RetrievalMetrics, RetrievalMetrics, RetrievalMetrics]:
         """
-        Evaluate retrieval quality across all splits.
+        Оценивает качество retrieval по всем выборкам.
 
-        Args:
-            train_samples: Training samples
-            val_samples: Validation samples
-            test_samples: Test samples
-            landmark_splits: Landmark splits for metadata
+        Аргументы:
+            train_samples: обучающие сэмплы
+            val_samples: валидационные сэмплы
+            test_samples: тестовые сэмплы
+            landmark_splits: splits объектов для метаданных
 
-        Returns:
-            Tuple of (train_metrics, val_metrics, test_metrics)
+        Возвращает:
+            Кортеж (train_metrics, val_metrics, test_metrics)
         """
         logger.info("")
         logger.info("=" * 70)
@@ -2369,12 +2371,12 @@ class DatasetValidator:
 
         evaluator = RetrievalEvaluator(landmark_splits)
 
-        # Evaluate each split
+        # Оцениваем каждую выборку
         train_metrics = evaluator.evaluate_samples(train_samples, "train")
         val_metrics = evaluator.evaluate_samples(val_samples, "val")
         test_metrics = evaluator.evaluate_samples(test_samples, "test")
 
-        # Compare across splits
+        # Сравниваем по всем выборкам
         logger.info("")
         evaluator.compare_splits(train_metrics, val_metrics, test_metrics)
 
@@ -2382,28 +2384,28 @@ class DatasetValidator:
 
 
 # ======================
-# MAIN PIPELINE
+# ОСНОВНОЙ PIPELINE
 # ======================
 def main():
     """
-    NEW PRODUCTION-CORRECT PIPELINE
+    НОВЫЙ ПРОДАКШЕН-КОРРЕКТНЫЙ PIPELINE
 
-    Key changes from old pipeline:
-    1. Image-level splitting (not landmark-level)
-    2. Gallery-only FAISS index
-    3. Natural retrieval-based candidates
-    4. target_idx format (not target.name)
-    5. Proper contrastive constraints
+    Ключевые изменения по сравнению со старым pipeline:
+    1. Разбиение на уровне изображений (не на уровне объектов)
+    2. FAISS-индекс только из gallery
+    3. Кандидаты на основе естественного retrieval
+    4. Формат target_idx (не target.name)
+    5. Корректные contrastive-ограничения
 
-    Production behavior simulated:
-    User photo → SigLIP → FAISS retrieval → Gallery images
-    → Group by landmark → Max similarity → Top-K landmarks
-    → Qwen2-VL reranker → Multiple-choice → Prediction
+    Имитируемое продакшен-поведение:
+    Фото пользователя → SigLIP → FAISS retrieval → Gallery-изображения
+    → Группировка по объекту → Max similarity → Top-K объектов
+    → Qwen2-VL reranker → Multiple-choice → Предсказание
     """
-    # Initialize configurations
+    # Инициализируем конфигурации
     dataset_config = DatasetConfig()
 
-    # Resolve model name: use explicit override or per-type default
+    # Определяем имя модели: явное переопределение или дефолт по типу
     _default_models = {
         "siglip": "google/siglip-base-patch16-224",
         "dinov2": "facebook/dinov2-base",
@@ -2427,14 +2429,14 @@ def main():
     )
     logger.info(f"Embedder: {dataset_config.embedder_type} ({index_config.model_name})")
 
-    # Set random seeds for reproducibility
+    # Задаём random seed для воспроизводимости
     random.seed(dataset_config.random_seed)
     np.random.seed(dataset_config.random_seed)
     torch.manual_seed(dataset_config.random_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(dataset_config.random_seed)
 
-    # Set single thread on macOS to prevent segfaults
+    # На macOS задаём один поток для предотвращения segfault
     if _platform.system() == "Darwin":
         torch.set_num_threads(1)
         torch.set_num_interop_threads(1)
@@ -2448,7 +2450,7 @@ def main():
 
     try:
         # ============================================================
-        # STEP 1: Load and prepare data
+        # ШАГ 1: Загрузка и подготовка данных
         # ============================================================
         data_path = Path(dataset_config.data_path)
         if not data_path.exists():
@@ -2460,7 +2462,7 @@ def main():
 
         df = pd.DataFrame(data)
 
-        # Extract image paths
+        # Извлекаем пути к изображениям
         def extract_paths(valid_images):
             if isinstance(valid_images, list):
                 return [
@@ -2471,18 +2473,18 @@ def main():
 
         df["images"] = df["valid_images"].apply(extract_paths)
 
-        # Merge name fields
+        # Объединяем поля с именами
         if "name_ru" in df.columns:
             df["name"] = df["name_ru"].fillna(df.get("name_en", ""))
         elif "name_en" in df.columns:
             df["name"] = df["name_en"]
 
-        # Filter landmarks with images
+        # Оставляем объекты, у которых есть изображения
         df = df[df["images"].map(len) > 0].reset_index(drop=True)
         logger.info(f"Loaded {len(df)} landmarks with images")
 
         # ============================================================
-        # STEP 2: Split images into gallery/query roles
+        # ШАГ 2: Распределение изображений по ролям gallery/query
         # ============================================================
         logger.info("")
         logger.info("STEP 2: Image role assignment")
@@ -2494,27 +2496,27 @@ def main():
         )
         splits = splitter.split_all_landmarks(df)
 
-        # Validate splits
+        # Валидация splits
         if not DatasetValidator.validate_splits(splits):
             raise ValueError("Split validation failed!")
 
         # ============================================================
-        # STEP 3: Build or load gallery FAISS index
+        # ШАГ 3: Построение или загрузка gallery FAISS-индекса
         # ============================================================
         logger.info("")
         logger.info("STEP 3: Gallery index preparation")
         logger.info("-" * 70)
 
-        # Validate image directory exists
+        # Проверяем, что директория с изображениями существует
         image_base_dir = dataset_config.image_base_dir
         if not image_base_dir.exists():
             raise FileNotFoundError(f"Image directory not found: {image_base_dir}")
         logger.info(f"Using image directory: {image_base_dir}")
 
-        # Define training index paths (NOT production index).
-        # Include embedder type in filename so siglip and dinov2 indexes
-        # can coexist in the same output directory.
-        _emb_suffix = dataset_config.embedder_type  # "siglip" or "dinov2"
+        # Определяем пути обучающего индекса (НЕ продакшен-индекса).
+        # Включаем тип embedder в имя файла, чтобы индексы siglip и dinov2
+        # могли сосуществовать в одной выходной директории.
+        _emb_suffix = dataset_config.embedder_type  # "siglip" или "dinov2"
         training_index_path = (
             dataset_config.output_dir / f"training_gallery_index_{_emb_suffix}.faiss"
         )
@@ -2525,7 +2527,7 @@ def main():
             dataset_config.output_dir / f"training_gallery_embeddings_{_emb_suffix}.npy"
         )
 
-        # Check if we can reuse existing training index
+        # Проверяем, можем ли переиспользовать существующий обучающий индекс
         _index_exists = training_index_path.exists()
         _meta_exists = training_metadata_path.exists()
         _emb_exists = training_embeddings_path.exists()
@@ -2556,12 +2558,12 @@ def main():
             and _emb_exists
         )
 
-        # Initialize index builder (needed for both build and load)
+        # Инициализируем index builder (нужен и для построения, и для загрузки)
         index_builder = IndexBuilder(index_config)
 
         if can_reuse:
             # ============================================================
-            # STEP 3A: Load existing training index
+            # ШАГ 3A: Загрузка существующего обучающего индекса
             # ============================================================
             logger.info("Loading existing training gallery index...")
             logger.info(f"  Index: {training_index_path}")
@@ -2569,21 +2571,21 @@ def main():
             logger.info(f"  Embeddings: {training_embeddings_path}")
 
             try:
-                # Load FAISS index
+                # Загружаем FAISS-индекс
                 gallery_index = faiss.read_index(str(training_index_path))
                 logger.info(f"Loaded FAISS index: {gallery_index.ntotal} images")
 
-                # Load metadata
+                # Загружаем метаданные
                 with open(training_metadata_path, encoding="utf-8") as f:
                     metadata_dicts = json.load(f)
                 gallery_metadata = [GalleryImageMetadata(**m) for m in metadata_dicts]
                 logger.info(f"Loaded metadata: {len(gallery_metadata)} entries")
 
-                # Load embeddings
+                # Загружаем embeddings
                 embeddings = np.load(training_embeddings_path)
                 logger.info(f"Loaded embeddings: {embeddings.shape}")
 
-                # Validate consistency (explicit OR — chained != is unreliable)
+                # Проверяем согласованность (явное OR — цепочка != ненадёжна)
                 n_faiss = gallery_index.ntotal
                 n_meta = len(gallery_metadata)
                 n_emb = len(embeddings)
@@ -2608,12 +2610,12 @@ def main():
 
         if not can_reuse:
             # ============================================================
-            # STEP 3B: Build new gallery index
+            # ШАГ 3B: Построение нового gallery-индекса
             # ============================================================
             logger.info("Building new training gallery index...")
 
             try:
-                # Build gallery index with batch encoding + augmentation
+                # Строим gallery-индекс с батчевым кодированием + аугментацией
                 gallery_builder = GalleryIndexBuilder(
                     index_builder,
                     batch_size=dataset_config.encoding_batch_size,
@@ -2635,7 +2637,7 @@ def main():
                 raise
 
         # ============================================================
-        # STEP 4: Generate reranking samples
+        # ШАГ 4: Генерация reranking-сэмплов
         # ============================================================
         logger.info("")
         logger.info("STEP 4: Generating reranking samples")
@@ -2650,10 +2652,10 @@ def main():
             index_builder=index_builder,
         )
 
-        # Generate for each split.
-        # hard_unknown_ratio is passed from config — train/val/test all get
-        # hard unknown samples to teach and evaluate the model's ability to
-        # reject high-confidence false positives (retrieval_score >= threshold).
+        # Генерируем для каждой выборки.
+        # hard_unknown_ratio передаётся из config — train/val/test все получают
+        # hard unknown сэмплы, чтобы обучать и оценивать способность модели
+        # отклонять уверенные false positives (retrieval_score >= threshold).
         train_samples = sample_generator.generate_samples_from_splits(
             split_type="train",
             image_base_dir=image_base_dir,
@@ -2675,7 +2677,7 @@ def main():
             hard_unknown_ratio=dataset_config.hard_unknown_ratio,
         )
 
-        # Validate samples
+        # Валидация сэмплов
         logger.info("")
         if not DatasetValidator.validate_samples(train_samples):
             raise ValueError("Train sample validation failed!")
@@ -2684,7 +2686,7 @@ def main():
         if not DatasetValidator.validate_samples(test_samples):
             raise ValueError("Test sample validation failed!")
 
-        # Evaluate retrieval quality
+        # Оцениваем качество retrieval
         train_metrics, val_metrics, test_metrics = (
             DatasetValidator.evaluate_retrieval_quality(
                 train_samples=train_samples,
@@ -2695,7 +2697,7 @@ def main():
         )
 
         # ============================================================
-        # STEP 5: Generate contrastive samples
+        # ШАГ 5: Генерация contrastive-сэмплов
         # ============================================================
         logger.info("")
         logger.info("STEP 5: Generating contrastive samples")
@@ -2707,7 +2709,7 @@ def main():
         val_contrastive = contrastive_gen.generate_from_samples(val_samples)
         test_contrastive = contrastive_gen.generate_from_samples(test_samples)
 
-        # Validate contrastive
+        # Валидация contrastive
         logger.info("")
         if not DatasetValidator.validate_contrastive(train_contrastive):
             raise ValueError("Train contrastive validation failed!")
@@ -2717,7 +2719,7 @@ def main():
             raise ValueError("Test contrastive validation failed!")
 
         # ============================================================
-        # STEP 6: Save datasets
+        # ШАГ 6: Сохранение датасетов
         # ============================================================
         logger.info("")
         logger.info("STEP 6: Saving datasets")
@@ -2738,9 +2740,9 @@ def main():
         )
 
         # ============================================================
-        # STEP 6.5: Save training gallery index for reuse
+        # ШАГ 6.5: Сохранение обучающего gallery-индекса для повторного использования
         # ============================================================
-        if not can_reuse:  # Only save if we just built it
+        if not can_reuse:  # Сохраняем только если только что построили
             logger.info("")
             logger.info("STEP 6.5: Saving training gallery index")
             logger.info("-" * 70)
@@ -2750,16 +2752,16 @@ def main():
             )
 
             try:
-                # Save FAISS index
+                # Сохраняем FAISS-индекс
                 logger.info(f"Saving FAISS index to {training_index_path}")
                 faiss.write_index(gallery_index, str(training_index_path))
 
-                # Save gallery metadata
+                # Сохраняем метаданные gallery
                 logger.info(f"Saving metadata to {training_metadata_path}")
                 metadata_dicts = [meta.to_dict() for meta in gallery_metadata]
                 FileWriter.save_json(training_metadata_path, metadata_dicts)
 
-                # Save embeddings (for analysis and consistency checks)
+                # Сохраняем embeddings (для анализа и проверок согласованности)
                 logger.info(f"Saving embeddings to {training_embeddings_path}")
                 np.save(training_embeddings_path, embeddings)
 
@@ -2782,13 +2784,13 @@ def main():
                 logger.warning("Continuing without saving index...")
 
         # ============================================================
-        # STEP 7: Save evaluation metrics
+        # ШАГ 7: Сохранение метрик оценки
         # ============================================================
         logger.info("")
         logger.info("STEP 7: Saving evaluation metrics")
         logger.info("-" * 70)
 
-        # Save metrics to JSON
+        # Сохраняем метрики в JSON
         metrics_data = {
             "train": train_metrics.to_dict(),
             "val": val_metrics.to_dict(),
@@ -2800,7 +2802,7 @@ def main():
         )
 
         # ============================================================
-        # FINAL SUMMARY
+        # ИТОГОВАЯ СВОДКА
         # ============================================================
         logger.info("")
         DatasetValidator.log_dataset_summary(
@@ -2824,13 +2826,13 @@ def main():
         raise
 
     finally:
-        # Clean up resources to prevent semaphore leak warnings
+        # Освобождаем ресурсы, чтобы избежать предупреждений об утечке семафоров
         try:
-            # Clear CUDA cache if available
+            # Очищаем CUDA-кэш, если доступен
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            # Force garbage collection
+            # Принудительно запускаем сборку мусора
             import gc
 
             gc.collect()

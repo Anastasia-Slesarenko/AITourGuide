@@ -1,7 +1,5 @@
 # src/api/__init__.py
-"""
-API module for AITourGuide.
-"""
+"""Модуль API для AITourGuide."""
 
 from .main import app
 

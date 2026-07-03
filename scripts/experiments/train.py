@@ -848,7 +848,7 @@ def run_experiment(
     lora_alpha=32,
     lora_dropout=0.1,
     target_modules=["q_proj", "v_proj"],
-    batch_size=2,  # Adjust based on your VRAM
+    batch_size=2,  # Подбирается под объём видеопамяти (VRAM)
     gradient_accumulation_steps=4,
     learning_rate=5e-5,
     num_train_epochs=5,
@@ -966,7 +966,7 @@ def run_experiment(
                 save_steps=500,
                 logging_steps=20,
                 learning_rate=learning_rate,
-                bf16=True,  # Using bfloat16 as recommended
+                bf16=True,  # Используем bfloat16 согласно рекомендации
                 gradient_checkpointing=True,
                 gradient_checkpointing_kwargs={"use_reentrant": False},
                 dataloader_num_workers=2,
@@ -981,11 +981,11 @@ def run_experiment(
                 weight_decay=weight_decay,
                 # Gradient clipping для стабильности обучения
                 max_grad_norm=1.0,
-                # Early stopping handled by callback
+                # Ранняя остановка обрабатывается через callback
                 load_best_model_at_end=False,
             ),
             train_dataset=train_dataset,
-            eval_dataset=val_dataset, # Not used directly by trainer for eval, but needed for setup
+            eval_dataset=val_dataset,  # Напрямую тренером для eval не используется, но нужен для инициализации
             data_collator=data_collator,
         )
 

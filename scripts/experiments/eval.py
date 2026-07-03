@@ -187,7 +187,7 @@ def compute_rerank_scores_batch(
     _prof_io = 0.0       # чтение изображений кандидатов
     _prof_template = 0.0 # apply_chat_template
     _prof_processor = 0.0 # processor(text, images)
-    _prof_forward = 0.0  # model forward pass
+    _prof_forward = 0.0  # прямой проход модели
     _prof_transfer = 0.0 # .to(model.device)
 
     # Обрабатываем кандидатов батчами
@@ -439,9 +439,9 @@ def evaluate_retrieval_only(
         Словарь с метриками
     """
     hits_at_k = {k: 0 for k in k_values}
-    precision_at_k = {k: [] for k in k_values}  # NEW: Precision@K
+    precision_at_k = {k: [] for k in k_values}  # НОВОЕ: Precision@K
     mrr_sum = 0.0
-    mrr_values = []  # NEW: Для confidence interval
+    mrr_values = []  # НОВОЕ: Для confidence interval
     total_valid = 0  # для которых target_idx != -1
     total_samples = len(samples)
     _ci_seed = ci_seed  # локальная переменная для передачи в CI
@@ -452,9 +452,9 @@ def evaluate_retrieval_only(
         # Сортируем кандидатов по retrieval_score
         candidates = sample["candidates"]
         scores = [c["retrieval_score"] for c in candidates]
-        ranked_indices = np.argsort(scores)[::-1]  # descending
-        
-        # === METRICS FOR TARGET EXISTENCE ===
+        ranked_indices = np.argsort(scores)[::-1]  # по убыванию
+
+        # === МЕТРИКИ ДЛЯ НАЛИЧИЯ TARGET ===
         if target_idx != -1:
             # HIT@K / RECALL@K: находится ли позитив в топ-K
             for k in k_values:
@@ -478,7 +478,7 @@ def evaluate_retrieval_only(
             # Но для baseline это всегда fail, т.к. argmax != -1
             pass
     
-    # === CALCULATE METRICS ===
+    # === ВЫЧИСЛЕНИЕ МЕТРИК ===
     # Примечание: для single-label задачи (один релевантный документ на запрос)
     # Hit@K == Recall@K. Оба ключа сохраняются для совместимости с внешними
     # системами, но вычисляются из одного значения.
@@ -546,11 +546,11 @@ def calculate_mrr(
     MRR == MAP. Функция переименована из calculate_map для ясности.
 
     Args:
-        samples: List of samples with target_idx
-        scores_list: Precomputed scores for each sample
+        samples: список сэмплов с target_idx
+        scores_list: заранее вычисленные скоры для каждого сэмпла
 
-    Returns:
-        MRR score
+    Возвращает:
+        Значение MRR
     """
     reciprocal_ranks = []
 
@@ -576,15 +576,15 @@ def calculate_ndcg(
     scores_list: List[List[float]],
     k_values: List[int] = [1, 3, 5, 10]
 ) -> Dict[str, float]:
-    """Calculate Normalized Discounted Cumulative Gain (nDCG@K).
-    
-    Args:
-        samples: List of samples with target_idx
-        scores_list: Precomputed scores for each sample
-        k_values: K values for nDCG@K
-    
-    Returns:
-        Dict with nDCG@K for each K
+    """Вычисляет Normalized Discounted Cumulative Gain (nDCG@K).
+
+    Аргументы:
+        samples: список сэмплов с target_idx
+        scores_list: заранее вычисленные скоры для каждого сэмпла
+        k_values: значения K для nDCG@K
+
+    Возвращает:
+        Словарь с nDCG@K для каждого K
     """
     ndcg_scores = {k: [] for k in k_values}
     
@@ -764,10 +764,10 @@ def calculate_additional_metrics_for_vlm_rerank(
 
 
 
-    # --- CALCULATE METRICS ---
+    # --- ВЫЧИСЛЕНИЕ МЕТРИК ---
     metrics = {}
 
-    # 1. Median Rank for known targets
+    # 1. Median Rank для известных target
     if all_ranks:
         metrics[f"{model_name}_median_rank"] = float(np.median(all_ranks))
     else:
@@ -793,14 +793,14 @@ def calculate_additional_metrics_for_vlm_rerank(
         samples, precomputed_scores
     )
 
-    # 3. AUROC, F1, FPR@95TPR for Unknown task (is_known vs is_unknown)
-    if len(set(all_unknown_labels)) > 1: # Need both classes present
+    # 3. AUROC, F1, FPR@95TPR для задачи Unknown (is_known vs is_unknown)
+    if len(set(all_unknown_labels)) > 1: # Нужно наличие обоих классов
         try:
             metrics[f"{model_name}_unknown_auroc"] = roc_auc_score(all_unknown_labels, all_unknown_probs)
         except ValueError:
-            metrics[f"{model_name}_unknown_auroc"] = 0.0 # Handle edge case if no variance
+            metrics[f"{model_name}_unknown_auroc"] = 0.0 # Обработка вырожденного случая без вариативности
 
-        # F1 Score: Find optimal threshold based on F1
+        # F1 Score: ищем оптимальный порог по F1
         if len(set(all_unknown_labels)) == 2:
             precisions, recalls, thresholds_pr = precision_recall_curve(
                 all_unknown_labels, all_unknown_probs
@@ -883,18 +883,18 @@ def calculate_brier_score(
 
 def calculate_ece(probs: np.ndarray, labels: np.ndarray,
                   n_bins: int = 10) -> float:
-    """Calculate Expected Calibration Error (маргинальная калибровка).
+    """Вычисляет Expected Calibration Error (маргинальная калибровка).
 
     Используется для calibration plot в MLflow. Для основной метрики
     калибровки reranker используйте calculate_pairwise_calibration_error.
 
-    Args:
-        probs: Predicted probabilities [0, 1]
-        labels: True binary labels {0, 1}
-        n_bins: Number of bins for calibration
+    Аргументы:
+        probs: предсказанные вероятности [0, 1]
+        labels: истинные бинарные метки {0, 1}
+        n_bins: число бинов для калибровки
 
-    Returns:
-        ECE score (lower is better)
+    Возвращает:
+        Значение ECE (чем меньше, тем лучше)
     """
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     bin_lowers = bin_boundaries[:-1]
@@ -925,17 +925,17 @@ def create_calibration_plot(
     output_dir: str,
     n_bins: int = 10
 ) -> str:
-    """Create and save calibration plot (reliability diagram).
-    
-    Args:
-        probs: Predicted probabilities
-        labels: True labels
-        model_name: Name for the plot title
-        output_dir: Directory to save the plot
-        n_bins: Number of bins
-    
-    Returns:
-        Path to saved plot
+    """Создаёт и сохраняет calibration plot (reliability diagram).
+
+    Аргументы:
+        probs: предсказанные вероятности
+        labels: истинные метки
+        model_name: название для заголовка графика
+        output_dir: директория для сохранения графика
+        n_bins: число бинов
+
+    Возвращает:
+        Путь к сохранённому графику
     """
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     bin_lowers = bin_boundaries[:-1]
@@ -1122,7 +1122,7 @@ def evaluate_vlm_rerank(
 
         start_time = time.time()
 
-        # === COMPUTE VLM SCORES (BATCH) ===
+        # === ВЫЧИСЛЕНИЕ VLM-СКОРОВ (БАТЧАМИ) ===
         vl_scores, failed_indices = compute_rerank_scores_batch(
             model, processor, query_img_path, candidates,
             image_base_dir, caption_max_length, batch_size,
@@ -1161,10 +1161,10 @@ def evaluate_vlm_rerank(
         all_skipped_flags.append(False)
         all_effective_target_indices.append(target_idx)
 
-        # === RANK BY VLM SCORES ===
+        # === РАНЖИРОВАНИЕ ПО VLM-СКОРАМ ===
         ranked_indices = np.argsort(vl_scores)[::-1]
 
-        # === EVALUATE BASED ON TARGET TYPE ===
+        # === ОЦЕНКА В ЗАВИСИМОСТИ ОТ ТИПА TARGET ===
         if target_idx != -1:
             for k in k_values:
                 if target_idx in ranked_indices[:k]:
@@ -1191,7 +1191,7 @@ def evaluate_vlm_rerank(
             # FIX #СЕР6: считаем только не-skipped none-samples
             total_none_samples += 1
 
-        # === SAVE PREDICTIONS ===
+        # === СОХРАНЕНИЕ ПРЕДСКАЗАНИЙ ===
         if save_predictions and predictions is not None:
             if target_idx != -1:
                 is_correct = int(ranked_indices[0]) == target_idx
@@ -1209,7 +1209,7 @@ def evaluate_vlm_rerank(
                 "correct": is_correct,
             })
     
-    # === LOG IMAGE LOAD ERRORS ===
+    # === ЛОГИРОВАНИЕ ОШИБОК ЗАГРУЗКИ ИЗОБРАЖЕНИЙ ===
     if total_skipped_query > 0 or total_skipped_cand > 0:
         print(
             f"\n⚠ [{model_name}] Image load errors summary:\n"
@@ -1220,10 +1220,10 @@ def evaluate_vlm_rerank(
             f"  Total samples excluded from metrics: {total_skipped_samples}"
         )
 
-    # === CALCULATE LATENCY ===
+    # === ВЫЧИСЛЕНИЕ LATENCY ===
     latency_p95 = np.percentile(latencies, 95) if latencies else 0.0
 
-    # === AGGREGATE METRICS ===
+    # === АГРЕГАЦИЯ МЕТРИК ===
     # FIX #17: кешируем hit_values_ci вне цикла по k — одинаковые данные
     # для всех k, пересчитывать каждый раз нет смысла (O(n*K) → O(n+K)).
     # Также фильтруем skipped samples через all_skipped_flags.
@@ -1547,7 +1547,7 @@ def evaluate_rerank(
             )
     print(f"Загружено {len(samples)} примеров")
 
-    # === 1. EVALUATE RETRIEVAL ONLY (BASELINE) ===
+    # === 1. ОЦЕНКА ТОЛЬКО RETRIEVAL (BASELINE) ===
     print("\n1. Evaluating retrieval baseline...")
     retrieval_metrics = evaluate_retrieval_only(
         samples, k_values,
@@ -1593,7 +1593,7 @@ def evaluate_rerank(
                 json.dump(zs_predictions, f, indent=2, ensure_ascii=False)
             print(f"✓ Predictions сохранены: {pred_path}")
 
-        # === 4. ANALYSIS BY CANDIDATE TYPE FOR ZERO-SHOT ===
+        # === 4. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ ZERO-SHOT ===
         print("\n4. Evaluating zero-shot by candidate type...")
         # FIX #КРИТ8: используем zs_valid_samples из evaluate_vlm_rerank —
         # они содержат обновлённый target_idx после _truncate_candidates,
@@ -1655,7 +1655,7 @@ def evaluate_rerank(
                 json.dump(lora_predictions, f, indent=2, ensure_ascii=False)
             print(f"✓ Predictions сохранены: {pred_path}")
 
-        # === 6. ANALYSIS BY CANDIDATE TYPE FOR LoRA ===
+        # === 6. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ LoRA ===
         print("\n5. Evaluating LoRA by candidate type...")
         # FIX #КРИТ8: используем lora_valid_samples из evaluate_vlm_rerank —
         # они содержат обновлённый target_idx после _truncate_candidates.
@@ -1666,7 +1666,7 @@ def evaluate_rerank(
             lora_valid_samples, lora_valid_scores, model_name="lora_vlm"
         )
 
-    # === 7. COMBINE RESULTS ===
+    # === 7. ОБЪЕДИНЕНИЕ РЕЗУЛЬТАТОВ ===
     results = {
         "config": {
             "dataset": dataset_path,
@@ -1743,7 +1743,7 @@ def evaluate_rerank(
             "zero_shot_vlm_unknown_fpr_at_95tpr", 0
         ) if not skip_zero_shot else None,
         
-        # LoRA VLM metrics
+        # Метрики LoRA VLM
         "lora_vlm_hit_1": lora_metrics.get(
             "lora_vlm_hit_1", 0
         ) if lora_metrics else None,
@@ -1793,7 +1793,7 @@ def evaluate_rerank(
         k: v for k, v in results["summary"].items() if v is not None
     }
 
-    # === 8. SAVE AND PRINT RESULTS ===
+    # === 8. СОХРАНЕНИЕ И ВЫВОД РЕЗУЛЬТАТОВ ===
     # FIX #2/#1: сохраняем JSON ДО открытия MLflow run, чтобы log_artifact
     # логировал актуальный файл внутри основного run, а не в отдельный.
     output_dir = os.path.dirname(output_path)
@@ -1802,7 +1802,7 @@ def evaluate_rerank(
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    # === MLFLOW LOGGING (OPTIONAL) ===
+    # === ЛОГИРОВАНИЕ В MLFLOW (ОПЦИОНАЛЬНО) ===
     if use_mlflow:
         print("\nЛогирование в MLflow...")
         if mlflow_tracking_uri:

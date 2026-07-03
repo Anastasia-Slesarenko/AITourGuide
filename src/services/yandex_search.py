@@ -207,7 +207,7 @@ class YandexSearchService:
                     if is_likely_landmark(cleaned):
                         landmark_names.add(cleaned)
                     else:
-                        logger.debug(f"Filtered out non-landmark: '{cleaned}'")
+                        logger.debug(f"Отфильтровано как не достопримечательность: '{cleaned}'")
 
         return landmark_names
 
@@ -531,16 +531,16 @@ class WikipediaService:
                         data = await resp.json()
                         titles = data[1] if len(data) > 1 else []
                         if titles:
-                            logger.debug(f"Opensearch with '{variant}' → {titles}")
+                            logger.debug(f"Opensearch по '{variant}' → {titles}")
                             for title in titles:
                                 desc = await self._try_get_summary(
                                     title, lang, try_search=False
                                 )
                                 if desc:
-                                    logger.info(f"Found via opensearch: '{title}'")
+                                    logger.info(f"Найдено через opensearch: '{title}'")
                                     return desc
             except Exception as e:
-                logger.debug(f"Opensearch error for '{variant}': {e}")
+                logger.debug(f"Ошибка opensearch для '{variant}': {e}")
 
         # 2. Полнотекстовый поиск для каждого варианта
         for variant in variants:
@@ -560,16 +560,16 @@ class WikipediaService:
                         pages = data.get("query", {}).get("search", [])
                         if pages:
                             titles = [p["title"] for p in pages]
-                            logger.debug(f"Fulltext with '{variant}' → {titles}")
+                            logger.debug(f"Полнотекстовый поиск по '{variant}' → {titles}")
                             for title in titles:
                                 desc = await self._try_get_summary(
                                     title, lang, try_search=False
                                 )
                                 if desc:
-                                    logger.info(f"Found via fulltext: '{title}'")
+                                    logger.info(f"Найдено через полнотекстовый поиск: '{title}'")
                                     return desc
             except Exception as e:
-                logger.debug(f"Fulltext error for '{variant}': {e}")
+                logger.debug(f"Ошибка полнотекстового поиска для '{variant}': {e}")
 
         return None
 

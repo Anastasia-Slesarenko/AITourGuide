@@ -87,55 +87,54 @@ make docker-up
 
 ## Результаты обучения
 
-Модель: **Qwen2-VL-2B-Instruct** + LoRA reranker (r=16, α=32, lr=2e-5, 448px)  
+Модель: **Qwen2-VL-2B-Instruct** + LoRA reranker  
 Датасет: валидационная выборка, 13 911 примеров (5 746 known / 8 165 unknown)
 
-### Retrieval baseline (SigLIP + FAISS)
 
-| Метрика | Значение |
-|---------|---------|
-| Hit@1 | 60.7% |
-| Hit@3 | 76.3% |
-| Hit@5 | 83.7% |
-| MRR | 0.711 |
+| Метрика | Retrieval baseline (SigLIP + FAISS) | VLM reranker | LoRA VLM reranker (лучшая модель) |
+|---------|---------|---------|---------|
+| Hit@1 | 61.9% | | **61.9%** (+ пп к baseline) |
+| MRR | 0.854 | |  **0.854** (+0.109)|
+| Accuracy | 67.87% | |  67.87% |
+| Unknown accuracy | 72.92% | |72.92% |
+| Latency P95 | 2.84 с | | 2.84 с|
 
 ### LoRA VLM reranker (лучшая модель)
 
-| Метрика | Значение |
-|---------|---------|
-| Hit@1 | **71.9%** (+11.2 пп к baseline) |
-| Hit@3 | **90.3%** (+13.9 пп) |
-| Hit@5 | **95.9%** (+12.2 пп) |
-| MRR | **0.820** (+0.109) |
-| NDCG@5 | 0.851 |
-| Unknown accuracy | 75.0% |
-| Unknown AUROC | 0.804 |
-| Brier score | 0.067 |
-| Latency P95 | 2.76 с |
-
-Оптимальный порог (threshold = 0.547):
+Модель: **Qwen2-VL-2B-Instruct** + LoRA reranker (r=16, α=32, lr=2e-5, 448px)  
+Датасет: тестовая выборка, 13 889 примеров
 
 | Метрика | Значение |
 |---------|---------|
-| F1 known | 69.9% |
-| F1 unknown | 77.9% |
-| F1 macro | 73.9% |
-| Known accuracy | 71.7% |
-| Unknown accuracy | 76.5% |
+| Hit@1 | **61.9%** |
+| MRR | **0.854** |
+| Accuracy | 67.87% |
+| Unknown accuracy | 72.92% |
+| Latency P95 | 2.84 с |
+
+Оптимальный порог (threshold = 0.4226):
+
+| Метрика | Значение |
+|---------|---------|
+| F1 known | % |
+| F1 unknown | % |
+| F1 macro | 74.96% |
+| Known accuracy | % |
+| Unknown accuracy | % |
 
 ---
 
 ## Нагрузочное тестирование
 
-<!-- TODO: вставить результаты locust -->
+Эндпоинт `POST /v1/predict`, 100 concurrent users:
 
 | Метрика | Значение |
 |---------|---------|
-| RPS (sustained) | — |
-| Latency P50 | — |
-| Latency P95 | — |
-| Latency P99 | — |
-| Error rate | — |
+| RPS (sustained) | ~10 req/s (~40 req/s суммарно по всем эндпоинтам) |
+| Latency P50 | 3 ms |
+| Latency P95 | 5 ms |
+| Latency P99 | 26 000 ms |
+| Error rate | 0% (0 / 587 запросов) |
 
 ---
 
