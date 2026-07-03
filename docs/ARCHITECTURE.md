@@ -41,6 +41,7 @@ AI Tour Guide — сервис распознавания достопримеч
 ### VLM Reranker (vLLM, внешний сервер)
 
 - Модель: `Qwen2-VL-2B-Instruct` + LoRA (r=16, α=32)
+- Квантизация: online (на лету при загрузке в vLLM) — для снижения VRAM. Оффлайн-варианты (AWQ, GGUF/llama.cpp) проверены, но в прод не пошли.
 - Протокол: OpenAI Chat Completions API
 - Промпт: Query Photo + Candidate Photo + вопрос "Are these the same landmark?"
 - Ответ: `logprobs` для токенов Yes/No → `P(yes) = exp(logit_yes) / (exp(logit_yes) + exp(logit_no))`
@@ -103,7 +104,8 @@ Prometheus-метрики (синглтон `METRICS`):
 1. Nginx + несколько инстансов API за балансировщиком
 2. Redis для распределённого rate limiting и кэша
 3. Несколько vLLM-серверов с балансировкой
-4. Квантизация модели (AWQ/GPTQ) для снижения VRAM
+
+> Квантизация модели для снижения VRAM уже реализована — online при загрузке в vLLM (см. «VLM Reranker»).
 
 ## Мониторинг
 

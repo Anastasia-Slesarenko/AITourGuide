@@ -17,8 +17,33 @@
 import io
 import random
 
-from locust import HttpUser, between, task
+import requests
+from locust import HttpUser, between, events, task
 from PIL import Image
+
+
+@events.test_start.add_listener
+def _warmup_model(environment, **kwargs):
+    """
+    Однократный прогрев модели перед стартом нагрузки.
+
+    Первый /v1/predict загружает модель в память (cold start, до ~30 с).
+    Делаем ОДИН прогревочный запрос на весь тест (а не по одному на каждого
+    из 100 пользователей — иначе rate limiter отдаёт 429). Запрос идёт напрямую
+    через requests, поэтому не попадает в измеряемую статистику Locust.
+    В паре с флагом --reset-stats это даёт чистые P50/P95/P99 по плато.
+    """
+    host = (environment.host or "http://localhost:8000").rstrip("/")
+    try:
+        requests.get(f"{host}/v1/health", timeout=60)
+        requests.post(
+            f"{host}/v1/predict",
+            files={"image": ("warmup.jpg", _make_jpeg_bytes(), "image/jpeg")},
+            data={"use_internet_search": "false"},
+            timeout=60,
+        )
+    except requests.RequestException as exc:  # noqa: BLE001
+        print(f"⚠️  Warmup request failed (продолжаем тест): {exc}")
 
 
 def _make_jpeg_bytes(width: int = 224, height: int = 224) -> bytes:
@@ -44,21 +69,8 @@ class APIUser(HttpUser):
     wait_time = between(1, 5)
 
     def on_start(self):
-        """
-        Проверяем доступность сервиса и прогреваем модель перед началом теста.
-
-        Первый /v1/predict загружает модель в память (cold start, до ~30 с).
-        Делаем его здесь, чтобы прогрев не попадал в измеряемую нагрузку
-        (в паре с флагом --reset-stats это даёт чистые P50/P95/P99 по плато).
-        """
+        """Проверяем доступность сервиса перед началом теста (прогрев модели — в _warmup_model)."""
         self.client.get("/v1/health")
-        warmup_jpeg = _make_jpeg_bytes()
-        self.client.post(
-            "/v1/predict",
-            files={"image": ("warmup.jpg", warmup_jpeg, "image/jpeg")},
-            data={"use_internet_search": "false"},
-            name="/v1/predict (warmup)",
-        )
 
     @task(5)
     def predict_no_internet(self):
