@@ -572,6 +572,7 @@ class AITourGuide:
         candidate_image: str,
         candidate_caption: str,
         candidate_name: str,
+        query_uri: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Формирует сообщения в формате OpenAI API для VLM reranking.
@@ -581,12 +582,17 @@ class AITourGuide:
             candidate_image: Путь к изображению кандидата
             candidate_caption: Описание кандидата
             candidate_name: Название кандидата
+            query_uri: Готовый base64 data URI query-изображения. Если передан —
+                повторное кодирование пропускается. При reranking query-картинка
+                одна на всех кандидатов, поэтому кодируется один раз в вызывающем
+                коде (см. _generate_vlm_prediction).
 
         Returns:
             Список сообщений для OpenAI API
         """
-        query_img = self._to_pil_image(query_image)
-        query_uri = self._image_to_base64_data_uri(query_img)
+        if query_uri is None:
+            query_img = self._to_pil_image(query_image)
+            query_uri = self._image_to_base64_data_uri(query_img)
         # Изображение кандидата берём из кэша (lazy load + кэш по пути)
         candidate_uri = await self._get_candidate_image_uri(candidate_image)
         caption = candidate_caption[: self.caption_max_length]
@@ -1268,6 +1274,14 @@ class AITourGuide:
 
         METRICS.vlm_candidates_count.observe(len(candidates))
 
+        # Query-изображение одно на всех кандидатов — кодируем в base64 один раз,
+        # а не по разу на кандидата. Экономит N-1 JPEG+base64 кодирований (CPU,
+        # раньше выполнялись inline в корутине и блокировали event loop в момент
+        # фан-аута) и даёт байт-в-байт одинаковый префикс промпта → попадания
+        # в prefix-кэш vLLM по vision-токенам query-картинки.
+        query_img = self._to_pil_image(image)
+        query_uri = await asyncio.to_thread(self._image_to_base64_data_uri, query_img)
+
         async def _score_candidate(cand: dict) -> dict:
             """Вычисляет P(yes) для одного кандидата."""
             try:
@@ -1276,6 +1290,7 @@ class AITourGuide:
                     cand["image_path"],
                     cand["caption"],
                     cand["landmark_name"],
+                    query_uri=query_uri,
                 )
                 response = await self.vllm_client.chat_completion(
                     messages=messages,
