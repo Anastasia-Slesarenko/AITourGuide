@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration lint format clean run docker-build docker-up docker-down docker-pull build-index download-models
+.PHONY: help install install-dev test test-unit test-integration load-test lint format clean run docker-build docker-up docker-down docker-pull build-index download-models
 
 # ========================================
 # HELP
@@ -18,7 +18,7 @@ help:
 	@echo "  make test             Run all tests"
 	@echo "  make test-unit        Run unit tests only"
 	@echo "  make test-integration Run integration tests only"
-	@echo "  make load-test        Run load test with Locust (headless)"
+	@echo "  make load-test        Load test: stepped ramp, known+novel mix (headless)"
 	@echo "  make lint             Run linters"
 	@echo "  make format           Format code with ruff"
 	@echo "  make clean            Clean temporary files"
@@ -92,12 +92,23 @@ test-coverage:
 	pytest tests/ --cov=src --cov-report=html --cov-report=term
 	@echo "Coverage report generated in htmlcov/index.html"
 
+# Хост API и пути к данным можно переопределить (см. tests/load/locustfile.py).
+# Пути к фото/манифестам на S3-маунте передаются как env-переменные:
+#   RATE_LIMIT_ENABLED=false \
+#   LOAD_TEST_IMAGE_DIR=/mnt/.../photos \
+#   LOAD_TEST_KNOWN_MANIFEST=/mnt/.../test.json \
+#   LOAD_TEST_NOVEL_MANIFEST=/mnt/.../novel_test_unknown.json \
+#   make load-test LOAD_HOST=http://host:8000
+LOAD_HOST ?= http://localhost:8000
+
 load-test:
-	@echo "🔥 Running load test (100 users, 10/s spawn rate, 3m, stats reset after ramp-up)..."
+	@echo "🔥 Load test — ступенчатый ramp (StepLoadShape), микс known + novel..."
+	@echo "   ⚠️  API должен быть запущен с RATE_LIMIT_ENABLED=false, иначе predict → 429."
+	@echo "   Пути к фото и манифестам на S3 — через env LOAD_TEST_* (см. locustfile)."
 	@mkdir -p tests/load/results
 	python3 -m locust -f tests/load/locustfile.py \
-		--host http://localhost:8000 \
-		--headless -u 100 -r 10 -t 3m --reset-stats \
+		--host $(LOAD_HOST) \
+		--headless --reset-stats \
 		--exit-code-on-error 0 \
 		--csv tests/load/results/report \
 		--html tests/load/results/report.html

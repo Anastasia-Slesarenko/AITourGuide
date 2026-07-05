@@ -29,12 +29,12 @@ from sklearn.metrics import (
 # ============================================================
 _PREDICTIONS_PATH = (
     "experiments/results/"
-    "val_rerank_exp_r16_alpha32_lr2e-5_rerank_full_lora_448_dataset_v3_lora_predictions.json"
+    "val_rerank_exp_r16_alpha32_lr2e-5_rerank_full_lora_448_lora_predictions.json"
 )
 
 _EVAL_JSON_PATH = (
     "experiments/results/"
-    "val_rerank_exp_r16_alpha32_lr2e-5_rerank_full_lora_448_dataset_v3.json"
+    "val_rerank_exp_r16_alpha32_lr2e-5_rerank_full_lora_448.json"
 )
 _MODEL_NAME = "lora_vlm"
 _K_VALUES = [1, 3, 5, 10]

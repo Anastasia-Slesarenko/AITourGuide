@@ -225,6 +225,14 @@ class VLLMClient:
             timeout=httpx.Timeout(timeout),
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
         )
+        # Отдельный лёгкий клиент для health-check со своим маленьким пулом.
+        # Инференс не должен блокировать liveness: иначе под нагрузкой пул
+        # inference-клиента забит, и health стоит в очереди десятки секунд —
+        # оркестратор примет занятый контейнер за мёртвый и перезапустит его.
+        self.health_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(5.0),
+            limits=httpx.Limits(max_keepalive_connections=1, max_connections=2),
+        )
         logger.info(f"vLLM клиент инициализирован: {base_url}")
 
     async def health_check(self) -> bool:
@@ -234,7 +242,7 @@ class VLLMClient:
             base = self.base_url.rstrip("/")
             if base.endswith("/v1"):
                 base = base[:-3]
-            response = await self.client.get(f"{base}/health")
+            response = await self.health_client.get(f"{base}/health")
             return response.status_code == 200
         except Exception as e:
             logger.error(f"vLLM health check failed: {e}")
@@ -309,8 +317,9 @@ class VLLMClient:
         )
 
     async def close(self):
-        """Закрывает HTTP-клиент."""
+        """Закрывает HTTP-клиенты."""
         await self.client.aclose()
+        await self.health_client.aclose()
 
 
 class AITourGuide:

@@ -10,18 +10,24 @@ from fastapi import HTTPException, Request
 class RateLimiter:
     """Простой rate limiter на основе in-memory хранилища."""
 
-    def __init__(self, calls: int, period: int):
+    def __init__(self, calls: int, period: int, enabled: bool = True):
         """
         Args:
             calls: Максимальное количество запросов
             period: Период в секундах
+            enabled: Если False — лимитер пропускает всё (для нагрузочных
+                тестов: один IP Locust иначе упирается в общий бакет).
         """
         self.calls = calls
         self.period = period
+        self.enabled = enabled
         self.requests: dict[str, list] = defaultdict(list)
 
     def is_allowed(self, client_id: str) -> bool:
         """Проверяет, разрешён ли запрос для данного клиента."""
+        if not self.enabled:
+            return True
+
         now = time.time()
 
         # Удаляем устаревшие записи

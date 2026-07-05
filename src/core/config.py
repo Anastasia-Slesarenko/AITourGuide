@@ -54,8 +54,16 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 10
 
     # Rate limiting
+    rate_limit_enabled: bool = True  # отключать на нагрузочных тестах
     rate_limit_calls: int = 10
     rate_limit_period: int = 60  # секунды
+
+    # Backpressure: максимум одновременно обрабатываемых predict-запросов
+    # на процесс. Сверх лимита запросы быстро отклоняются (503), чтобы
+    # задержка успешных оставалась ограниченной вместо роста очереди.
+    max_concurrent_predicts: int = 8
+    # Сколько ждать освобождения слота перед тем как отдать 503, секунды.
+    predict_admission_timeout: float = 0.5
 
     # Сервер
     port: int = 8000

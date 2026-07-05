@@ -1,6 +1,7 @@
 # src/api/main.py
 """Основное FastAPI-приложение AITourGuide."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -116,7 +117,13 @@ app.add_middleware(
 app.state.rate_limiter = RateLimiter(
     calls=settings.rate_limit_calls,
     period=settings.rate_limit_period,
+    enabled=settings.rate_limit_enabled,
 )
+
+# Backpressure: общий на процесс семафор допуска predict-запросов.
+# Ограничивает число одновременно обрабатываемых predict'ов, чтобы не
+# переподписывать vLLM и держать задержку успешных запросов ограниченной.
+app.state.predict_semaphore = asyncio.Semaphore(settings.max_concurrent_predicts)
 
 # Шаблоны Jinja2
 app.state.templates = Jinja2Templates(directory=str(settings.templates_path_abs))

@@ -20,3 +20,4 @@ coverage.xml
 *.egg-info/
 dist/
 build/
+cv.md

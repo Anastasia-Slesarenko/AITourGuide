@@ -1,6 +1,7 @@
 # src/api/routes/predict.py
 """Эндпоинт предсказания достопримечательности по изображению."""
 
+import asyncio
 import io
 import logging
 
@@ -16,9 +17,14 @@ from fastapi import (
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from src.api.dependencies import get_guide, get_rate_limiter
+from src.api.dependencies import (
+    get_guide,
+    get_predict_semaphore,
+    get_rate_limiter,
+)
 from src.api.middleware import RateLimiter, check_rate_limit
 from src.core.config import settings
+from src.core.metrics import METRICS
 from src.services.ai_tour_guide import AITourGuide
 
 logger = logging.getLogger(__name__)
@@ -61,6 +67,7 @@ async def predict(
     ),
     guide: AITourGuide = Depends(get_guide),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
+    predict_semaphore: asyncio.Semaphore = Depends(get_predict_semaphore),
 ):
     """
     Распознаёт достопримечательность на фотографии.
@@ -89,6 +96,23 @@ async def predict(
             detail="Невалидный файл изображения",
         ) from e
 
+    # Backpressure: пытаемся занять слот обработки. Если за
+    # predict_admission_timeout слот не освободился — сервис перегружен,
+    # быстро отдаём 503 с Retry-After вместо бесконечного роста очереди.
+    try:
+        await asyncio.wait_for(
+            predict_semaphore.acquire(),
+            timeout=settings.predict_admission_timeout,
+        )
+    except (TimeoutError, asyncio.TimeoutError) as e:
+        METRICS.predict_rejected_total.inc()
+        logger.warning("Backpressure: predict отклонён (перегрузка)")
+        raise HTTPException(
+            status_code=503,
+            detail="Сервис перегружен, повторите позже",
+            headers={"Retry-After": "5"},
+        ) from e
+
     try:
         result = await guide.predict(
             image_input=content,
@@ -106,6 +130,8 @@ async def predict(
             status_code=500,
             detail="Внутренняя ошибка сервера",
         ) from e
+    finally:
+        predict_semaphore.release()
 
     return PredictionResponse(
         name=result.get("name", ""),

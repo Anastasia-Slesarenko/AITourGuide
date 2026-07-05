@@ -43,6 +43,16 @@ class E2EResult:
     is_correct: bool
     sample_type: str  # "known" или "unknown"
 
+    # --- Обогащённые поля для offline-пересчёта (вариант A, фикс. знаменатель) ---
+    # Ранг истинного объекта в СЫРОМ retrieval-пуле (1..N, -1 если не найден).
+    # Не зависит от реранкера → одинаков для всех моделей на одном retrieval.
+    gt_retrieval_rank: int = -1
+    # Ранг истинного объекта в ПОЛНОМ reranked-списке (1..N, -1 если не найден).
+    # Нужен для честного MRR независимо от порога отсечки.
+    gt_reranked_rank: int = -1
+    # Решение пайплайна: "success" (выдал landmark) или "unknown" (отклонил).
+    pipeline_status: str = ""
+
     def to_dict(self) -> Dict:
         return {
             "query_image": self.query_image,
@@ -52,6 +62,9 @@ class E2EResult:
             "latency_ms": self.latency_ms,
             "is_correct": self.is_correct,
             "sample_type": self.sample_type,
+            "gt_retrieval_rank": self.gt_retrieval_rank,
+            "gt_reranked_rank": self.gt_reranked_rank,
+            "pipeline_status": self.pipeline_status,
         }
 
 
@@ -67,6 +80,7 @@ class ProductionPipeline:
         caption_max_length: int = 300,
         rerank_batch_size: int = 10,
         fixed_image_size: Optional[Tuple[int, int]] = (224, 224),
+        use_reranker: bool = True,
     ):
         self.retriever = retriever
         self.reranker_model = reranker_model
@@ -77,12 +91,16 @@ class ProductionPipeline:
         self.caption_max_length = caption_max_length
         self.rerank_batch_size = rerank_batch_size
         self.fixed_image_size = fixed_image_size
+        # Retrieval baseline (SigLIP + FAISS без VLM): кандидаты ранжируются
+        # по агрегированному retrieval-скору, порог применяется к нему же.
+        self.use_reranker = use_reranker
 
-        _tokenizer = getattr(reranker_processor, "tokenizer", reranker_processor)
-        _tokenizer.padding_side = "left"
+        if self.use_reranker:
+            _tokenizer = getattr(reranker_processor, "tokenizer", reranker_processor)
+            _tokenizer.padding_side = "left"
 
-        self.yes_id = _tokenizer.convert_tokens_to_ids("Yes")
-        self.no_id = _tokenizer.convert_tokens_to_ids("No")
+            self.yes_id = _tokenizer.convert_tokens_to_ids("Yes")
+            self.no_id = _tokenizer.convert_tokens_to_ids("No")
 
     def _rerank_all_candidates(
         self,
@@ -189,6 +207,8 @@ class ProductionPipeline:
                 "landmark_id": None,
                 "confidence": 0.0,
                 "candidates": [],
+                "retrieved_landmark_ids": [],
+                "reranked_landmark_ids": [],
             }
 
         valid_results = []
@@ -210,9 +230,19 @@ class ProductionPipeline:
                 "landmark_id": None,
                 "confidence": 0.0,
                 "candidates": [],
+                "retrieved_landmark_ids": [],
+                "reranked_landmark_ids": [],
             }
 
-        rerank_scores = self._rerank_all_candidates(query_image, candidates_info)
+        # Сырой retrieval-пул в порядке ретривера (до реранка).
+        # Не зависит от реранкера → фиксированный known/unknown-знаменатель.
+        retrieved_landmark_ids = [r.landmark_id for r in valid_results]
+
+        if self.use_reranker:
+            rerank_scores = self._rerank_all_candidates(query_image, candidates_info)
+        else:
+            # Retrieval baseline: скор кандидата = его агрегированный retrieval-скор.
+            rerank_scores = [r.aggregated_score for r in valid_results]
 
         reranked_candidates = []
         for result, score in zip(valid_results, rerank_scores):
@@ -226,14 +256,19 @@ class ProductionPipeline:
             key=lambda x: float(x["rerank_score"]), reverse=True
         )
 
+        # Полный reranked-порядок landmark_id (для честного ранга/MRR).
+        reranked_landmark_ids = [c["landmark_id"] for c in reranked_candidates]
+
         top_score = float(reranked_candidates[0]["rerank_score"]) if reranked_candidates else 0.0
-        
+
         if not reranked_candidates or top_score < self.rerank_threshold:
             return {
                 "status": "unknown",
                 "landmark_id": None,
                 "confidence": top_score,
                 "candidates": reranked_candidates[:5],
+                "retrieved_landmark_ids": retrieved_landmark_ids,
+                "reranked_landmark_ids": reranked_landmark_ids,
             }
 
         best = reranked_candidates[0]
@@ -243,6 +278,8 @@ class ProductionPipeline:
             "landmark_name": best["landmark_name"],
             "confidence": float(best["rerank_score"]),
             "candidates": reranked_candidates[:5],
+            "retrieved_landmark_ids": retrieved_landmark_ids,
+            "reranked_landmark_ids": reranked_landmark_ids,
         }
 
 
@@ -251,17 +288,32 @@ def evaluate_e2e(
     pipeline: ProductionPipeline,
     image_dir: str,
     save_predictions: bool = False,
+    known_definition: str = "retrieval_pool",
 ) -> Tuple[Dict, List[E2EResult]]:
     """
-    Production-like оценка с правильной логикой unknown detection.
-    
+    Production-like оценка с корректной логикой unknown detection.
+
     Для каждого сэмпла:
-    1. Берём ground truth landmark_id из meta["landmark_id"]
-    2. Делаем retrieval через production index
-    3. Проверяем, есть ли ground truth в top-k retrieval
-    4. Если есть → known sample, оцениваем hit@1, MRR
-    5. Если нет → unknown sample, оцениваем unknown detection accuracy
+    1. Берём ground truth landmark_id из meta["landmark_id"].
+    2. Заново делаем retrieval через production index.
+    3. Метим сэмпл known/unknown (см. known_definition).
+    4. known  → оцениваем hit@1, MRR.
+       unknown → оцениваем unknown detection accuracy.
+
+    Args:
+        known_definition: как определять known/unknown-знаменатель:
+            - "retrieval_pool" (вариант A, по умолчанию): истинный объект есть в
+              СЫРОМ retrieval-пуле (top-k FAISS, до реранка). Пул одинаков для
+              всех моделей → знаменатель фиксирован → столбцы строго сравнимы.
+            - "reranked_top5" (legacy): истинный объект в top-5 ПОСЛЕ реранка.
+              Знаменатель зависит от модели (историческое поведение).
     """
+    if known_definition not in ("retrieval_pool", "reranked_top5"):
+        raise ValueError(
+            f"known_definition должен быть 'retrieval_pool' или 'reranked_top5', "
+            f"получено: {known_definition}"
+        )
+
     latencies = []
     results = []
 
@@ -269,7 +321,8 @@ def evaluate_e2e(
     known_total = 0
     unknown_correct = 0
     unknown_total = 0
-    mrr_sum = 0.0
+    mrr_sum = 0.0           # MRR по рангу истинного объекта в reranked-списке
+    rank_hit_1 = 0          # ranking hit@1: reranked top-1 == GT, без учёта порога
 
     # Статистика: сколько сэмплов из test.json оказались known/unknown после retrieval
     step6_unknown_became_known = 0  # target_idx=-1, но retrieval нашёл правильный
@@ -280,7 +333,7 @@ def evaluate_e2e(
         # Истинный landmark_id всегда в meta["landmark_id"]
         meta = item.get("meta", {})
         true_landmark_id = meta.get("landmark_id")
-        
+
         if not true_landmark_id:
             print(f"⚠️  Нет landmark_id в meta для {item.get('query_image')}")
             continue
@@ -301,53 +354,63 @@ def evaluate_e2e(
         latencies.append(latency)
         query_img.close()
 
-        # Проверяем, есть ли true_landmark_id в retrieval results
-        retrieved_landmark_ids = [
-            cand.get("landmark_id") for cand in result.get("candidates", [])
-        ]
-        is_in_retrieval = true_landmark_id in retrieved_landmark_ids
+        # Ранги истинного объекта (1-based) в сыром пуле и в reranked-списке.
+        retrieval_pool = result.get("retrieved_landmark_ids", [])
+        reranked_pool = result.get("reranked_landmark_ids", [])
+        gt_retrieval_rank = (
+            retrieval_pool.index(true_landmark_id) + 1
+            if true_landmark_id in retrieval_pool else -1
+        )
+        gt_reranked_rank = (
+            reranked_pool.index(true_landmark_id) + 1
+            if true_landmark_id in reranked_pool else -1
+        )
+
+        # known/unknown по выбранному определению
+        if known_definition == "retrieval_pool":
+            is_in_retrieval = gt_retrieval_rank != -1
+        else:  # reranked_top5 (legacy)
+            is_in_retrieval = true_landmark_id in reranked_pool[:5]
+
+        pred_id = result.get("landmark_id")
+        confidence = result.get("confidence", 0.0)
+        pipeline_status = result.get("status", "")
 
         # Определяем тип сэмпла на основе retrieval (не target_idx!)
         if is_in_retrieval:
             # Известный объект: retrieval нашёл правильный landmark
             sample_type = "known"
             known_total += 1
-            
+
             # Статистика
             if target_idx == -1:
                 step6_unknown_became_known += 1
             else:
                 step6_known_stayed_known += 1
-            
-            # Оцениваем hit@1, MRR
-            pred_id = result.get("landmark_id")
-            confidence = result.get("confidence", 0.0)
+
+            # hit@1 — end-to-end (reject = промах); MRR — по рангу в reranked-списке.
             is_correct = False
-            
             if pred_id == true_landmark_id:
                 known_correct += 1
                 is_correct = True
-                mrr_sum += 1.0
-            else:
-                # Ищем правильный ответ среди кандидатов
-                for rank, cand in enumerate(result.get("candidates", []), start=1):
-                    if cand.get("landmark_id") == true_landmark_id:
-                        mrr_sum += 1.0 / rank
-                        break
+            if gt_reranked_rank != -1:
+                mrr_sum += 1.0 / gt_reranked_rank
+                # ranking hit@1: истинный объект первый в reranked-порядке
+                # (без учёта порога отсечки; отличается от e2e_hit_1 на reject).
+                if gt_reranked_rank == 1:
+                    rank_hit_1 += 1
         else:
             # Неизвестный объект: retrieval НЕ нашёл правильный landmark
             sample_type = "unknown"
             unknown_total += 1
-            
+
             # Статистика
             if target_idx != -1:
                 step6_known_became_unknown += 1
-            
+
             # Оцениваем unknown detection accuracy
-            confidence = result.get("confidence", 0.0)
             is_correct = False
-            
-            if result["status"] == "unknown":
+            if pipeline_status == "unknown":
                 unknown_correct += 1
                 is_correct = True
 
@@ -355,20 +418,28 @@ def evaluate_e2e(
             results.append(E2EResult(
                 query_image=item["query_image"],
                 true_landmark_id=true_landmark_id,
-                predicted_landmark_id=result.get("landmark_id"),
+                predicted_landmark_id=pred_id,
                 confidence_score=confidence,
                 latency_ms=latency,
                 is_correct=is_correct,
                 sample_type=sample_type,
+                gt_retrieval_rank=gt_retrieval_rank,
+                gt_reranked_rank=gt_reranked_rank,
+                pipeline_status=pipeline_status,
             ))
 
     total = known_total + unknown_total
     correct = known_correct + unknown_correct
 
     metrics = {
+        "known_definition": known_definition,
         "e2e_accuracy": correct / total if total > 0 else 0.0,
         "e2e_hit_1": known_correct / known_total if known_total > 0 else 0.0,
         "e2e_mrr": mrr_sum / known_total if known_total > 0 else 0.0,
+        # Ranking hit@1 без учёта порога (отличается от e2e_hit_1 на величину reject).
+        "rank_hit_1": rank_hit_1 / known_total if known_total > 0 else 0.0,
+        # Потолок ретривера: доля сэмплов, где истинный объект вообще найден.
+        "retrieval_recall": known_total / total if total > 0 else 0.0,
         "unknown_detection_accuracy": (
             unknown_correct / unknown_total if unknown_total > 0 else 0.0
         ),
@@ -422,14 +493,39 @@ if __name__ == "__main__":
     RETRIEVAL_TOP_K = 10
     RERANK_THRESHOLD = 0.50
 
+    # Агрегация retrieval-скора. Должна совпадать со step6
+    # (weighted_top2_alpha=0.8), иначе retrieval_score в e2e будет на другой
+    # шкале, чем в датасете, — критично для порога retrieval baseline.
+    AGGREGATION_MODE = "weighted_top2"
+    AGGREGATION_ALPHA = 0.8
+
+    # Режим "retrieval baseline" (SigLIP + FAISS, без VLM-реранкера).
+    # Включить: USE_RERANKER = False. В этом режиме кандидаты ранжируются по
+    # retrieval-скору (косинусная близость), и порог применяется к нему же —
+    # шкала другая, поэтому нужен свой порог (подобрать свипом по val).
+    USE_RERANKER = True
+    RETRIEVAL_THRESHOLD = 0.0  # порог для baseline; 0.0 = без отсева unknown
+
+    # Определение known/unknown-знаменателя (вариант A против legacy):
+    #   "retrieval_pool"  — истинный объект в СЫРОМ retrieval-пуле (одинаков для
+    #                       всех моделей → знаменатель фиксирован → столбцы сравнимы).
+    #   "reranked_top5"   — истинный объект в top-5 ПОСЛЕ реранка (историческое
+    #                       поведение, знаменатель зависит от модели).
+    KNOWN_DEFINITION = "retrieval_pool"
+
     SAVE_PREDICTIONS = True
+
+    active_threshold = RERANK_THRESHOLD if USE_RERANKER else RETRIEVAL_THRESHOLD
 
     print("=" * 70)
     print("E2E EVALUATION - Production Pipeline")
     print("=" * 70)
     print(f"  Dataset:   {TEST_DATASET}")
-    print(f"  LoRA:      {LORA_PATH or 'zero-shot'}")
-    print(f"  Threshold: {RERANK_THRESHOLD}")
+    if USE_RERANKER:
+        print(f"  Mode:      reranker ({LORA_PATH or 'zero-shot'})")
+    else:
+        print("  Mode:      retrieval baseline (SigLIP + FAISS, no VLM)")
+    print(f"  Threshold: {active_threshold}")
     print("=" * 70)
 
     # Загрузка компонентов
@@ -438,10 +534,16 @@ if __name__ == "__main__":
     retriever = LandmarkRetriever.from_index_dir(
         INDEX_DIR,
         index_config=IndexConfig(device="cuda" if torch.cuda.is_available() else "cpu"),
+        aggregation_mode=AGGREGATION_MODE,
+        aggregation_alpha=AGGREGATION_ALPHA,
     )
 
-    print("\n2. Загрузка VLM Reranker...")
-    reranker_model, reranker_processor = load_vlm_reranker(lora_path=LORA_PATH)
+    if USE_RERANKER:
+        print("\n2. Загрузка VLM Reranker...")
+        reranker_model, reranker_processor = load_vlm_reranker(lora_path=LORA_PATH)
+    else:
+        print("\n2. Retrieval baseline: VLM не загружается")
+        reranker_model, reranker_processor = None, None
 
     print("\n3. Инициализация ProductionPipeline...")
     pipeline = ProductionPipeline(
@@ -450,7 +552,8 @@ if __name__ == "__main__":
         reranker_processor=reranker_processor,
         image_base_dir=IMAGE_DIR,
         retrieval_top_k=RETRIEVAL_TOP_K,
-        rerank_threshold=RERANK_THRESHOLD,
+        rerank_threshold=active_threshold,
+        use_reranker=USE_RERANKER,
     )
 
     # Загрузка датасета
@@ -466,6 +569,7 @@ if __name__ == "__main__":
         pipeline=pipeline,
         image_dir=IMAGE_DIR,
         save_predictions=SAVE_PREDICTIONS,
+        known_definition=KNOWN_DEFINITION,
     )
 
     # Сохранение результатов
@@ -479,9 +583,13 @@ if __name__ == "__main__":
             "index_dir": INDEX_DIR,
             "image_dir": IMAGE_DIR,
             "test_dataset": TEST_DATASET,
-            "lora_path": LORA_PATH,
+            "use_reranker": USE_RERANKER,
+            "lora_path": LORA_PATH if USE_RERANKER else None,
             "retrieval_top_k": RETRIEVAL_TOP_K,
-            "rerank_threshold": RERANK_THRESHOLD,
+            "threshold": active_threshold,
+            "known_definition": KNOWN_DEFINITION,
+            "aggregation_mode": AGGREGATION_MODE,
+            "aggregation_alpha": AGGREGATION_ALPHA,
         },
         "metrics": metrics,
         "predictions": [r.to_dict() for r in detailed_results] if SAVE_PREDICTIONS else [],
@@ -495,9 +603,12 @@ if __name__ == "__main__":
     print("E2E EVALUATION RESULTS")
     print("=" * 70)
     print(f"\n📊 ОСНОВНЫЕ МЕТРИКИ:")
+    print(f"  Known definition:          {metrics['known_definition']}")
     print(f"  E2E Accuracy:              {metrics['e2e_accuracy']:.3f}")
     print(f"  E2E Hit@1 (known):         {metrics['e2e_hit_1']:.3f}")
     print(f"  E2E MRR:                   {metrics['e2e_mrr']:.3f}")
+    print(f"  Ranking Hit@1 (no thr):    {metrics['rank_hit_1']:.3f}")
+    print(f"  Retrieval recall (ceiling):{metrics['retrieval_recall']:.3f}")
     print(f"  Unknown Detection Acc:     {metrics['unknown_detection_accuracy']:.3f}")
     print(f"  Unknown Detection Rate:    {metrics['unknown_detection_rate']:.3f}")
 

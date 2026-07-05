@@ -43,3 +43,8 @@ async def get_client_id(request: Request) -> str:
 async def get_rate_limiter(request: Request):
     """Возвращает экземпляр RateLimiter из состояния приложения."""
     return request.app.state.rate_limiter
+
+
+async def get_predict_semaphore(request: Request):
+    """Возвращает семафор допуска predict-запросов (backpressure)."""
+    return request.app.state.predict_semaphore

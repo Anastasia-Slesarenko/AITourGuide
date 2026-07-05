@@ -44,6 +44,10 @@ class _AITourGuideMetrics:
             "Число запросов по источнику итогового ответа",
             ["source"],   # labels: retrieval | internet | fallback
         )
+        self.predict_rejected_total = Counter(
+            "aitourguide_predict_rejected_total",
+            "Число predict-запросов, отклонённых backpressure (503, перегрузка)",
+        )
 
         # ── Гистограммы времени выполнения ────────────────────────────────
         self.retrieval_duration = Histogram(
