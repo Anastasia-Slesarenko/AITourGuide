@@ -1,3 +1,1 @@
 Method,Name,Error,Occurrences
-POST,/v1/predict (novel→internet),CatchResponseError('HTTP 503'),125
-POST,/v1/predict (known),CatchResponseError('HTTP 503'),332
