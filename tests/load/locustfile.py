@@ -47,6 +47,11 @@
     RATE_LIMIT_ENABLED=false — отключить rate limiter на время теста
 """
 
+# Locust на деплой-хосте может запускаться системным Python 3.8, где
+# list[bytes] в аннотации на уровне модуля падает (PEP 585 — с 3.9).
+# Делаем все аннотации ленивыми (строками), чтобы файл работал и на 3.8.
+from __future__ import annotations
+
 import io
 import os
 import random
