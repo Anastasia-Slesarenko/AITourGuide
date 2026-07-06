@@ -1712,9 +1712,15 @@ class AITourGuide:
 
         # Кеш по MD5 — только для bytes-входа (файловые пути не кешируем,
         # т.к. содержимое файла может измениться).
+        # Флаг use_internet_search входит в ключ: без него запрос с
+        # включённым поиском получил бы закешированный «не найдено» от
+        # предыдущего запроса без поиска и не сделал бы новую попытку.
         _cache_key: str | None = None
         if isinstance(image_input, bytes):
-            _cache_key = hashlib.md5(image_input).hexdigest()
+            _cache_key = (
+                f"{hashlib.md5(image_input).hexdigest()}"
+                f":internet={int(use_internet_search)}"
+            )
             if _cache_key in self._predict_cache:
                 logger.info(
                     f"[{correlation_id}] Возврат из predict-кеша "
