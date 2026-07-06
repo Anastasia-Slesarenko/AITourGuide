@@ -61,8 +61,6 @@ services:
         --port 30000
         --host 0.0.0.0
         --dtype float16
-        --quantization bitsandbytes
-        --load-format bitsandbytes
         --max-model-len 2048
         --gpu-memory-utilization 0.85
         --trust-remote-code
