@@ -237,6 +237,27 @@ def _accepted(p: Dict, threshold: float | None) -> bool:
     return float(p["confidence_score"]) >= threshold
 
 
+def _auroc(labels: List[int], scores: List[float]) -> float:
+    """AUROC через ранги (Mann-Whitney U), с обработкой ties. label∈{0,1}."""
+    n_pos = sum(labels)
+    n_neg = len(labels) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return 0.0
+    order = sorted(range(len(scores)), key=lambda i: scores[i])
+    ranks = [0.0] * len(scores)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and scores[order[j + 1]] == scores[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    sum_pos = sum(r for r, l in zip(ranks, labels) if l == 1)
+    return (sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+
+
 def open_set_metrics(
     known_preds: List[Dict],
     unknown_preds: List[Dict],
@@ -289,10 +310,17 @@ def open_set_metrics(
     hit_rate = _safe(hit, n_known)
     unk_acc = _safe(unknown_rejected, n_unknown)
 
+    # AUROC детекции known-vs-novel по confidence (порого-независима).
+    labels = [1] * n_known + [0] * n_unknown
+    scores = ([float(p["confidence_score"]) for p in known_preds]
+              + [float(p["confidence_score"]) for p in unknown_preds])
+    auroc = _auroc(labels, scores)
+
     return {
         "threshold": threshold,
         "n_known": n_known,
         "n_unknown": n_unknown,
+        "auroc": auroc,                                     # known-vs-novel, threshold-free
         "retrieval_recall": _safe(retrieved, n_known),      # потолок ретривера
         "e2e_hit_1": hit_rate,                              # answered AND correct
         "e2e_mrr": mrr_sum / n_known if n_known > 0 else 0.0,  # ранжирование known
@@ -421,6 +449,7 @@ def _print_open_set(m: Dict) -> None:
     print(f"    Hit@1 (known, e2e):              {m['e2e_hit_1']:.4f}")
     print(f"    MRR (known):                     {m['e2e_mrr']:.4f}")
     print(f"    Unknown accuracy (reject novel): {m['unknown_detection_accuracy']:.4f}")
+    print(f"    AUROC (known vs novel):          {m['auroc']:.4f}")
     print(f"    Detection F1-macro:              {m['detection_f1_macro']:.4f}")
     print(f"    Balanced accuracy (ratio-free):  {m['balanced_accuracy']:.4f}")
     print(f"    Combined accuracy (соотн. файлов): {m['e2e_accuracy']:.4f}")
@@ -516,7 +545,7 @@ if __name__ == "__main__":
 
     KNOWN_K = 10                # known-запрос «найден», если gt_retrieval_rank<=K
     THRESHOLD = None            # None → сохранённое решение; число → applied
-    SWEEP_THRESHOLD = False     # True → подобрать порог (ТОЛЬКО на VAL!)
+    SWEEP_THRESHOLD = True     # True → подобрать порог (ТОЛЬКО на VAL!)
 
     # Bootstrap-CI для open_set (кластерно по landmark). Только при MODE=open_set
     # и SWEEP_THRESHOLD=False (т.е. на TEST при подобранном пороге).
@@ -530,8 +559,8 @@ if __name__ == "__main__":
     COMPARE = False             # сравнить оба определения на одном файле
 
     # --- MODE="open_set": known + novel unknown (истинная open-set оценка) ---
-    KNOWN_PREDS_JSON = "data/eval/e2e_lora_test_known.json"     # e2e на test.json
-    UNKNOWN_PREDS_JSON = "data/eval/e2e_lora_test_novel.json"   # e2e на novel_test_unknown
+    KNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_val_results_best_lora.json"     # e2e на test.json
+    UNKNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_val_results_best_lora_novel.json"   # e2e на novel_test_unknown
     # ============================================================
 
     cfg = {

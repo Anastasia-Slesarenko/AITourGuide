@@ -36,8 +36,9 @@ services:
   # vLLM VLM-сервер
   # ----------------------------------------------------------
   vllm:
-    # vLLM с bitsandbytes int8 — корректные logprobs на T4 (sm75).
-    # vLLM квантует модель в int8 на лету при загрузке (~2GB VRAM).
+    # Qwen2-VL-2B, offline-квантизация GPTQ INT4 (w4g128), формат AutoGPTQ.
+    # GPTQ-ядра vLLM работают на T4 (sm75); vision-башня и lm_head в fp16.
+    # Квантизация сделана скриптом scripts/experiments/quantize_gptq_qwen2vl.py.
     image: vllm/vllm-openai:latest
     container_name: aitourguide_vllm
     restart: unless-stopped
@@ -52,12 +53,13 @@ services:
               capabilities: [gpu]
 
     volumes:
-      # VLM модель fp16. vLLM квантует в int8 на лету через bitsandbytes.
-      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16:/models/qwen2-vl-2b-r16:ro
+      # GPTQ INT4-модель (в бакете: models/qwen2-vl-2b-r16-gptq/).
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-gptq:/models/qwen2-vl-2b-r16-gptq:ro
 
     command: >
-      --model /models/qwen2-vl-2b-r16
+      --model /models/qwen2-vl-2b-r16-gptq
         --served-model-name qwen2-vl-2b-r16
+        --quantization gptq
         --port 30000
         --host 0.0.0.0
         --dtype float16
