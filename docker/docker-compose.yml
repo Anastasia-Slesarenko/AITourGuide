@@ -54,7 +54,17 @@ services:
 
     volumes:
       # GPTQ INT4-модель (в бакете: models/qwen2-vl-2b-r16-gptq/).
+      # ВАЖНО: в config.json должен быть вложенный text_config — без него vLLM
+      # собирает Qwen2-VL с дефолтными параметрами текстовой модели и выдаёт
+      # мусор. При выгрузке из Colab (transformers 4.49) text_config вырезается,
+      # его нужно вернуть (взять из fp16-модели qwen2-vl-2b-r16).
       - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-gptq_:/models/qwen2-vl-2b-r16-gptq:ro
+
+    environment:
+      # T4 (sm75): vLLM ошибочно выбирает Marlin-ядро (Ampere sm80+) для GPTQ и
+      # выдаёт мусор. Отключаем Marlin — vLLM берёт Turing-совместимое ExLlama.
+      # Проверка в логах старта: "Using ExllamaLinearKernel" (не Marlin).
+      VLLM_DISABLED_KERNELS: "MarlinLinearKernel"
 
     command: >
       --model /models/qwen2-vl-2b-r16-gptq

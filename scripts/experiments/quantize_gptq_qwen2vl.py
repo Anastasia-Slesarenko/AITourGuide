@@ -175,7 +175,12 @@ def quantize(model_dir: str, calibration: list) -> None:
     quant_config = QuantizeConfig(
         bits=BITS,
         group_size=GROUP_SIZE,
-        desc_act=True,       # чуть точнее; при проблемах со скоростью → False
+        sym=True,            # симметричная квантизация — совместима с GPTQ-ядром vLLM
+        # act-order (desc_act=True) на T4 (sm75) ломает применение g_idx в
+        # GPTQ-ядре vLLM → модель выдаёт мусор. Отключаем: чуть ниже точность,
+        # но формат реально запускается на Turing. desc_act вшит в упаковку
+        # весов — поменять можно только повторной квантизацией.
+        desc_act=False,
     )
 
     # GPTQModel для Qwen2-VL сам таргетит слои language_model и НЕ трогает
