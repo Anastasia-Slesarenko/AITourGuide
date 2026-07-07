@@ -54,7 +54,7 @@ services:
 
     volumes:
       # GPTQ INT4-модель (в бакете: models/qwen2-vl-2b-r16-gptq/).
-      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-gptq:/models/qwen2-vl-2b-r16-gptq:ro
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-gptq_:/models/qwen2-vl-2b-r16-gptq:ro
 
     command: >
       --model /models/qwen2-vl-2b-r16-gptq
