@@ -36,10 +36,13 @@ services:
   # vLLM VLM-сервер
   # ----------------------------------------------------------
   vllm:
-    # Qwen2-VL-2B, offline-квантизация GPTQ INT4 (w4g128), формат AutoGPTQ.
-    # GPTQ-ядра vLLM работают на T4 (sm75); vision-башня и lm_head в fp16.
-    # Квантизация сделана скриптом scripts/experiments/quantize_gptq_qwen2vl.py.
-    image: vllm/vllm-openai:latest
+    # Qwen2-VL-2B ранкер, GPTQ INT4 (w4g128), формат AutoGPTQ; vision-башня и
+    # lm_head в fp16. Квантизация: scripts/experiments/quantize_gptq_qwen2vl.py.
+    # Версия vLLM ЗАПИНЕНА: на T4 (sm75) GPTQ жив только через ExLlama-ядро.
+    # В свежих сборках (v0.24) рабочего GPTQ-ядра для Turing нет — Marlin
+    # (Ampere sm80+) считает неверно → мусор, а fallback-ядро не компилируется
+    # под sm75. В v0.6.6 Marlin корректно гейтится на sm80+, GPTQ идёт ExLlama.
+    image: vllm/vllm-openai:v0.6.6.post1
     container_name: aitourguide_vllm
     restart: unless-stopped
 
@@ -61,10 +64,8 @@ services:
       - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-gptq_:/models/qwen2-vl-2b-r16-gptq:ro
 
     environment:
-      # T4 (sm75): vLLM ошибочно выбирает Marlin-ядро (Ampere sm80+) для GPTQ и
-      # выдаёт мусор. Отключаем Marlin — vLLM берёт Turing-совместимое ExLlama.
-      # Проверка в логах старта: "Using ExllamaLinearKernel" (не Marlin).
-      VLLM_DISABLED_KERNELS: "MarlinLinearKernel"
+      # T4 (Turing) не поддерживает FlashAttention (нужен sm80+) — xFormers.
+      VLLM_ATTENTION_BACKEND: "XFORMERS"
 
     command: >
       --model /models/qwen2-vl-2b-r16-gptq
@@ -76,7 +77,6 @@ services:
         --max-model-len 2048
         --gpu-memory-utilization 0.85
         --trust-remote-code
-        --attention-backend TRITON_ATTN
         --enable-prefix-caching
         --max-num-seqs 16
         --max-num-batched-tokens 4096
