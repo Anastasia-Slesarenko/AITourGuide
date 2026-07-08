@@ -355,13 +355,15 @@ class WikipediaService:
         async with self._semaphore:
             lang = self._detect_language(query)
 
-            description = await self._try_get_summary(query, lang)
-            if description:
-                return query, description, lang
+            res = await self._try_get_summary(query, lang)
+            if res:
+                wiki_title, description = res
+                return wiki_title, description, lang
 
-            desc_fallback = await self._try_get_summary(query, self.fallback_lang)
-            if desc_fallback:
-                return query, desc_fallback, self.fallback_lang
+            res_fb = await self._try_get_summary(query, self.fallback_lang)
+            if res_fb:
+                wiki_title, description = res_fb
+                return wiki_title, description, self.fallback_lang
 
             return None, None, self.language
 
@@ -430,7 +432,7 @@ class WikipediaService:
 
     async def _try_get_summary(
         self, query: str, lang: str, try_search: bool = True
-    ) -> str | None:
+    ) -> tuple[str, str] | None:
         """
         Получает описание через REST API Wikipedia.
 
@@ -440,7 +442,9 @@ class WikipediaService:
             try_search: Пытаться ли искать если не найдено напрямую
 
         Returns:
-            Описание или None
+            (заголовок статьи, описание) или None. Заголовок — реальное
+            название статьи Wikipedia (после redirects / поиска), а не сырой
+            запрос: по нему затем берётся thumbnail и строится верификация.
         """
         url = self.BASE_URL.format(lang=lang)
         if self._aiohttp_session is None:
@@ -477,8 +481,12 @@ class WikipediaService:
                         extract: str | None = cast(str | None, page.get("extract"))
                         if extract:
                             if is_relevant(query, extract, self.min_relevance_ratio):
-                                logger.debug(f"Найдено напрямую: '{query}'")
-                                return extract
+                                # Реальный заголовок статьи (после redirects) —
+                                # ключом должен быть валидный объект Wikipedia,
+                                # а не сырой запрос (напр. новостной заголовок).
+                                title: str = cast(str, page.get("title", query))
+                                logger.debug(f"Найдено напрямую: '{title}'")
+                                return title, extract
                             else:
                                 logger.debug(
                                     f"Описание для '{query}' не прошло "
@@ -498,7 +506,9 @@ class WikipediaService:
             logger.error(f"Неожиданная ошибка: {e}")
             return None
 
-    async def _search_and_get(self, query: str, lang: str) -> str | None:
+    async def _search_and_get(
+        self, query: str, lang: str
+    ) -> tuple[str, str] | None:
         """
         Поиск статьи через opensearch и полнотекстовый поиск.
 
@@ -507,7 +517,9 @@ class WikipediaService:
             lang: Язык Wikipedia
 
         Returns:
-            Описание или None
+            (заголовок найденной статьи, описание) или None. Возвращаем именно
+            заголовок статьи Wikipedia, а не исходный query — иначе новостной
+            заголовок из выдачи станет «названием» без реальной страницы.
         """
         url = self.BASE_URL.format(lang=lang)
         if self._aiohttp_session is None:
@@ -533,12 +545,15 @@ class WikipediaService:
                         if titles:
                             logger.debug(f"Opensearch по '{variant}' → {titles}")
                             for title in titles:
-                                desc = await self._try_get_summary(
+                                res = await self._try_get_summary(
                                     title, lang, try_search=False
                                 )
-                                if desc:
-                                    logger.info(f"Найдено через opensearch: '{title}'")
-                                    return desc
+                                if res:
+                                    rtitle, desc = res
+                                    logger.info(
+                                        f"Найдено через opensearch: '{rtitle}'"
+                                    )
+                                    return rtitle, desc
             except Exception as e:
                 logger.debug(f"Ошибка opensearch для '{variant}': {e}")
 
@@ -562,12 +577,16 @@ class WikipediaService:
                             titles = [p["title"] for p in pages]
                             logger.debug(f"Полнотекстовый поиск по '{variant}' → {titles}")
                             for title in titles:
-                                desc = await self._try_get_summary(
+                                res = await self._try_get_summary(
                                     title, lang, try_search=False
                                 )
-                                if desc:
-                                    logger.info(f"Найдено через полнотекстовый поиск: '{title}'")
-                                    return desc
+                                if res:
+                                    rtitle, desc = res
+                                    logger.info(
+                                        f"Найдено через полнотекстовый поиск: "
+                                        f"'{rtitle}'"
+                                    )
+                                    return rtitle, desc
             except Exception as e:
                 logger.debug(f"Ошибка полнотекстового поиска для '{variant}': {e}")
 
