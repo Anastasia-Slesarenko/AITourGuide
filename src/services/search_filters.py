@@ -560,7 +560,20 @@ def generate_search_variants(
     Returns:
         Список вариантов запроса (без дубликатов)
     """
-    clean = re.sub(r"['\"]", "", query)
+    # Снимаем расширение файла: Yandex по картинкам часто отдаёт имя файла
+    # ("Большой театр.jpg"). Иначе '.' удаляется как пунктуация ниже и 'jpg'
+    # приклеивается к слову ("ТЕАТРjpg") — поиск ничего не находит.
+    clean = re.sub(
+        r"\.(jpe?g|png|webp|gif|bmp|tiff?|svg)(?=\s|$)", " ", query, flags=re.IGNORECASE
+    )
+    # Отбрасываем хвост-источник новости/агрегатора (" - МК", " | Shutterstock",
+    # " :: blog") — берём часть до разделителя, чтобы шум заголовка не сбивал
+    # поиск. Дефис без пробелов (Notre-Dame, Saint-Denis) не затрагивается.
+    head = re.split(r"\s+[-–—|]{1,2}\s+", clean)[0].strip()
+    if head:
+        clean = head
+
+    clean = re.sub(r"['\"]", "", clean)
     clean = re.sub(r"[.,!?;:]", "", clean)
     clean = re.sub(r"\s+", " ", clean).strip()
 
