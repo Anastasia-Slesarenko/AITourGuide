@@ -125,7 +125,7 @@ services:
       # FAISS-индекс (в бакете: dataset/index/siglip/)
       - ${S3_MOUNT:-/mnt/s3-aitourguide}/dataset/index/siglip:/data/index/siglip:ro
       # Изображения галереи (в бакете: landmarks/)
-      - /home/admin_99/aitourguide-landmarks:/data/images:ro
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/landmarks:/data/images:ro
       # SigLIP модель (в бакете: models/siglip-base-patch16-224/)
       - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/siglip-base-patch16-224:/data/models/siglip-base-patch16-224:ro
       # Логи — локальная директория на хосте
