@@ -176,6 +176,65 @@ def fit_temperature(
 
 
 # ============================================================
+# ISOTONIC REGRESSION (когда одного T мало)
+# ============================================================
+
+def fit_isotonic(pairs: List[Tuple[float, int]]) -> Tuple[List[float], List[float]]:
+    """Изотоническая регрессия confidence → P(correct) через PAV.
+
+    Гибче temperature scaling (не один параметр, а любая монотонная функция):
+    выправляет миксалибровку произвольной формы. Монотонна → как и T, НЕ меняет
+    порядок скоров, порог и AUROC; чинит только честность вероятности.
+
+    Returns:
+        (xs, ys) — уникальные пороги по возрастанию и подогнанные монотонные
+        значения; для применения — apply_isotonic().
+    """
+    pts = sorted(pairs, key=lambda p: p[0])
+    # PAV: блоки [sum_y, weight, value]; сливаем соседей, нарушающих монотонность.
+    blocks: List[List[float]] = []
+    for _x, y in pts:
+        blocks.append([float(y), 1.0, float(y)])
+        while len(blocks) >= 2 and blocks[-2][2] > blocks[-1][2]:
+            s2, w2, _ = blocks.pop()
+            s1, w1, _ = blocks.pop()
+            s, w = s1 + s2, w1 + w2
+            blocks.append([s, w, s / w])
+
+    fitted: List[float] = []
+    for s, w, v in blocks:
+        fitted.extend([v] * int(round(w)))
+
+    # Схлопываем дубли x в уникальные пороги (значение блока одно и то же).
+    xs: List[float] = []
+    ys: List[float] = []
+    for (x, _y), f in zip(pts, fitted):
+        if xs and x == xs[-1]:
+            ys[-1] = f
+        else:
+            xs.append(x)
+            ys.append(f)
+    return xs, ys
+
+
+def apply_isotonic(conf: float, xs: List[float], ys: List[float]) -> float:
+    """Применяет подогнанную изотонику с линейной интерполяцией между порогами."""
+    if not xs:
+        return conf
+    if conf <= xs[0]:
+        return ys[0]
+    if conf >= xs[-1]:
+        return ys[-1]
+    import bisect
+    i = bisect.bisect_left(xs, conf)
+    x0, x1 = xs[i - 1], xs[i]
+    y0, y1 = ys[i - 1], ys[i]
+    if x1 == x0:
+        return y1
+    return y0 + (y1 - y0) * (conf - x0) / (x1 - x0)
+
+
+# ============================================================
 # ВЫВОД
 # ============================================================
 
@@ -221,52 +280,73 @@ def _maybe_plot(rel_raw: Dict, rel_cal: Dict, T: float, out_path: str) -> None:
 
 if __name__ == "__main__":
     # ===================== КОНФИГ (без CLI) =====================
-    KNOWN_VAL_JSON = "data/eval/e2e_lora_val_known.json"     # e2e на val.json
-    NOVEL_VAL_JSON = "data/eval/e2e_lora_val_novel.json"     # e2e на novel_val_unknown
+    _BASE = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline"
+    # Калибраторы ФИТЯТСЯ на val, метрики честно считаются на TEST.
+    KNOWN_VAL_JSON = f"{_BASE}/e2e_val_results_best_lora.json"        # e2e на val.json
+    NOVEL_VAL_JSON = f"{_BASE}/e2e_val_results_best_lora_novel.json"  # e2e на novel_val
+    # TEST для честной оценки (None → оценивать на val; тогда isotonic-ECE
+    # переоценён — он подгоняет val почти в ноль).
+    KNOWN_TEST_JSON = f"{_BASE}/e2e_results_best_lora.json"           # e2e на test.json
+    NOVEL_TEST_JSON = f"{_BASE}/e2e_results_best_lora_novel.json"     # e2e на novel_test
     N_BINS = 10
-    PLOT_PATH = "data/eval/reliability_lora.png"
-    SAVE_JSON = "data/eval/calibration_lora.json"
+    PLOT_PATH = f"{_BASE}/reliability_best_lora.png"
+    SAVE_JSON = f"{_BASE}/calibration_best_lora.json"
     # ===========================================================
 
     print("=" * 60)
-    print("КАЛИБРОВКА УВЕРЕННОСТИ (temperature scaling на VAL)")
-    print("=" * 60)
-    known = _load_predictions(KNOWN_VAL_JSON)
-    novel = _load_predictions(NOVEL_VAL_JSON)
-    pairs = build_calibration_pairs(known, novel)
-    n_pos = sum(y for _, y in pairs)
-    print(f"  known={len(known)}  novel={len(novel)}  пар={len(pairs)}  "
-          f"положительных (top-1 верен)={n_pos}")
-
-    rel_raw = reliability(pairs, N_BINS)
-    _print_reliability(rel_raw, "Сырые P(yes):")
-    print(f"  Brier={brier(pairs):.4f}  NLL={nll(pairs):.4f}")
-
-    T, best_nll = fit_temperature(pairs)
-    cal_pairs = [(apply_temperature(c, T), y) for c, y in pairs]
-    rel_cal = reliability(cal_pairs, N_BINS)
-    _print_reliability(rel_cal, f"После temperature scaling (T={T:.3f}):")
-    print(f"  Brier={brier(cal_pairs):.4f}  NLL={nll(cal_pairs):.4f}")
-
-    print("\n" + "=" * 60)
-    print(f"  T = {T:.4f}   (T>1 → модель была переуверена)")
-    print(f"  ECE:   {rel_raw['ece']:.4f} → {rel_cal['ece']:.4f}")
-    print(f"  Brier: {brier(pairs):.4f} → {brier(cal_pairs):.4f}")
-    print("  Применить к TEST: confidence' = apply_temperature(confidence, T)")
-    print("  (до подбора/применения порога; порог тюнить уже на калиброванных)")
+    print("КАЛИБРОВКА: фит на VAL, оценка на TEST")
     print("=" * 60)
 
-    _maybe_plot(rel_raw, rel_cal, T, PLOT_PATH)
+    # Пары для фита (val) и для оценки (test либо val).
+    val_pairs = build_calibration_pairs(
+        _load_predictions(KNOWN_VAL_JSON), _load_predictions(NOVEL_VAL_JSON))
+    if KNOWN_TEST_JSON and NOVEL_TEST_JSON:
+        eval_pairs = build_calibration_pairs(
+            _load_predictions(KNOWN_TEST_JSON), _load_predictions(NOVEL_TEST_JSON))
+        eval_name = "TEST"
+    else:
+        eval_pairs = val_pairs
+        eval_name = "VAL (isotonic-ECE переоценён — нет held-out!)"
+    print(f"  fit: val ({len(val_pairs)} пар)   eval: {eval_name} ({len(eval_pairs)} пар)")
+
+    # Фит калибраторов на VAL.
+    T, _ = fit_temperature(val_pairs)
+    iso_xs, iso_ys = fit_isotonic(val_pairs)
+
+    # Оценка на EVAL: сырые / temperature / isotonic.
+    methods = {
+        "сырые": eval_pairs,
+        f"T={T:.2f}": [(apply_temperature(c, T), y) for c, y in eval_pairs],
+        "isotonic": [(apply_isotonic(c, iso_xs, iso_ys), y) for c, y in eval_pairs],
+    }
+    rels = {name: reliability(prs, N_BINS) for name, prs in methods.items()}
+
+    print(f"\n  СРАВНЕНИЕ (на {eval_name.split()[0]}):")
+    print(f"  {'метод':<14}{'ECE':>9}{'MCE':>9}{'Brier':>9}{'NLL':>9}")
+    for name, prs in methods.items():
+        r = rels[name]
+        print(f"  {name:<14}{r['ece']:>9.4f}{r['mce']:>9.4f}"
+              f"{brier(prs):>9.4f}{nll(prs):>9.4f}")
+    print("  Калибратор применять к TEST ДО показа пользователю; порог НЕ")
+    print("  перетюнивать — монотонно, решение и AUROC не меняются.")
+    print("=" * 60)
+
+    # На график — сырые против лучшего по ECE (T или isotonic).
+    best_name = min(("T={:.2f}".format(T), "isotonic"),
+                    key=lambda k: rels[k]["ece"])
+    _maybe_plot(rels["сырые"], rels[best_name], T, PLOT_PATH)
 
     with open(SAVE_JSON, "w", encoding="utf-8") as f:
         json.dump({
             "temperature": T,
+            "eval_set": eval_name,
             "known_val": KNOWN_VAL_JSON, "novel_val": NOVEL_VAL_JSON,
-            "raw": {"ece": rel_raw["ece"], "mce": rel_raw["mce"],
-                    "brier": brier(pairs), "nll": nll(pairs)},
-            "calibrated": {"ece": rel_cal["ece"], "mce": rel_cal["mce"],
-                           "brier": brier(cal_pairs), "nll": nll(cal_pairs)},
-            "reliability_raw": rel_raw["bins"],
-            "reliability_calibrated": rel_cal["bins"],
+            "known_test": KNOWN_TEST_JSON, "novel_test": NOVEL_TEST_JSON,
+            "metrics": {
+                name: {"ece": rels[name]["ece"], "mce": rels[name]["mce"],
+                       "brier": brier(prs), "nll": nll(prs)}
+                for name, prs in methods.items()
+            },
+            "isotonic_curve": {"x": iso_xs, "y": iso_ys},
         }, f, indent=2, ensure_ascii=False)
     print(f"✓ Данные калибровки: {SAVE_JSON}")

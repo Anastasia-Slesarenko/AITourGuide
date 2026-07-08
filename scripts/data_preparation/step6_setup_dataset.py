@@ -87,7 +87,6 @@ from src.rag.indexing_v2 import IndexBuilder, IndexConfig
 from src.rag.landmark_retriever import (
     GalleryImageMetadata,
     aggregate_scores,
-    build_index_from_landmarks,
 )
 
 # ======================
@@ -116,7 +115,7 @@ class DatasetConfig:
     #            и фильтрацией объектов.
     # "dinov2" — facebook/dinov2-base без классификации,
     #            все изображения кодируются с одинаковым весом.
-    embedder_type: str = "siglip"
+    embedder_type: str = "dinov2"
     embedder_model: str = ""  # Пустая строка = использовать дефолтную модель
 
     # Переиспользование индекса
@@ -186,6 +185,18 @@ class DatasetConfig:
     semi_hard_threshold: float = 0.75  # 0.75 <= score < 0.85 → semi-hard
     # score < 0.75 → easy
 
+    # Перцентильная калибровка порогов сложности под шкалу энкодера.
+    # Абсолютные пороги (0.85/0.75/0.88) привязаны к SigLIP; у другого энкодера
+    # (DINOv2) косинусы на иной шкале — те же пороги ломают hardness-разметку
+    # (почти всё становится "easy"). При True пороги hard_threshold /
+    # semi_hard_threshold / hard_unknown_min_score ПЕРЕСЧИТЫВАЮТСЯ по перцентилям
+    # фактического распределения retrieval_score перед генерацией сэмплов.
+    calibrate_thresholds_by_percentile: bool = True
+    calibration_num_queries: int = 500  # сколько query просэмплировать
+    hard_percentile: float = 0.70  # верхние 30% score → hard
+    semi_hard_percentile: float = 0.40  # граница semi-hard
+    hard_unknown_percentile: float = 0.90  # верхние 10% → hard_unknown
+
     # Обработка текста
     evidence_max_length: int = 80
 
@@ -253,6 +264,21 @@ class DatasetConfig:
         if not (0 <= self.semi_hard_threshold <= self.hard_threshold <= 1.0):
             raise ValueError(
                 "Пороги должны удовлетворять: 0 <= semi_hard <= hard <= 1.0"
+            )
+
+        # Перцентили калибровки: semi <= hard <= hard_unknown (hard_unknown —
+        # самый строгий), все в (0, 1).
+        if self.calibrate_thresholds_by_percentile and not (
+            0
+            < self.semi_hard_percentile
+            <= self.hard_percentile
+            <= self.hard_unknown_percentile
+            < 1.0
+        ):
+            raise ValueError(
+                "Перцентили должны удовлетворять: "
+                "0 < semi_hard_percentile <= hard_percentile "
+                "<= hard_unknown_percentile < 1.0"
             )
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1286,6 +1312,80 @@ class RetrievalBasedSampleGenerator:
         """Кодирует одно query-изображение общим методом кодирования."""
         return GalleryIndexBuilder.encode_single_image(
             image_path, self.index_builder.encoder
+        )
+
+    def calibrate_score_thresholds(self, image_base_dir: Path) -> None:
+        """Пересчитывает пороги сложности по перцентилям retrieval_score энкодера.
+
+        Абсолютные пороги (hard/semi/hard_unknown) привязаны к шкале конкретного
+        энкодера: у SigLIP медиана score ~0.83, у DINOv2 ~0.57, поэтому одни и те
+        же 0.85/0.75/0.88 у DINOv2 метят почти все негативы как "easy" и почти не
+        генерируют hard_unknown. Метод сэмплирует query-изображения, собирает
+        агрегированные retrieval_score кандидатов и заменяет пороги на перцентили
+        фактического распределения — датасет строится корректно под любой энкодер.
+
+        Вызывать ДО generate_samples_from_splits.
+        """
+        cfg = self.config
+        if not cfg.calibrate_thresholds_by_percentile:
+            logger.info(
+                "Калибровка порогов отключена — используются абсолютные значения"
+            )
+            return
+
+        # Сэмплируем query-изображения train-сплита (воспроизводимо через seed).
+        query_paths: list[str] = []
+        for split in self.landmark_splits:
+            query_paths.extend(split.query_train_images)
+        random.shuffle(query_paths)
+        query_paths = query_paths[: cfg.calibration_num_queries]
+
+        scores: list[float] = []
+        for qp in tqdm(query_paths, desc="Calibrating thresholds"):
+            emb = self._encode_query_image(image_base_dir / qp)
+            if emb is None:
+                continue
+            results = GalleryIndexBuilder.search_and_aggregate(
+                query_embedding=emb,
+                gallery_index=self.gallery_index,
+                gallery_metadata=self.gallery_metadata,
+                k=cfg.faiss_k,
+                aggregation_mode=cfg.score_aggregation_mode,
+                aggregation_alpha=cfg.weighted_top2_alpha,
+            )
+            scores.extend(float(agg) for _lid, agg, _imgs in results)
+
+        if not scores:
+            logger.warning(
+                "Калибровка порогов: не собрано ни одного score — "
+                "оставляю абсолютные пороги"
+            )
+            return
+
+        scores.sort()
+
+        def _pct(p: float) -> float:
+            return scores[min(len(scores) - 1, int(p * len(scores)))]
+
+        old = (cfg.hard_threshold, cfg.semi_hard_threshold, cfg.hard_unknown_min_score)
+        cfg.hard_threshold = _pct(cfg.hard_percentile)
+        cfg.semi_hard_threshold = _pct(cfg.semi_hard_percentile)
+        cfg.hard_unknown_min_score = _pct(cfg.hard_unknown_percentile)
+
+        logger.info(
+            f"Калибровка порогов по {len(scores)} score (медиана {_pct(0.5):.3f}):"
+        )
+        logger.info(
+            f"  hard:         {old[0]:.3f} → {cfg.hard_threshold:.3f} "
+            f"(p{100 * cfg.hard_percentile:.0f})"
+        )
+        logger.info(
+            f"  semi_hard:    {old[1]:.3f} → {cfg.semi_hard_threshold:.3f} "
+            f"(p{100 * cfg.semi_hard_percentile:.0f})"
+        )
+        logger.info(
+            f"  hard_unknown: {old[2]:.3f} → {cfg.hard_unknown_min_score:.3f} "
+            f"(p{100 * cfg.hard_unknown_percentile:.0f})"
         )
 
     def _retrieve_candidates(
@@ -2652,6 +2752,11 @@ def main():
             index_builder=index_builder,
         )
 
+        # Калибруем пороги сложности под шкалу энкодера (SigLIP/DINOv2/…) ДО
+        # генерации: иначе абсолютные 0.85/0.75/0.88 ломают hardness-разметку
+        # на энкодере с другим распределением score.
+        sample_generator.calibrate_score_thresholds(image_base_dir)
+
         # Генерируем для каждой выборки.
         # hard_unknown_ratio передаётся из config — train/val/test все получают
         # hard unknown сэмплы, чтобы обучать и оценивать способность модели
@@ -2843,16 +2948,17 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    index_config = IndexConfig(
-        embedder_type="siglip", batch_size=32, max_images_per_landmark=10
-    )
-    build_index_from_landmarks(
-        landmarks_json_path="data/processed/landmarks_with_guide_descriptions_filtred.json",
-        image_base_dir="images",
-        output_dir="data/index/siglip",
-        index_config=index_config,
-    )
+    main()
+
+    # index_config = IndexConfig(
+    #     embedder_type="siglip", batch_size=32, max_images_per_landmark=10
+    # )
+    # build_index_from_landmarks(
+    #     landmarks_json_path="data/processed/landmarks_with_guide_descriptions_filtred.json",
+    #     image_base_dir="images",
+    #     output_dir="data/index/siglip",
+    #     index_config=index_config,
+    # )
     # index_config = IndexConfig(
     #     embedder_type="dinov2",
     #     batch_size=32,

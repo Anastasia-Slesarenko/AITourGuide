@@ -56,8 +56,8 @@ CALIB_TWO_IMAGES = os.getenv("CALIB_TWO_IMAGES", "1") == "1"
 # Выход.
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./qwen2-vl-2b-r16-gptq")
 
-BITS = 4
-GROUP_SIZE = 128
+BITS = int(os.getenv("BITS", "8"))       # 4 или 8; на T4/exllama INT8 стабильнее — без NaN
+GROUP_SIZE = int(os.getenv("GROUP_SIZE", "128"))
 SEED = 42
 
 
@@ -135,7 +135,7 @@ def build_calibration() -> list:
         data = json.load(f)
 
     random.Random(SEED).shuffle(data)
-    samples = []
+    samples: list = []
     for item in data:
         if len(samples) >= N_CALIB:
             break

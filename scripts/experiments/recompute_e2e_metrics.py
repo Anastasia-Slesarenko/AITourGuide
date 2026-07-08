@@ -339,12 +339,23 @@ def open_set_sweep(
     known_preds: List[Dict],
     unknown_preds: List[Dict],
     known_k: int = 10,
+    criterion: str = "youden",
 ) -> tuple:
-    """Подбор порога по максимуму detection-F1-macro. ТОЛЬКО НА VAL.
+    """Подбор порога отделения accept(known) от reject(unknown). ТОЛЬКО НА VAL.
 
-    Порог отделяет accept(known) от reject(unknown) — тот же смысл, что в find_th,
-    но с истинной меткой по происхождению.
+    criterion:
+        "youden"   — max Youden's J = TPR + TNR − 1 (= known_accept_rate +
+                     unknown_accuracy − 1). Балансо-НЕзависим: не тянет порог к
+                     мажоритарному классу при дисбалансе known:novel. По умолчанию.
+        "f1_macro" — max detection-F1-macro (как в find_th). При сильном
+                     дисбалансе вырождается в «принимай всё».
+
+    Returns:
+        (best_threshold, best_score, rows) — rows отсортирован по критерию.
     """
+    if criterion not in ("youden", "f1_macro"):
+        raise ValueError("criterion должен быть 'youden' или 'f1_macro'")
+
     confs = sorted({
         float(p["confidence_score"]) for p in (known_preds + unknown_preds)
     })
@@ -355,15 +366,18 @@ def open_set_sweep(
     rows = []
     for t in candidates:
         m = open_set_metrics(known_preds, unknown_preds, threshold=t, known_k=known_k)
+        youden = m["known_accept_rate"] + m["unknown_detection_accuracy"] - 1.0
         rows.append({
             "threshold": t,
+            "score": youden if criterion == "youden" else m["detection_f1_macro"],
+            "youden": youden,
             "detection_f1_macro": m["detection_f1_macro"],
-            "detection_f1_known": m["detection_f1_known"],
-            "detection_f1_unknown": m["detection_f1_unknown"],
+            "known_accept_rate": m["known_accept_rate"],
+            "unknown_accuracy": m["unknown_detection_accuracy"],
         })
-    rows.sort(key=lambda r: r["detection_f1_macro"], reverse=True)
+    rows.sort(key=lambda r: r["score"], reverse=True)
     best = rows[0]
-    return best["threshold"], best["detection_f1_macro"], rows
+    return best["threshold"], best["score"], rows
 
 
 def open_set_bootstrap_ci(
@@ -511,14 +525,17 @@ def _run_open_set(cfg: Dict) -> None:
     threshold = cfg["THRESHOLD"]
 
     if cfg["SWEEP_THRESHOLD"]:
-        print("⚠️  SWEEP: порог подбирается ТОЛЬКО на VAL (known-val + novel-val)!")
-        best_t, best_f1, rows = open_set_sweep(known, unknown, known_k=kk)
-        print(f"\n  Топ-5 порогов по detection-F1-macro:")
-        print(f"  {'threshold':>12}  {'F1-macro':>9}  {'F1-known':>9}  {'F1-unknown':>10}")
+        crit = cfg.get("SWEEP_CRITERION", "youden")
+        print(f"⚠️  SWEEP ({crit}): порог подбирается ТОЛЬКО на VAL (known-val + novel-val)!")
+        best_t, best_score, rows = open_set_sweep(known, unknown, known_k=kk, criterion=crit)
+        print(f"\n  Топ-5 порогов по {crit}:")
+        print(f"  {'threshold':>12}  {'Youden':>8}  {'F1-macro':>9}  "
+              f"{'known-acc':>10}  {'unk-acc':>8}")
         for r in rows[:5]:
-            print(f"  {r['threshold']:>12.6f}  {r['detection_f1_macro']:>9.4f}  "
-                  f"{r['detection_f1_known']:>9.4f}  {r['detection_f1_unknown']:>10.4f}")
-        print(f"\n  ✓ Оптимальный порог: {best_t:.6f} (detection F1-macro={best_f1:.4f})")
+            print(f"  {r['threshold']:>12.6f}  {r['youden']:>8.4f}  "
+                  f"{r['detection_f1_macro']:>9.4f}  {r['known_accept_rate']:>10.4f}  "
+                  f"{r['unknown_accuracy']:>8.4f}")
+        print(f"\n  ✓ Оптимальный порог: {best_t:.6f} ({crit}={best_score:.4f})")
         _print_open_set(open_set_metrics(known, unknown, threshold=best_t, known_k=kk))
         print(f"\n  Применить порог к ТЕСТУ: THRESHOLD = {best_t:.6f}")
         return
@@ -544,8 +561,9 @@ if __name__ == "__main__":
     MODE = "open_set"           # "single" | "open_set"
 
     KNOWN_K = 10                # known-запрос «найден», если gt_retrieval_rank<=K
-    THRESHOLD = None            # None → сохранённое решение; число → applied
-    SWEEP_THRESHOLD = True     # True → подобрать порог (ТОЛЬКО на VAL!)
+    THRESHOLD = 0.875110            # None → сохранённое решение; число → applied
+    SWEEP_THRESHOLD =  False     # True → подобрать порог (ТОЛЬКО на VAL!)
+    SWEEP_CRITERION = "youden"  # "youden" (балансо-независим) | "f1_macro"
 
     # Bootstrap-CI для open_set (кластерно по landmark). Только при MODE=open_set
     # и SWEEP_THRESHOLD=False (т.е. на TEST при подобранном пороге).
@@ -559,13 +577,14 @@ if __name__ == "__main__":
     COMPARE = False             # сравнить оба определения на одном файле
 
     # --- MODE="open_set": known + novel unknown (истинная open-set оценка) ---
-    KNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_val_results_best_lora.json"     # e2e на test.json
-    UNKNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_val_results_best_lora_novel.json"   # e2e на novel_test_unknown
+    KNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_results_baseline.json"     # e2e на test.json
+    UNKNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_results_baseline_novel.json"   # e2e на novel_test_unknown
     # ============================================================
 
     cfg = {
         "MODE": MODE, "KNOWN_K": KNOWN_K, "THRESHOLD": THRESHOLD,
-        "SWEEP_THRESHOLD": SWEEP_THRESHOLD, "RESULTS_JSON": RESULTS_JSON,
+        "SWEEP_THRESHOLD": SWEEP_THRESHOLD, "SWEEP_CRITERION": SWEEP_CRITERION,
+        "RESULTS_JSON": RESULTS_JSON,
         "KNOWN_DEFINITION": KNOWN_DEFINITION, "COMPARE": COMPARE,
         "KNOWN_PREDS_JSON": KNOWN_PREDS_JSON, "UNKNOWN_PREDS_JSON": UNKNOWN_PREDS_JSON,
         "BOOTSTRAP_CI": BOOTSTRAP_CI, "N_BOOTSTRAP": N_BOOTSTRAP, "SEED": SEED,

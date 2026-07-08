@@ -36,13 +36,14 @@ services:
   # vLLM VLM-сервер
   # ----------------------------------------------------------
   vllm:
-    # Qwen2-VL-2B ранкер, GPTQ INT4 (w4g128), формат AutoGPTQ; vision-башня и
-    # lm_head в fp16. Квантизация: scripts/experiments/quantize_gptq_qwen2vl.py.
-    # Версия vLLM ЗАПИНЕНА: на T4 (sm75) GPTQ жив только через ExLlama-ядро.
-    # В свежих сборках (v0.24) рабочего GPTQ-ядра для Turing нет — Marlin
-    # (Ampere sm80+) считает неверно → мусор, а fallback-ядро не компилируется
-    # под sm75. В v0.6.6 Marlin корректно гейтится на sm80+, GPTQ идёт ExLlama.
-    image: vllm/vllm-openai:v0.6.6.post1
+    # Qwen2-VL-2B ранкер в fp16 (смёрженный LoRA-адаптер).
+    # INT4/INT8-квантизацию (GPTQ) пробовали ради экономии VRAM, но GPTQ-Qwen2-VL
+    # на T4 (Turing, sm75) не подаётся корректно ни в одной сборке vLLM: Marlin —
+    # Ampere-only (мусор), fallback-ядро свежих сборок не компилируется под sm75,
+    # на 0.6.6 exllama даёт NaN (INT4) или мусор (INT8). Для 1-токенного ранкера
+    # выигрыш от квантизации всё равно мал (нагрузка prefill-bound, T4 16 ГБ на 2B
+    # в память не упирается) — остаёмся на fp16.
+    image: vllm/vllm-openai:latest
     container_name: aitourguide_vllm
     restart: unless-stopped
 
@@ -56,27 +57,19 @@ services:
               capabilities: [gpu]
 
     volumes:
-      # GPTQ INT4-модель (в бакете: models/qwen2-vl-2b-r16-gptq/).
-      # ВАЖНО: в config.json должен быть вложенный text_config — без него vLLM
-      # собирает Qwen2-VL с дефолтными параметрами текстовой модели и выдаёт
-      # мусор. При выгрузке из Colab (transformers 4.49) text_config вырезается,
-      # его нужно вернуть (взять из fp16-модели qwen2-vl-2b-r16).
-      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16-gptq_:/models/qwen2-vl-2b-r16-gptq:ro
-
-    environment:
-      # T4 (Turing) не поддерживает FlashAttention (нужен sm80+) — xFormers.
-      VLLM_ATTENTION_BACKEND: "XFORMERS"
+      # VLM-модель fp16 (в бакете: models/qwen2-vl-2b-r16/).
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16:/models/qwen2-vl-2b-r16:ro
 
     command: >
-      --model /models/qwen2-vl-2b-r16-gptq
+      --model /models/qwen2-vl-2b-r16
         --served-model-name qwen2-vl-2b-r16
-        --quantization gptq
         --port 30000
         --host 0.0.0.0
         --dtype float16
         --max-model-len 2048
         --gpu-memory-utilization 0.85
         --trust-remote-code
+        --attention-backend TRITON_ATTN
         --enable-prefix-caching
         --max-num-seqs 16
         --max-num-batched-tokens 4096
