@@ -488,14 +488,14 @@ def _run_single(cfg: Dict) -> None:
     kd, kk = cfg["KNOWN_DEFINITION"], cfg["KNOWN_K"]
 
     if cfg["SWEEP_THRESHOLD"]:
-        print("⚠️  SWEEP: подбор порога — ТОЛЬКО на VAL, не на тесте!")
+        print("SWEEP: подбор порога — ТОЛЬКО на VAL, не на тесте!")
         best_t, best_f1, rows = sweep_threshold(predictions, kd, kk, kk)
         print(f"\n  Топ-5 порогов по F1-macro ({kd}):")
         print(f"  {'threshold':>12}  {'F1-macro':>9}  {'F1-known':>9}  {'F1-unknown':>10}")
         for r in rows[:5]:
             print(f"  {r['threshold']:>12.6f}  {r['f1_macro']:>9.4f}  "
                   f"{r['f1_known']:>9.4f}  {r['f1_unknown']:>10.4f}")
-        print(f"\n  ✓ Оптимальный порог: {best_t:.6f} (F1-macro={best_f1:.4f})")
+        print(f"\n  Оптимальный порог: {best_t:.6f} (F1-macro={best_f1:.4f})")
         _print_metrics(recompute(predictions, kd, kk, kk, threshold=best_t))
         return
 
@@ -526,7 +526,7 @@ def _run_open_set(cfg: Dict) -> None:
 
     if cfg["SWEEP_THRESHOLD"]:
         crit = cfg.get("SWEEP_CRITERION", "youden")
-        print(f"⚠️  SWEEP ({crit}): порог подбирается ТОЛЬКО на VAL (known-val + novel-val)!")
+        print(f"SWEEP ({crit}): порог подбирается ТОЛЬКО на VAL (known-val + novel-val)!")
         best_t, best_score, rows = open_set_sweep(known, unknown, known_k=kk, criterion=crit)
         print(f"\n  Топ-5 порогов по {crit}:")
         print(f"  {'threshold':>12}  {'Youden':>8}  {'F1-macro':>9}  "
@@ -535,7 +535,7 @@ def _run_open_set(cfg: Dict) -> None:
             print(f"  {r['threshold']:>12.6f}  {r['youden']:>8.4f}  "
                   f"{r['detection_f1_macro']:>9.4f}  {r['known_accept_rate']:>10.4f}  "
                   f"{r['unknown_accuracy']:>8.4f}")
-        print(f"\n  ✓ Оптимальный порог: {best_t:.6f} ({crit}={best_score:.4f})")
+        print(f"\n  Оптимальный порог: {best_t:.6f} ({crit}={best_score:.4f})")
         _print_open_set(open_set_metrics(known, unknown, threshold=best_t, known_k=kk))
         print(f"\n  Применить порог к ТЕСТУ: THRESHOLD = {best_t:.6f}")
         return

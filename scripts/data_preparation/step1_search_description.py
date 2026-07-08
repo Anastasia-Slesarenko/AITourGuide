@@ -346,11 +346,11 @@ class AsyncWikidataCollector:
             except Exception as e:
                 last_error = e
                 if self.debug:
-                    print(f"   ⚠️ Request error: {e}")
+                    print(f"   Request error: {e}")
                 await asyncio.sleep(self.delay * (attempt + 1))
         
         if self.debug and last_error:
-            print(f"   ❌ All retries failed: {last_error}")
+            print(f"   All retries failed: {last_error}")
         return None
     
     async def extract_q_id(self, url: str) -> Optional[str]:
@@ -359,7 +359,7 @@ class AsyncWikidataCollector:
         
         if url in self.qid_cache:
             if self.debug:
-                print(f"   🔍 Using cached Q-ID: {self.qid_cache[url]}")
+                print(f"   Using cached Q-ID: {self.qid_cache[url]}")
             return self.qid_cache[url]
         
         if 'wikidata.org/wiki/Q' in url:
@@ -374,14 +374,14 @@ class AsyncWikidataCollector:
             category_name = unquote(category_name).replace('_', ' ').strip()
             
             if self.debug:
-                print(f"   🔍 Searching for category: '{category_name}'")
+                print(f"   Searching for category: '{category_name}'")
             
             # Проверяем известные сущности
             for known_name, qid in self.KNOWN_ENTITIES.items():
                 if known_name.lower() in category_name.lower() or category_name.lower() in known_name.lower():
                     if qid:
                         if self.debug:
-                            print(f"   📚 Found in known entities: {known_name} -> {qid}")
+                            print(f"   Found in known entities: {known_name} -> {qid}")
                         self.qid_cache[url] = qid
                         return qid
             
@@ -389,7 +389,7 @@ class AsyncWikidataCollector:
             wiki_title = await self._find_wikipedia_article_from_category(category_name)
             if wiki_title:
                 if self.debug:
-                    print(f"   📚 Found Wikipedia article: {wiki_title}")
+                    print(f"   Found Wikipedia article: {wiki_title}")
                 qid = await self._get_qid_from_wikipedia_title(wiki_title)
                 if qid:
                     self.qid_cache[url] = qid
@@ -530,7 +530,7 @@ class AsyncWikidataCollector:
     async def fetch_entity_data(self, q_id: str) -> Optional[Dict]:
         """Получает данные о достопримечательности"""
         if self.debug:
-            print(f"   🔍 Fetching data for {q_id}...")
+            print(f"   Fetching data for {q_id}...")
 
         data = await self._fetch_wikidata_api(q_id)
         if data:
@@ -712,7 +712,7 @@ class AsyncWikidataCollector:
 
         except Exception as e:
             if self.debug:
-                print(f"   ⚠️ API error: {e}")
+                print(f"   API error: {e}")
         return None
     
     def _extract_entity_id_from_claim(self, claim: Dict) -> Optional[str]:
@@ -890,7 +890,7 @@ class AsyncWikidataCollector:
                         return extract
         except Exception as e:
             if self.debug:
-                print(f"   ⚠️ Wikipedia summary error for {lang}: {e}")
+                print(f"   Wikipedia summary error for {lang}: {e}")
         return None
     
     async def _get_wikipedia_full_intro(
@@ -939,7 +939,7 @@ class AsyncWikidataCollector:
                         return extract
         except Exception as e:
             if self.debug:
-                print(f"   ⚠️ Wikipedia full intro error for {lang}: {e}")
+                print(f"   Wikipedia full intro error for {lang}: {e}")
         return None
     
     async def _enrich_with_wiki_summaries(
@@ -1013,11 +1013,11 @@ class AsyncWikidataCollector:
 
             async with semaphore:
                 if self.debug:
-                    pbar.write(f"📍 [{landmark_id}] {url}")
+                    pbar.write(f"[{landmark_id}] {url}")
 
                 q_id = await self.extract_q_id(url)
                 if not q_id:
-                    pbar.write(f"⚠️  Q-ID not found: {url}")
+                    pbar.write(f"Q-ID not found: {url}")
                     pbar.update(1)
                     return {
                         "landmark_id": landmark_id,
@@ -1027,7 +1027,7 @@ class AsyncWikidataCollector:
                     }
 
                 if self.debug:
-                    pbar.write(f"   ✓ Q-ID: {q_id}")
+                    pbar.write(f"   Q-ID: {q_id}")
 
                 data = await self.fetch_entity_data(q_id)
                 rl = self.rate_limit_hits
@@ -1038,14 +1038,14 @@ class AsyncWikidataCollector:
                     data["hierarchical_label"] = hierarchical_label
                     name = data.get("name_ru") or data.get("name_en", "N/A")
                     ltype = data.get("landmark_type", {}).get("ru", "?")
-                    postfix = f"✅ {success_count} | {name} [{ltype}]"
+                    postfix = f"{success_count} | {name} [{ltype}]"
                     if rl:
                         postfix += f" | 429×{rl}"
                     pbar.set_postfix_str(postfix, refresh=True)
                     pbar.update(1)
                     return data
                 else:
-                    msg = f"⚠️  No Wikidata entity for {q_id}: {url}"
+                    msg = f"No Wikidata entity for {q_id}: {url}"
                     if rl:
                         msg += f" | 429×{rl}"
                     pbar.write(msg)
@@ -1067,7 +1067,7 @@ class AsyncWikidataCollector:
 
             for r in raw:
                 if isinstance(r, Exception):
-                    pbar.write(f"⚠️  Exception: {r}")
+                    pbar.write(f"Exception: {r}")
                 else:
                     results.append(r)
 
@@ -1076,7 +1076,7 @@ class AsyncWikidataCollector:
                 success = [r for r in results if "error" not in r]
                 self.save_json(success, checkpoint_file)
                 pbar.write(
-                    f"💾 Checkpoint: {len(success)} → {checkpoint_file}"
+                    f"Checkpoint: {len(success)} → {checkpoint_file}"
                 )
 
         pbar.close()
@@ -1086,7 +1086,7 @@ class AsyncWikidataCollector:
         """Сохраняет результаты в JSON"""
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"💾 Saved: {filename}")
+        print(f"Saved: {filename}")
 
 
 # ==================== ТЕСТОВЫЙ ЗАПУСК ====================
@@ -1111,20 +1111,20 @@ async def main():
         with open(checkpoint_file, "r", encoding="utf-8") as f:
             existing_results = json.load(f)
             processed_ids = {r.get("landmark_id") for r in existing_results if r.get("landmark_id")}
-            print(f"📂 Загружен чекпоинт: {len(existing_results)} записей")
+            print(f"Загружен чекпоинт: {len(existing_results)} записей")
             print(f"   Обработано landmark_id: {len(processed_ids)}")
     except FileNotFoundError:
-        print("📂 Чекпоинт не найден, начинаем с начала")
+        print("Чекпоинт не найден, начинаем с начала")
     
     # Фильтруем только необработанные записи
     rows_to_process = [r for r in rows if r.get("landmark_id") not in processed_ids]
     
-    print(f"📊 Всего записей: {len(rows)}")
-    print(f"✅ Уже обработано: {len(processed_ids)}")
+    print(f"Всего записей: {len(rows)}")
+    print(f"Уже обработано: {len(processed_ids)}")
     print(f"⏳ Осталось обработать: {len(rows_to_process)}")
     
     if not rows_to_process:
-        print("✨ Все записи уже обработаны!")
+        print("Все записи уже обработаны!")
         return existing_results
 
     async with AsyncWikidataCollector(
@@ -1133,7 +1133,7 @@ async def main():
         debug=False,
     ) as collector:
 
-        print(f"\n🚀 Продолжаем сбор данных для {len(rows_to_process)} landmarks...")
+        print(f"\nПродолжаем сбор данных для {len(rows_to_process)} landmarks...")
         start = time.time()
 
         all_results = await collector.collect_batch(
@@ -1152,7 +1152,7 @@ async def main():
         logger.info("ШАГ 1: СБОР ОПИСАНИЙ ЗАВЕРШЕН")
         logger.info("=" * 60)
         print(
-            f"\n📊 Итого: {len(success)} успешно, {failed} с ошибками"
+            f"\nИтого: {len(success)} успешно, {failed} с ошибками"
             f" | Время обработки новых: {elapsed:.1f}s"
         )
 
@@ -1162,7 +1162,7 @@ async def main():
             ltype = item.get("landmark_type", {}).get("ru", "неизвестно")
             types_count[ltype] = types_count.get(ltype, 0) + 1
 
-        print("\n📊 Распределение по типам:")
+        print("\nРаспределение по типам:")
         for type_name, count in sorted(types_count.items(), key=lambda x: x[1], reverse=True):
             print(f"   {type_name}: {count}")
 

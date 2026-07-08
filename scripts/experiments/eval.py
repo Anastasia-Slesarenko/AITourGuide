@@ -61,7 +61,7 @@ def load_qwen2vl_processor(
     try:
         import flash_attn  # noqa: F401
         _attn_impl = "flash_attention_2"
-        print("✓ flash_attention_2 доступен, используем его")
+        print("flash_attention_2 доступен, используем его")
     except ImportError:
         print("ℹ flash_attn не установлен, используем sdpa")
 
@@ -154,7 +154,7 @@ def compute_rerank_scores_batch(
             query_image.close()
             query_image = _resized
     except Exception as e:
-        print(f"⚠ Ошибка загрузки query-изображения {query_img_path}: {e}")
+        print(f"Ошибка загрузки query-изображения {query_img_path}: {e}")
         # Возвращаем пустые скоры и все индексы как failed
         return (
             [0.0] * len(candidates),
@@ -222,7 +222,7 @@ def compute_rerank_scores_batch(
                     cand_image = _resized_c
             except Exception as e:
                 print(
-                    f"⚠ Error loading candidate image "
+                    f"Error loading candidate image "
                     f"{cand.get('image', 'unknown')} "
                     f"(global_idx={global_idx}): {e}"
                 )
@@ -1149,7 +1149,7 @@ def evaluate_vlm_rerank(
             total_skipped_cand += len(failed_indices)
             total_skipped_samples += 1
             print(
-                f"⚠ Skipping sample '{query_img_path}': "
+                f"Skipping sample '{query_img_path}': "
                 f"{len(failed_indices)}/{len(candidates)} candidates failed"
             )
             all_scores.append(vl_scores)
@@ -1212,7 +1212,7 @@ def evaluate_vlm_rerank(
     # === ЛОГИРОВАНИЕ ОШИБОК ЗАГРУЗКИ ИЗОБРАЖЕНИЙ ===
     if total_skipped_query > 0 or total_skipped_cand > 0:
         print(
-            f"\n⚠ [{model_name}] Image load errors summary:\n"
+            f"\n[{model_name}] Image load errors summary:\n"
             f"  Skipped due to query image failure: {total_skipped_query}\n"
             f"  Skipped due to candidate image failure: "
             f"{total_skipped_samples - total_skipped_query} samples "
@@ -1519,7 +1519,7 @@ def evaluate_rerank(
         torch.manual_seed(random_seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(random_seed)
-        print(f"✓ Random seed установлен: {random_seed}")
+        print(f"Random seed установлен: {random_seed}")
     
     print("=" * 70)
     print("Оценка retrieval и VLM reranking")
@@ -1591,7 +1591,7 @@ def evaluate_rerank(
             )
             with open(pred_path, 'w', encoding='utf-8') as f:
                 json.dump(zs_predictions, f, indent=2, ensure_ascii=False)
-            print(f"✓ Predictions сохранены: {pred_path}")
+            print(f"Predictions сохранены: {pred_path}")
 
         # === 4. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ ZERO-SHOT ===
         print("\n4. Evaluating zero-shot by candidate type...")
@@ -1607,7 +1607,7 @@ def evaluate_rerank(
         
         # CRITICAL: Освобождаем GPU память перед загрузкой LoRA
         if lora_path:
-            print("\n✓ Освобождение GPU памяти перед загрузкой LoRA...")
+            print("\nОсвобождение GPU памяти перед загрузкой LoRA...")
             del model_zs
             del processor_zs
             torch.cuda.empty_cache()
@@ -1653,7 +1653,7 @@ def evaluate_rerank(
             )
             with open(pred_path, 'w', encoding='utf-8') as f:
                 json.dump(lora_predictions, f, indent=2, ensure_ascii=False)
-            print(f"✓ Predictions сохранены: {pred_path}")
+            print(f"Predictions сохранены: {pred_path}")
 
         # === 6. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ LoRA ===
         print("\n5. Evaluating LoRA by candidate type...")
@@ -1865,7 +1865,7 @@ def evaluate_rerank(
                         "zero_shot_vlm", plots_dir
                     )
                     mlflow.log_artifact(plot_path, "plots")
-                    print(f"✓ Calibration plot сохранён: {plot_path}")
+                    print(f"Calibration plot сохранён: {plot_path}")
 
             if lora_metrics and lora_scores:
                 print("Создание calibration plot для LoRA...")
@@ -1887,13 +1887,13 @@ def evaluate_rerank(
                         "lora_vlm", plots_dir
                     )
                     mlflow.log_artifact(plot_path, "plots")
-                    print(f"✓ Calibration plot сохранён: {plot_path}")
+                    print(f"Calibration plot сохранён: {plot_path}")
 
             # FIX #1/#2: JSON уже записан выше — логируем артефакт внутри
             # основного run, а не в отдельный (mlflow.active_run() после
             # with-блока всегда None, что создавало второй run)
             mlflow.log_artifact(output_path, "results")
-            print("✓ Метрики и артефакты залогированы в MLflow")
+            print("Метрики и артефакты залогированы в MLflow")
     else:
         print("\nMLflow логирование отключено (use_mlflow=False)")
 

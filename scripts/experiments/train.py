@@ -90,10 +90,10 @@ def build_rerank_prompt(
 
         return query_image, candidate_image, messages
     except FileNotFoundError as e:
-        print(f"⚠️ Файл изображения не найден: {e}")
+        print(f"Файл изображения не найден: {e}")
         return None, None, None
     except Exception as e:
-        print(f"⚠️ Ошибка загрузки изображений: {e}")
+        print(f"Ошибка загрузки изображений: {e}")
         return None, None, None
 
 
@@ -276,7 +276,7 @@ class RerankDataset(Dataset):
             missing = required_keys - set(self.samples[0].keys())
             raise ValueError(f"Missing required keys in dataset: {missing}")
         
-        print(f"✅ Loaded {len(self.samples)} samples from {data_path}")
+        print(f"Loaded {len(self.samples)} samples from {data_path}")
 
     def __len__(self):
         return len(self.samples)
@@ -732,7 +732,7 @@ class MetricsCallback(TrainerCallback):
                     step=state.global_step
                 )
             except Exception as e:
-                print(f"⚠️ MLflow train_loss logging error: {e}")
+                print(f"MLflow train_loss logging error: {e}")
 
     def on_step_end(self, args, state, control, **kwargs):
         # global_step=0 срабатывает до первого обновления весов — пропускаем.
@@ -741,7 +741,7 @@ class MetricsCallback(TrainerCallback):
         if state.global_step % self.eval_every_n_steps != 0:
             return
 
-        print(f"\n🔍 Вычисление метрик на шаге {state.global_step}...")
+        print(f"\nВычисление метрик на шаге {state.global_step}...")
 
         # FIX #2: передаём self.none_threshold для синхронизации с eval.py
         # FIX: subset_size=100 вместо 50 — уменьшает дисперсию метрик.
@@ -754,13 +754,13 @@ class MetricsCallback(TrainerCallback):
         )
 
         # Вывод в консоль
-        print(f"📈 Eval Loss: {metrics['eval_loss']:.4f}")
-        print(f"📈 Eval Hit_1: {metrics['eval_hit_1']:.3f}")
-        print(f"📈 Eval MRR: {metrics['eval_mrr']:.3f}")
-        print(f"📈 Eval None Accuracy: {metrics['eval_none_accuracy']:.3f}")
-        print(f"📈 Eval Hard Acc: {metrics['eval_hard_accuracy']:.3f}")
-        print(f"📈 Eval Easy Acc: {metrics['eval_easy_accuracy']:.3f}")
-        print(f"📈 Eval Semi-Hard Acc: {metrics['eval_semi_hard_accuracy']:.3f}")
+        print(f"Eval Loss: {metrics['eval_loss']:.4f}")
+        print(f"Eval Hit_1: {metrics['eval_hit_1']:.3f}")
+        print(f"Eval MRR: {metrics['eval_mrr']:.3f}")
+        print(f"Eval None Accuracy: {metrics['eval_none_accuracy']:.3f}")
+        print(f"Eval Hard Acc: {metrics['eval_hard_accuracy']:.3f}")
+        print(f"Eval Easy Acc: {metrics['eval_easy_accuracy']:.3f}")
+        print(f"Eval Semi-Hard Acc: {metrics['eval_semi_hard_accuracy']:.3f}")
 
         # Сохраняем историю метрик
         self.eval_steps_list.append(state.global_step)
@@ -789,7 +789,7 @@ class MetricsCallback(TrainerCallback):
                 }, step=int(state.global_step))
             except Exception as e:
                 import traceback
-                print(f"⚠️ MLflow eval logging error: {e}")
+                print(f"MLflow eval logging error: {e}")
                 traceback.print_exc()
         
         # Создаем и сохраняем графики
@@ -801,32 +801,32 @@ class MetricsCallback(TrainerCallback):
                 train_loss_values=self.train_loss_values
             )
         except Exception as e:
-            print(f"⚠️ Ошибка построения графика: {e}")
+            print(f"Ошибка построения графика: {e}")
 
         # Early stopping по основной метрике (eval_mrr)
         primary_metric_value = metrics["eval_mrr"]
         if primary_metric_value > self.best_primary_metric:
             self.best_primary_metric = primary_metric_value
             self.es_counter = 0
-            print("✅ Улучшение eval_mrr!")
+            print("Улучшение eval_mrr!")
             # Сохраняем лучший чекпоинт вручную — load_best_model_at_end=False
             # не сохраняет его автоматически. Сохраняем только LoRA-адаптер
             # (не полную модель) для экономии места.
             best_ckpt_dir = os.path.join(self.output_dir, "best_checkpoint")
             try:
                 self.model.save_pretrained(best_ckpt_dir)
-                print(f"💾 Лучший чекпоинт сохранён: {best_ckpt_dir} "
+                print(f"Лучший чекпоинт сохранён: {best_ckpt_dir} "
                       f"(MRR={primary_metric_value:.3f}, "
                       f"step={state.global_step})")
             except Exception as e:
-                print(f"⚠️ Ошибка сохранения чекпоинта: {e}")
+                print(f"Ошибка сохранения чекпоинта: {e}")
         else:
             self.es_counter += 1
             # FIX #3: self.patience вместо args.early_stopping_patience
             # (TrainingArguments не имеет такого атрибута — AttributeError)
             print(f"ES Counter: {self.es_counter}/{self.patience}")
             if self.es_counter >= self.patience:
-                print("🛑 Ранняя остановка!")
+                print("Ранняя остановка!")
                 control.should_training_stop = True
 
 
@@ -925,8 +925,6 @@ def run_experiment(
         # Загружаем датасеты
         train_dataset = RerankDataset(TRAIN_DATASET_FILE, IMAGE_DIR)
         val_dataset = RerankDataset(VAL_DATASET_FILE, IMAGE_DIR)
-        # image_base_dir уже сохраняется в RerankDataset.__init__ как self.image_base_dir
-        # Явная установка оставлена для обратной совместимости (FIX #7)
         train_dataset.image_base_dir = IMAGE_DIR
         val_dataset.image_base_dir = IMAGE_DIR
 
@@ -999,7 +997,7 @@ def run_experiment(
         if MLFLOW_AVAILABLE:
             mlflow.log_artifacts(output_dir, artifact_path="final_model")
 
-    print(f"✅ Эксперимент {exp_name} завершён.")
+    print(f"Эксперимент {exp_name} завершён.")
 
 
 if __name__ == "__main__":

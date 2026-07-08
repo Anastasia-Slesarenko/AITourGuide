@@ -211,7 +211,7 @@ def compare_metrics(
         )
         
         if len(siglip_values) == 0:
-            print(f"  ⚠️  Нет общих samples для {metric_name}")
+            print(f"  Нет общих samples для {metric_name}")
             continue
         
         print(f"  Общие samples: {len(siglip_values)}")
@@ -229,11 +229,11 @@ def compare_metrics(
         print(f"    [{ci_result['ci_lower']:+.4f}, {ci_result['ci_upper']:+.4f}]")
         
         if ci_result['ci_lower'] > 0:
-            print(f"    ✅ DINOv2 значительно лучше")
+            print(f"    DINOv2 значительно лучше")
         elif ci_result['ci_upper'] < 0:
-            print(f"    ✅ SigLIP значительно лучше")
+            print(f"    SigLIP значительно лучше")
         else:
-            print(f"    ⚠️  Разница не значима")
+            print(f"    Разница не значима")
         
         # Paired пермутационный тест
         perm_result = paired_permutation_test(
@@ -243,7 +243,7 @@ def compare_metrics(
         
         print(f"\n  Пермутационный тест (paired):")
         print(f"    p-value: {perm_result['p_value']:.4f}")
-        print(f"    {'✅ Значимо' if perm_result['is_significant'] else '❌ Не значимо'}")
+        print(f"    {'Значимо' if perm_result['is_significant'] else 'Не значимо'}")
         
         results[metric_name] = {
             "siglip_mean": float(np.mean(siglip_values)),
@@ -290,8 +290,8 @@ def apply_bonferroni_correction(results: Dict, alpha: float = 0.05) -> Dict:
         print(f"\n  {metric_name}:")
         print(f"    Исходный p-value:      {p_value:.4f}")
         print(f"    Скорректированный:     {corrected_p:.4f}")
-        print(f"    Значимо (α=0.05):      {'✅' if p_value < 0.05 else '❌'}")
-        print(f"    Значимо (Бонферрони):  {'✅' if is_significant_corrected else '❌'}")
+        print(f"    Значимо (α=0.05):      {'да' if p_value < 0.05 else 'нет'}")
+        print(f"    Значимо (Бонферрони):  {'да' if is_significant_corrected else 'нет'}")
     
     return results
 
@@ -383,7 +383,7 @@ def plot_comparison(results: Dict, output_path: str = "metrics_comparison.png"):
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\n✅ График сохранён: {output_path}")
+    print(f"\nГрафик сохранён: {output_path}")
     plt.close()
 
 # ============================================================
@@ -493,7 +493,7 @@ if __name__ == "__main__":
     print("-"*80)
     
     for metric_name, result in results.items():
-        sig = "✅" if result['is_significant_bonferroni'] else "❌"
+        sig = "да" if result['is_significant_bonferroni'] else "нет"
         print(
             f"{metric_name:<28} "
             f"{result['n_samples']:>6} "
@@ -534,7 +534,7 @@ if __name__ == "__main__":
                 "ci_upper": float(result['ci_upper']),
                 "p_value": float(result['p_value']),
                 "p_value_bonferroni": float(result['p_value_bonferroni']),
-                # 👇 Явно приводим к стандартному bool Python 👇
+                # Явно приводим к стандартному bool Python
                 "is_significant": bool(result['is_significant']),
                 "is_significant_bonferroni": bool(result['is_significant_bonferroni']),
             }
@@ -548,5 +548,5 @@ if __name__ == "__main__":
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2, ensure_ascii=False)
     
-    print(f"\n✅ Результаты сохранены: {output_path}")
+    print(f"\nРезультаты сохранены: {output_path}")
     print(f"{'='*70}")

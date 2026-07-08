@@ -280,11 +280,6 @@ class WikipediaService:
         """
         return await self._get_landmark_info_async(landmark_names)
 
-    # Оставляем алиас для обратной совместимости
-    async def get_landmark_info_async(self, landmark_names: set[str]) -> dict[str, str]:
-        """Алиас для get_landmark_info (обратная совместимость)."""
-        return await self.get_landmark_info(landmark_names)
-
     async def _get_landmark_info_async(
         self, landmark_names: set[str]
     ) -> dict[str, str]:
@@ -617,7 +612,7 @@ if __name__ == "__main__":
 
     _logging.basicConfig(level=_logging.DEBUG, format="%(levelname)s: %(message)s")
 
-    print("🧪 Тест Yandex + Wikipedia Services")
+    print("Тест Yandex + Wikipedia Services")
     print("=" * 70)
 
     folder_id = os.environ.get("YC_FOLDER_ID")

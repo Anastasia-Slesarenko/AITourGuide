@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI Tour Guide API",
     description=(
-        "🏛️ Сервис распознавания достопримечательностей по фотографиям.\n\n"
+        "Сервис распознавания достопримечательностей по фотографиям.\n\n"
         "**Пайплайн:** SigLIP + FAISS → VLM reranking (vLLM) → "
         "интернет-поиск при низкой уверенности."
     ),

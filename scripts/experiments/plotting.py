@@ -313,7 +313,7 @@ class TrainingPlotter:
 
         plt.close(fig)
 
-        print(f"📊 График сохранен: {plot_path}")
+        print(f"График сохранен: {plot_path}")
 
     def plot_comparison(
         self,
@@ -363,4 +363,4 @@ class TrainingPlotter:
 
         plt.close(fig)
 
-        print(f"📊 График сравнения сохранен: {plot_path}")
+        print(f"График сравнения сохранен: {plot_path}")

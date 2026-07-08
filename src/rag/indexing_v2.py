@@ -288,10 +288,6 @@ class SigLIPEncoder:
         return np.array(fused)
 
 
-# Псевдоним для обратной совместимости
-ImageEncoder = SigLIPEncoder
-
-
 # ==============================
 # DINOv2 энкодер
 # ==============================
@@ -731,90 +727,6 @@ class IndexBuilder:
         logger.info(f"Загружен индекс: {index.ntotal} векторов")
 
         return embeddings, metadata, index
-
-
-# ==============================
-# Обратная совместимость
-# ==============================
-
-
-class CLIPIndexBuilder:
-    """
-    Устаревший класс для обратной совместимости.
-
-    Используйте IndexBuilder вместо него.
-    """
-
-    def __init__(
-        self,
-        model_name: str = "google/siglip-base-patch16-224",
-        seed: int = 42,
-    ):
-        logger.warning(
-            "CLIPIndexBuilder устарел. Используйте IndexBuilder. "
-            "Автоматически применяется SigLIP."
-        )
-
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-
-        config = IndexConfig(model_name=model_name, embedder_type="siglip")
-        self.builder = IndexBuilder(config)
-        self.model_name = model_name
-        self.embedding_dim = 768 if "large" in model_name else 512
-
-    def build_index(
-        self,
-        facts_db: dict[str, dict[str, Any]],
-        image_dir: str,
-        max_images_per_landmark: int = 5,
-        use_batch_encoding: bool = True,
-    ) -> tuple[faiss.Index, list[str]]:
-        """Строит индекс из facts_db (старый API)."""
-        logger.info("Построение индекса через устаревший API...")
-
-        data = [
-            {
-                "landmark_id": lid,
-                "name": info.get("name_ru") or info.get("name_en", ""),
-                "images": info.get("image_paths", []),
-            }
-            for lid, info in facts_db.items()
-        ]
-
-        df = pd.DataFrame(data)
-        self.builder.config.max_images_per_landmark = max_images_per_landmark
-        embeddings, metadata, index = self.builder.build_from_dataframe(
-            df, image_base_dir=Path(image_dir)
-        )
-
-        lid_list = [meta["lid"] for meta in metadata]
-        return index, lid_list
-
-    def save(self, index: faiss.Index, lid_list: list[str], output_path: str) -> None:
-        """Сохраняет индекс (старый API)."""
-        faiss.write_index(index, f"{output_path}.faiss")
-        with open(f"{output_path}.meta.pkl", "wb") as f:
-            pickle.dump({"lid_list": lid_list, "model_name": self.model_name}, f)
-        logger.info(f"Индекс сохранён: {output_path}.faiss")
-
-    @classmethod
-    def load_index(
-        cls,
-        index_path: str,
-        model_name: str = None,  # type: ignore
-    ) -> tuple[faiss.Index, list[str], str]:
-        """Загружает индекс (старый API)."""
-        index = faiss.read_index(f"{index_path}.faiss")
-        with open(f"{index_path}.meta.pkl", "rb") as f:
-            meta = pickle.load(f)
-
-        loaded_model = meta.get(
-            "model_name", model_name or "google/siglip-base-patch16-224"
-        )
-        logger.info(f"Загружен индекс: {index.ntotal} векторов")
-
-        return index, meta["lid_list"], loaded_model
 
 
 # ==============================

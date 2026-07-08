@@ -272,4 +272,4 @@ if __name__ == "__main__":
     with open(OUT_JSON, "w", encoding="utf-8") as f:
         json.dump({"n_samples": len(samples), "modes": results}, f,
                   indent=2, ensure_ascii=False)
-    print(f"\n✓ Сохранено: {OUT_JSON}")
+    print(f"\nСохранено: {OUT_JSON}")

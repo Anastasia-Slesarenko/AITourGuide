@@ -805,12 +805,12 @@ class GuideDescriptionProcessor:
         logger.info("=" * 70)
         logger.info(f"Всего обработано: {metrics_report['objects_processed']}")
         logger.info(
-            f"✓ Успешно сгенерировано (AI): {metrics_report['objects_success'] - metrics_report['objects_fallback']}"
+            f"Успешно сгенерировано (AI): {metrics_report['objects_success'] - metrics_report['objects_fallback']}"
         )
         logger.info(
-            f"⚠ Использован fallback (Wikipedia): {metrics_report['objects_fallback']}"
+            f"Использован fallback (Wikipedia): {metrics_report['objects_fallback']}"
         )
-        logger.info(f"✗ Ошибок (пропущено): {metrics_report['objects_failed']}")
+        logger.info(f"Ошибок (пропущено): {metrics_report['objects_failed']}")
         logger.info("-" * 70)
         logger.info(f"Время выполнения: {metrics_report['elapsed_time_sec']}с")
         logger.info(f"Вызовов API: {metrics_report['generation_calls']}")
@@ -865,7 +865,7 @@ def main():
             loop.run_until_complete(processor.run())
         except KeyboardInterrupt:
             logger.info(
-                "\n\n⚠️  Прервано пользователем (Ctrl+C). Прогресс сохранен, можно продолжить позже."
+                "\n\nПрервано пользователем (Ctrl+C). Прогресс сохранен, можно продолжить позже."
             )
         finally:
             # Очистка
@@ -890,16 +890,16 @@ def main():
 
     except asyncio.CancelledError:
         logger.info(
-            "\n\n⚠️  Задачи отменены. Прогресс сохранен, можно продолжить позже."
+            "\n\nЗадачи отменены. Прогресс сохранен, можно продолжить позже."
         )
         return
     except (aiohttp.ServerDisconnectedError, aiohttp.ClientError) as e:
-        logger.error(f"\n\n❌ Ошибка соединения с API: {e}")
-        logger.info("💾 Прогресс сохранен. Перезапустите скрипт для продолжения.")
+        logger.error(f"\n\nОшибка соединения с API: {e}")
+        logger.info("Прогресс сохранен. Перезапустите скрипт для продолжения.")
         return
     except Exception as e:
-        logger.error(f"\n\n❌ Критическая ошибка: {e}", exc_info=True)
-        logger.info("💾 Прогресс сохранен. Проверьте ошибку и перезапустите скрипт.")
+        logger.error(f"\n\nКритическая ошибка: {e}", exc_info=True)
+        logger.info("Прогресс сохранен. Проверьте ошибку и перезапустите скрипт.")
         raise
 
 

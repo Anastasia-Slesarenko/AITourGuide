@@ -120,7 +120,7 @@ class AITourGuideConfig:
     # которые почти всегда возвращают "unknown" без контекста
     skip_internet_search_stage1: bool = False
 
-    # Устройство (не используется с vLLM, для совместимости)
+    # Устройство для SigLIP-энкодера (cpu/cuda)
     device: str = "cuda"
 
     def to_dict(self) -> dict:
@@ -128,10 +128,8 @@ class AITourGuideConfig:
         return asdict(self)
 
 
-# Собственные счётчики для /v1/health и /v1/info.
-# Дублируют Prometheus-метрики, но не зависят от приватного API
-# prometheus_client (._metrics, ._value.get()), который может
-# измениться при обновлении библиотеки.
+# Собственные счётчики для /v1/health и /v1/info — дублируют Prometheus,
+# но не зависят от его приватного API.
 _stats: dict[str, float] = {
     "successful": 0.0,
     "failed": 0.0,
@@ -225,10 +223,8 @@ class VLLMClient:
             timeout=httpx.Timeout(timeout),
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
         )
-        # Отдельный лёгкий клиент для health-check со своим маленьким пулом.
-        # Инференс не должен блокировать liveness: иначе под нагрузкой пул
-        # inference-клиента забит, и health стоит в очереди десятки секунд —
-        # оркестратор примет занятый контейнер за мёртвый и перезапустит его.
+        # Отдельный клиент с маленьким пулом для health-check, чтобы инференс
+        # под нагрузкой не блокировал liveness-проверки.
         self.health_client = httpx.AsyncClient(
             timeout=httpx.Timeout(5.0),
             limits=httpx.Limits(max_keepalive_connections=1, max_connections=2),
@@ -402,16 +398,10 @@ class AITourGuide:
             max_retries=config.vllm_max_retries,
         )
 
-        # LRU-кэш base64 data URI для изображений галереи.
-        # Заполняется лениво при первом обращении к каждому изображению.
-        # Ограничен 500 записями чтобы не допустить утечки памяти
-        # при большой галерее.
+        # base64 data URI изображений галереи, заполняется лениво.
         self._gallery_image_cache: LRUCache = LRUCache(maxsize=500)
 
-        # TTL-кэш результатов predict по MD5 входных байтов.
-        # Исключает повторную обработку одинаковых изображений.
-        # maxsize=200 — при ~100KB на фото ≈ 20MB памяти на кэш.
-        # ttl=3600 — результат актуален 1 час.
+        # Результаты predict по MD5 входных байтов, TTL 1 час.
         self._predict_cache: TTLCache = TTLCache(maxsize=200, ttl=3600)
 
         self._is_ready = True
@@ -468,19 +458,6 @@ class AITourGuide:
     def get_metrics(self) -> dict:
         """Возвращает метрики производительности."""
         return _metrics_to_dict()
-
-    def reset_metrics(self):
-        """
-        Сбрасывает метрики производительности.
-
-        Prometheus Counter/Histogram/Gauge — глобальные синглтоны,
-        их нельзя обнулить через REGISTRY. Метод оставлен для совместимости
-        API, но фактически не сбрасывает накопленные значения.
-        """
-        logger.warning(
-            "reset_metrics: Prometheus-метрики не поддерживают сброс. "
-            "Перезапустите сервис для обнуления счётчиков."
-        )
 
     # ------------------------------------------------------------------
     # VLM через vLLM
@@ -1104,7 +1081,7 @@ class AITourGuide:
             {vlm_name} | set(page_titles) if vlm_name else set(page_titles)
         )
         async with WikipediaService(language="ru") as wiki:
-            wiki_result = await wiki.get_landmark_info_async(search_names)
+            wiki_result = await wiki.get_landmark_info(search_names)
 
         if not any(wiki_result.values()):
             return None
@@ -1283,11 +1260,8 @@ class AITourGuide:
 
         METRICS.vlm_candidates_count.observe(len(candidates))
 
-        # Query-изображение одно на всех кандидатов — кодируем в base64 один раз,
-        # а не по разу на кандидата. Экономит N-1 JPEG+base64 кодирований (CPU,
-        # раньше выполнялись inline в корутине и блокировали event loop в момент
-        # фан-аута) и даёт байт-в-байт одинаковый префикс промпта → попадания
-        # в prefix-кэш vLLM по vision-токенам query-картинки.
+        # Query одно на всех кандидатов — кодируем в base64 один раз: меньше
+        # работы CPU и попадание в prefix-кэш vLLM по токенам query-картинки.
         query_img = self._to_pil_image(image)
         query_uri = await asyncio.to_thread(self._image_to_base64_data_uri, query_img)
 
@@ -1325,9 +1299,7 @@ class AITourGuide:
                 logger.warning(f"Ошибка VLM reranking для {cand['landmark_id']}: {e}")
                 return {**cand, "p_yes": 0.0}
 
-        # Параллельные запросы с ограничением параллелизма.
-        # vLLM хорошо батчит параллельные запросы.
-        # Лимит задаётся через config.vlm_semaphore_limit.
+        # Параллельные запросы с лимитом config.vlm_semaphore_limit — vLLM их батчит.
         semaphore = asyncio.Semaphore(self.config.vlm_semaphore_limit)
 
         async def _score_with_sem(cand: dict) -> dict:
@@ -1630,12 +1602,7 @@ class AITourGuide:
         result["winner_images"] = []
         result["winner_landmark_id"] = ""
 
-        # Переводим название и описание на русский язык если нужно.
-        # Используем долю кириллицы: если < 30% букв кириллические —
-        # считаем текст английским и переводим.
-        # Простая проверка "есть ли хоть одна кириллица" не работает
-        # т.к. Wikipedia EN может содержать транслитерацию в скобках
-        # (напр. "Saint Isaac's Cathedral (Russian: Исаакиевский собор)")
+        # Переводим название и описание на русский, если нужно (см. _needs_translation).
         name = search_result["name"]
         description = search_result["description"]
         t_translate = time.time()
@@ -1660,11 +1627,8 @@ class AITourGuide:
         result["name"] = name
         result["description"] = description
 
-        # Верификация через VLM: спрашиваем модель "это {название}?"
-        # используя оригинальное (до перевода) название для лучшего
-        # распознавания VLM-ом (модель обучена на английском).
-        # Результат — p_yes, семантически эквивалентный p_yes из
-        # VLM reranking, что делает confidence единым на всех путях.
+        # Верификация через VLM по оригинальному (английскому) названию —
+        # даёт p_yes в той же шкале, что и reranking.
         t_verify = time.time()
         # Открываем WikipediaService для получения thumbnail —
         # промпт будет идентичен prepare_vlm_messages() (обучение).
@@ -1710,11 +1674,8 @@ class AITourGuide:
             else str(image_input)
         )
 
-        # Кеш по MD5 — только для bytes-входа (файловые пути не кешируем,
-        # т.к. содержимое файла может измениться).
-        # Флаг use_internet_search входит в ключ: без него запрос с
-        # включённым поиском получил бы закешированный «не найдено» от
-        # предыдущего запроса без поиска и не сделал бы новую попытку.
+        # Кешируем только bytes-вход (файл под тем же путём может измениться).
+        # use_internet_search входит в ключ: с поиском и без — разные результаты.
         _cache_key: str | None = None
         if isinstance(image_input, bytes):
             _cache_key = (

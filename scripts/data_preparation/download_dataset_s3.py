@@ -18,7 +18,7 @@ def create_s3_client(
     endpoint_url: str = "https://storage.yandexcloud.net"
 ) -> BaseClient:
     """Создание S3-клиента для Яндекс Облако"""
-    print(f"🔧 Создание S3 клиента...")
+    print(f"Создание S3 клиента...")
     print(f"  Endpoint: {endpoint_url}")
     print(f"  Region: ru-central1")
     
@@ -35,7 +35,7 @@ def create_s3_client(
         )
     )
     
-    print(f"✓ S3 клиент создан")
+    print(f"S3 клиент создан")
     return client
 
 
@@ -58,7 +58,7 @@ def get_folder_objects(
             if continuation_token:
                 params['ContinuationToken'] = continuation_token
             
-            print(f"  📄 Запрос страницы {page_count}...")
+            print(f"  Запрос страницы {page_count}...")
             response = s3_client.list_objects_v2(**params)
             
             if 'Contents' in response:
@@ -68,9 +68,9 @@ def get_folder_objects(
                     if not obj['Key'].endswith('/')
                 ]
                 objects.extend(page_objects)
-                print(f"  ✓ Найдено объектов на странице: {len(page_objects)}")
+                print(f"  Найдено объектов на странице: {len(page_objects)}")
             else:
-                print(f"  ⚠️ Страница {page_count} не содержит объектов")
+                print(f"  Страница {page_count} не содержит объектов")
             
             if not response.get('IsTruncated'):
                 break
@@ -81,10 +81,10 @@ def get_folder_objects(
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', 'Unknown')
         error_msg = e.response.get('Error', {}).get('Message', str(e))
-        print(f"\n❌ Ошибка S3 ({error_code}): {error_msg}")
+        print(f"\nОшибка S3 ({error_code}): {error_msg}")
         raise
     except Exception as e:
-        print(f"\n❌ Неожиданная ошибка: {type(e).__name__}: {e}")
+        print(f"\nНеожиданная ошибка: {type(e).__name__}: {e}")
         raise
 
 
@@ -121,29 +121,29 @@ def download_folder(
     Path(local_dir).mkdir(parents=True, exist_ok=True)
     
     # Проверяем доступ к бакету
-    print(f"🔍 Проверка доступа к бакету '{bucket_name}'...")
+    print(f"Проверка доступа к бакету '{bucket_name}'...")
     try:
         s3_client.head_bucket(Bucket=bucket_name)
-        print(f"✓ Бакет доступен")
+        print(f"Бакет доступен")
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', 'Unknown')
         if error_code == '404':
-            print(f"❌ Бакет '{bucket_name}' не найден")
+            print(f"Бакет '{bucket_name}' не найден")
         elif error_code == '403':
-            print(f"❌ Нет доступа к бакету '{bucket_name}'")
+            print(f"Нет доступа к бакету '{bucket_name}'")
         else:
-            print(f"❌ Ошибка доступа к бакету: {error_code}")
+            print(f"Ошибка доступа к бакету: {error_code}")
         raise
     
     # Получаем список объектов
-    print(f"🔍 Сканирование s3://{bucket_name}/{prefix}...")
+    print(f"Сканирование s3://{bucket_name}/{prefix}...")
     objects = get_folder_objects(s3_client, bucket_name, prefix)
     
     if not objects:
-        print("⚠️ Объекты не найдены")
+        print("Объекты не найдены")
         return []
     
-    print(f"📦 Найдено объектов: {len(objects)}")
+    print(f"Найдено объектов: {len(objects)}")
     
     downloaded_files = []
     skipped_files = []
@@ -151,7 +151,7 @@ def download_folder(
     # Общий прогресс-бар по файлам
     with tqdm(
         total=len(objects),
-        desc="📁 Файлы",
+        desc="Файлы",
         unit="файл",
         disable=not show_progress
     ) as pbar_files:
@@ -181,7 +181,7 @@ def download_folder(
                         pbar_files.update(1)
                         continue
                     else:
-                        print(f"\n⚠️ Размер не совпадает: {relative_path}")
+                        print(f"\nРазмер не совпадает: {relative_path}")
                         print(f"   Локальный: {local_size}, S3: {file_size}")
                         print(f"   Перезагрузка...")
                 else:
@@ -198,7 +198,7 @@ def download_folder(
                 if show_progress and file_size > 1024 * 1024:  # >1MB
                     with tqdm(
                         total=file_size,
-                        desc=f"⬇️ {Path(relative_path).name}",
+                        desc=f"{Path(relative_path).name}",
                         unit="B",
                         unit_scale=True,
                         unit_divisor=1024,
@@ -219,13 +219,13 @@ def download_folder(
                 pbar_files.update(1)
                 
             except ClientError as e:
-                print(f"\n❌ Ошибка при скачивании {key}: {e}")
+                print(f"\nОшибка при скачивании {key}: {e}")
                 continue
     
-    print(f"\n✅ Готово!")
-    print(f"   📥 Скачано файлов: {len(downloaded_files)}")
-    print(f"   ⏭️  Пропущено файлов: {len(skipped_files)}")
-    print(f"   📊 Всего обработано: {len(downloaded_files) + len(skipped_files)}")
+    print(f"\nГотово!")
+    print(f"   Скачано файлов: {len(downloaded_files)}")
+    print(f"   ⏭Пропущено файлов: {len(skipped_files)}")
+    print(f"   Всего обработано: {len(downloaded_files) + len(skipped_files)}")
     
     return downloaded_files
 
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     LOCAL_DIR = "/Users/anastasiya/Documents/AITourGuide/images"
     
     if not all([ACCESS_KEY, SECRET_KEY]):
-        raise ValueError("❌ Укажите YC_ACCESS_KEY и YC_SECRET_KEY в переменных окружения или .env файле")
+        raise ValueError("Укажите YC_ACCESS_KEY и YC_SECRET_KEY в переменных окружения или .env файле")
     
     # Создаём клиент
     s3_client = create_s3_client(ACCESS_KEY, SECRET_KEY)
@@ -254,7 +254,7 @@ if __name__ == "__main__":
         bucket_name=BUCKET_NAME,
         s3_folder=S3_FOLDER,
         local_dir=LOCAL_DIR,
-        show_progress=True,      # 🔥 Прогресс-бар включён
-        skip_existing=True,      # ⏭️ Пропускать существующие файлы
-        verify_size=True         # ✓ Проверять размер файлов
+        show_progress=True,      # Прогресс-бар включён
+        skip_existing=True,      # ⏭Пропускать существующие файлы
+        verify_size=True         # Проверять размер файлов
     )

@@ -166,7 +166,7 @@ class ProductionPipeline:
                     cand_img.close()
                     batch_valid_local.append(local_idx)
                 except Exception as e:
-                    print(f"⚠️ Error loading {info.get('image_path')}: {e}")
+                    print(f"Error loading {info.get('image_path')}: {e}")
 
             if not batch_texts:
                 continue
@@ -335,7 +335,7 @@ def evaluate_e2e(
         true_landmark_id = meta.get("landmark_id")
 
         if not true_landmark_id:
-            print(f"⚠️  Нет landmark_id в meta для {item.get('query_image')}")
+            print(f"Нет landmark_id в meta для {item.get('query_image')}")
             continue
 
         target_idx = item.get("target_idx", -1)
@@ -344,7 +344,7 @@ def evaluate_e2e(
         try:
             query_img = Image.open(img_path).convert("RGB")
         except Exception as e:
-            print(f"⚠️ Ошибка загрузки {img_path}: {e}")
+            print(f"Ошибка загрузки {img_path}: {e}")
             continue
 
         # Запускаем пайплайн (включает retrieval + reranking)
@@ -602,7 +602,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("E2E EVALUATION RESULTS")
     print("=" * 70)
-    print(f"\n📊 ОСНОВНЫЕ МЕТРИКИ:")
+    print(f"\nОСНОВНЫЕ МЕТРИКИ:")
     print(f"  Known definition:          {metrics['known_definition']}")
     print(f"  E2E Accuracy:              {metrics['e2e_accuracy']:.3f}")
     print(f"  E2E Hit@1 (known):         {metrics['e2e_hit_1']:.3f}")
@@ -612,22 +612,22 @@ if __name__ == "__main__":
     print(f"  Unknown Detection Acc:     {metrics['unknown_detection_accuracy']:.3f}")
     print(f"  Unknown Detection Rate:    {metrics['unknown_detection_rate']:.3f}")
 
-    print(f"\n⏱️  ПРОИЗВОДИТЕЛЬНОСТЬ:")
+    print(f"\n⏱ПРОИЗВОДИТЕЛЬНОСТЬ:")
     print(f"  P50 Latency:               {metrics['p50_latency_ms']:.1f} ms")
     print(f"  P95 Latency:               {metrics['p95_latency_ms']:.1f} ms")
     print(f"  Mean Latency:              {metrics['mean_latency_ms']:.1f} ms")
 
-    print(f"\n📈 СТАТИСТИКА:")
+    print(f"\nСТАТИСТИКА:")
     print(f"  Total Samples:             {metrics['total_samples']}")
     print(f"  Known Samples:             {metrics['known_samples']}")
     print(f"  Unknown Samples:           {metrics['unknown_samples']}")
     print(f"  Known Correct:             {metrics['known_correct']}")
     print(f"  Unknown Correct:           {metrics['unknown_correct']}")
     
-    print(f"\n🔄 ТРАНСФОРМАЦИЯ СЭМПЛОВ (step6 → retrieval):")
+    print(f"\nТРАНСФОРМАЦИЯ СЭМПЛОВ (step6 → retrieval):")
     print(f"  Step6 unknown → Known:     {metrics['step6_unknown_became_known']}")
     print(f"  Step6 known → Known:       {metrics['step6_known_stayed_known']}")
     print(f"  Step6 known → Unknown:     {metrics['step6_known_became_unknown']}")
 
-    print(f"\n✅ Результаты сохранены: {OUTPUT_PATH}")
+    print(f"\nРезультаты сохранены: {OUTPUT_PATH}")
     print("=" * 70)

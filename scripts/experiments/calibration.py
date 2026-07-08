@@ -271,7 +271,7 @@ def _maybe_plot(rel_raw: Dict, rel_cal: Dict, T: float, out_path: str) -> None:
     ax.grid(True, alpha=0.3)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  ✓ Reliability diagram: {out_path}")
+    print(f"  Reliability diagram: {out_path}")
 
 
 # ============================================================
@@ -349,4 +349,4 @@ if __name__ == "__main__":
             },
             "isotonic_curve": {"x": iso_xs, "y": iso_ys},
         }, f, indent=2, ensure_ascii=False)
-    print(f"✓ Данные калибровки: {SAVE_JSON}")
+    print(f"Данные калибровки: {SAVE_JSON}")

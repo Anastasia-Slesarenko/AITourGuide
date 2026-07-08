@@ -2307,7 +2307,7 @@ class DatasetValidator:
                 logger.error(f"  - {err}")
             return False
 
-        logger.info("✓ All splits valid (no gallery-query overlap)")
+        logger.info("All splits valid (no gallery-query overlap)")
         return True
 
     @staticmethod
@@ -2345,12 +2345,12 @@ class DatasetValidator:
 
         if query_in_candidates > 0:
             logger.error(
-                f"✗ CRITICAL: {query_in_candidates} samples have "
+                f"CRITICAL: {query_in_candidates} samples have "
                 "query image in candidates!"
             )
             return False
 
-        logger.info("✓ All samples valid (no query-candidate overlap)")
+        logger.info("All samples valid (no query-candidate overlap)")
         return True
 
     @staticmethod
@@ -2383,7 +2383,7 @@ class DatasetValidator:
                 logger.error(f"  - {err}")
             return False
 
-        logger.info("✓ All contrastive samples valid")
+        logger.info("All contrastive samples valid")
         return True
 
     @staticmethod
@@ -2697,7 +2697,7 @@ def main():
                         f"embeddings={n_emb}"
                     )
 
-                logger.info("✓ Successfully loaded training index")
+                logger.info("Successfully loaded training index")
                 logger.info("  (Use force_rebuild_index=True to rebuild)")
 
             except Exception as e:
@@ -2870,7 +2870,7 @@ def main():
                 logger.info(f"Saving embeddings to {training_embeddings_path}")
                 np.save(training_embeddings_path, embeddings)
 
-                logger.info(f"✓ Training index saved: {gallery_index.ntotal} images")
+                logger.info(f"Training index saved: {gallery_index.ntotal} images")
                 logger.info(
                     f"  Index size: {training_index_path.stat().st_size / 1024 / 1024:.2f} MB"
                 )
@@ -2921,9 +2921,9 @@ def main():
         )
 
         logger.info("")
-        logger.info("✓ Dataset generation completed successfully!")
-        logger.info(f"✓ Output directory: {dataset_config.output_dir}")
-        logger.info("✓ All validation checks passed")
+        logger.info("Dataset generation completed successfully!")
+        logger.info(f"Output directory: {dataset_config.output_dir}")
+        logger.info("All validation checks passed")
         logger.info("")
 
     except Exception as e:
