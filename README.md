@@ -187,13 +187,13 @@ Retrieval recall — доля known-запросов, где ретривер в
 - **Эксперименты:** sweep по `r`, `α`, `lr`, набору `target_modules` (attn-only против full) и разрешению; всё логируется в **MLflow** (параметры, train loss, eval-метрики, артефакты). Результаты прогонов — в [scripts/experiments/results/](scripts/experiments/results/).
 - **Оценка:** ранжирование (Hit@k, MRR, nDCG, median rank), open-set на настоящих novel-объектах (Unknown accuracy, detection F1-macro, AUROC), калибровка (ECE, temperature scaling, Brier), E2E с bootstrap-CI и замером latency.
 
-Как запустить обучение, форматы данных и troubleshooting — в [scripts/experiments/README.md](scripts/experiments/README.md).
+Скрипт обучения и конфигурации прогонов — [scripts/experiments/train.py](scripts/experiments/train.py); результаты экспериментов — [scripts/experiments/results/](scripts/experiments/results/).
 
 ### Экспорт и квантизация
 
 В продакшене LoRA-адаптер сливается с базовой моделью и обслуживается в **fp16**. Именно переход к fp16 дал ключевой выигрыш латентности: ранняя online-квантизация (bitsandbytes int8) на T4 работала без fused-ядер и упирала VLM-вызов в ≈30 с — fp16 снизил его до ≈2 с.
 
-Offline-квантизацию исследовали отдельно ([quantize_gptq_qwen2vl.py](scripts/experiments/quantize_gptq_qwen2vl.py)) и **обоснованно отклонили**. GPTQ-Qwen2-VL не подаётся корректно на T4 (Turing, sm_75) ни в одной сборке vLLM: Marlin-ядро рассчитано на Ampere (sm_80+) и выдаёт мусор, fallback-ядро свежих сборок не компилируется под sm_75, а на старой сборке через exllama веса дают NaN (INT4) или мусор (INT8); классический AWQ упирается в заброшенный AutoAWQ. Для reranker'а, который генерирует один токен (Yes/No), выигрыш от квантизации весов околонулевой — нагрузка prefill-bound, а T4 (16 ГБ) на модели 2B в память не упирается. Поэтому в проде остаётся fp16. Ранние экспортные эксперименты — в `export_model_*.py`, `test_gguf_model.py`.
+Offline-квантизацию исследовали отдельно ([quantize_gptq_qwen2vl.py](scripts/experiments/quantize/quantize_gptq_qwen2vl.py)) и **обоснованно отклонили**. GPTQ-Qwen2-VL не подаётся корректно на T4 (Turing, sm_75) ни в одной сборке vLLM: Marlin-ядро рассчитано на Ampere (sm_80+) и выдаёт мусор, fallback-ядро свежих сборок не компилируется под sm_75, а на старой сборке через exllama веса дают NaN (INT4) или мусор (INT8); классический AWQ упирается в заброшенный AutoAWQ. Для reranker'а, который генерирует один токен (Yes/No), выигрыш от квантизации весов околонулевой — нагрузка prefill-bound, а T4 (16 ГБ) на модели 2B в память не упирается. Поэтому в проде остаётся fp16. Скрипты экспорта и квантизации — в [scripts/experiments/quantize/](scripts/experiments/quantize/).
 
 ---
 
