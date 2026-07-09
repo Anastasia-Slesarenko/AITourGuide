@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.5
     enable_internet_search: bool = True
 
+    # Калибровка отдаваемой уверенности (isotonic-кривая, фит на val)
+    calibrate_confidence: bool = True
+    calibration_curve_path: str = "data/calibration/isotonic_reranker.json"
+
     # Yandex Cloud API (перевод и поиск по изображению)
     yc_folder_id: str = ""
     yc_api_key: str = ""
@@ -107,6 +111,12 @@ class Settings(BaseSettings):
         if p.is_absolute():
             return p
         return self.project_root / p
+
+    @property
+    def calibration_curve_path_abs(self) -> Path:
+        """Абсолютный путь к кривой калибровки уверенности."""
+        p = Path(self.calibration_curve_path)
+        return p if p.is_absolute() else self.project_root / p
 
     def validate_paths(self) -> dict[str, bool]:
         """Проверяет наличие обязательных файлов индекса."""

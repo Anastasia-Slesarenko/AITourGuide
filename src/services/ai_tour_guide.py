@@ -11,6 +11,7 @@
 
 import asyncio
 import base64
+import bisect
 import hashlib
 import json
 import logging
@@ -99,20 +100,20 @@ class AITourGuideConfig:
     temperature: float = 0.0
 
     # Уверенность
-    # vlm_threshold — порог на СЫРОМ p_yes для accept/reject (known/unknown) и
+    # vlm_threshold — порог на сыром p_yes для accept/reject (known/unknown) и
     # запуска интернет-поиска. Youden-оптимальный порог LoRA из open-set анализа
-    # (recompute_e2e_metrics.py, sweep по TPR+TNR). ДОЛЖЕН совпадать с
+    # (recompute_e2e_metrics.py, sweep по TPR+TNR). Должен совпадать с
     # ACCEPT_THRESHOLD в calibration.py. Калибруется только отдаваемое число.
     vlm_threshold: float = 0.472656
 
     # Калибровка отдаваемой уверенности (isotonic, фит на val).
     # Прод показывает калиброванный P(correct), а не сырой P(yes) реранкера
     # (сырой переуверен: ECE 0.16 → 0.006 после isotonic). Преобразование
-    # монотонно — порог отсечки и решение known/unknown НЕ меняет.
+    # монотонно — порог отсечки и решение known/unknown не меняет.
     calibrate_confidence: bool = True
     calibration_curve_path: str = "data/calibration/isotonic_reranker.json"
 
-    # Бэнды уверенности для UI (по КАЛИБРОВАННОМУ P(correct)). Границы подобраны
+    # Бэнды уверенности для UI (по калиброванному P(correct)). Границы подобраны
     # на accepted-тесте: низкая (<0.3) факт.точность ~27%, средняя (0.3–0.6) ~44%,
     # высокая (>=0.6) ~78% — подпись честно отражает вероятность верного ответа.
     confidence_band_high: float = 0.6
@@ -1350,7 +1351,7 @@ class AITourGuide:
     def _load_calibration_curve(self, path: str) -> None:
         """Загружает isotonic-кривую (x, y) калибровки уверенности."""
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             xs, ys = data.get("x", []), data.get("y", [])
             if xs and ys and len(xs) == len(ys):
@@ -1363,7 +1364,10 @@ class AITourGuide:
                     f"Калибровка: пустая/битая кривая в {path}, отдаём сырой p_yes"
                 )
         except FileNotFoundError:
-            logger.warning(f"Калибровка: файл {path} не найден, отдаём сырой p_yes")
+            logger.error(
+                f"Калибровка включена, но файл кривой не найден: {path}. "
+                f"Уверенность и бэнды будут по сырому p_yes (переуверенность)."
+            )
         except Exception as e:
             logger.warning(f"Калибровка: не удалось загрузить {path} ({e})")
 
@@ -1380,7 +1384,6 @@ class AITourGuide:
             return ys[0]
         if p_yes >= xs[-1]:
             return ys[-1]
-        import bisect
         i = bisect.bisect_left(xs, p_yes)
         x0, x1 = xs[i - 1], xs[i]
         y0, y1 = ys[i - 1], ys[i]
@@ -1825,7 +1828,7 @@ class AITourGuide:
                 result["description"] = parsed["description"]
                 # Заполняем p_yes для каждого кандидата в том же порядке
                 # что retrieved_names — для отображения в UI. Значения
-                # КАЛИБРУЕМ (isotonic P(correct)), как и главную уверенность;
+                # калибруем (isotonic P(correct)), как и главную уверенность;
                 # монотонность сохраняет порядок сортировки кандидатов.
                 # Маппинг строится по EN-именам (all_p_yes ключи — EN).
                 all_p_yes = parsed.get("all_p_yes", {})
@@ -1843,7 +1846,7 @@ class AITourGuide:
                 logger.error(f"[{correlation_id}] VLM ошибка: {e}")
                 return result
 
-            # 4. Уверенность = сырой p_yes (все РЕШЕНИЯ ниже — на нём).
+            # 4. Уверенность = сырой p_yes (все решения ниже — на нём).
             p_yes_val = parsed.get("p_yes", 0.0)
             result["confidence"] = round(p_yes_val, 4)
             logger.info(f"[{correlation_id}] P(yes)={p_yes_val:.4f}")
@@ -1868,7 +1871,7 @@ class AITourGuide:
             # достопримечательность не распознана если confidence
             # всё ещё ниже порога после всех этапов (VLM reranking +
             # интернет-поиск + VLM верификация).
-            # При unknown=True очищаем name/description и ВСЁ из базы: фото
+            # При unknown=True очищаем name/description и всё из базы: фото
             # победителя и кандидаты принадлежат неверному top-1 объекту.
             # Пользователь должен видеть только своё загруженное фото.
             if result["confidence"] < self.vlm_threshold:
@@ -1889,15 +1892,9 @@ class AITourGuide:
                     f"{self.vlm_threshold})"
                 )
 
-            # 7-8. Калибровка + бэнд отдаваемой уверенности.
-            # На этот момент result["confidence"] — ВСЕГДА reranker p_yes: БД-путь
-            # (p_yes) либо интернет-верификация (verified_p_yes — та же VLM, тот же
-            # промпт, та же шкала). Эвристические скоры внутреннего поиска в
-            # итоговый confidence не попадают. Поэтому калибруем/бэндим единообразно.
-            # Кривая фитилась на gallery-кандидатах; для Wikipedia-thumbnail
-            # интернет-верификации это разумная экстраполяция (та же модель).
-            # Решения (порог, unknown, интернет) уже приняты на сыром скоре →
-            # монотонная калибровка их не меняет.
+            # 7-8. Калибровка + бэнд отдаваемой уверенности. Здесь confidence —
+            # всегда reranker p_yes (БД-путь или интернет-верификация в той же
+            # шкале), поэтому калибруем единообразно; решения уже приняты на сыром.
             if result.get("unknown"):
                 result["confidence_band"] = None
             else:

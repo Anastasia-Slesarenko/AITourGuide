@@ -61,6 +61,8 @@ async def lifespan(app: FastAPI):
             top_k_retrieval=settings.top_k_retrieval,
             vlm_threshold=settings.confidence_threshold,
             enable_internet_search=settings.enable_internet_search,
+            calibrate_confidence=settings.calibrate_confidence,
+            calibration_curve_path=str(settings.calibration_curve_path_abs),
             yc_folder_id=settings.yc_folder_id,
             yc_api_key=settings.yc_api_key,
         )
