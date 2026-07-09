@@ -652,16 +652,73 @@ class AITourGuide:
             f"duration={timing['vlm_generation']}s"
         )
 
-        # Строим словарь landmark_name → p_yes для всех кандидатов
-        # (используется для отображения в UI)
-        all_p_yes = {r["landmark_name"]: round(r["p_yes"], 4) for r in results}
+        # p_yes по landmark_id — для переупорядочивания кандидатов в predict().
+        # Ключ по id, а не по имени: EN-имена у разных landmark могут совпасть.
+        p_yes_by_id = {r["landmark_id"]: r["p_yes"] for r in results}
 
         return {
             "name": best["landmark_name_ru"],
             "description": best["description"],
             "p_yes": best["p_yes"],
-            "all_p_yes": all_p_yes,
+            "landmark_id": best["landmark_id"],
+            "p_yes_by_id": p_yes_by_id,
         }
+
+    def _populate_ranked_candidates(
+        self,
+        result: dict,
+        retrieved: list[LandmarkRetrievalResult],
+        parsed: dict,
+    ) -> None:
+        """
+        Заполняет retrieved_* и winner_* в порядке убывания p_yes реранкера.
+
+        Победитель (индекс 0) — кандидат с максимальным p_yes, тот же, что даёт
+        result["name"]. Фронтенд и _build_sorted_candidates считают победителем
+        индекс 0, поэтому все параллельные списки и winner_images строятся из
+        одного порядка — иначе название и фото «из базы» указывают на разные
+        объекты, как только реранкер переставит top-1 ретривера.
+        """
+        p_yes_by_id: dict[str, float] = parsed.get("p_yes_by_id", {})
+
+        # Только кандидаты с изображением (как при VLM-скоринге).
+        scored = [c for c in retrieved if c.get_top_image() is not None]
+        # По убыванию p_yes; при равенстве сохраняется retrieval-порядок
+        # (stable sort) — тай-брейк по retrieval-скору.
+        scored.sort(
+            key=lambda c: p_yes_by_id.get(c.landmark_id, 0.0), reverse=True
+        )
+
+        names, images, captions, scores, p_yes_calibrated = [], [], [], [], []
+        for cand in scored:
+            top_image = cand.get_top_image()
+            display_name = top_image.landmark_name_ru or cand.landmark_name
+            names.append(display_name)
+            images.append(top_image.image_path)
+            captions.append(top_image.caption)
+            scores.append(cand.aggregated_score)
+            # Калибруем p_yes так же, как главную уверенность (isotonic
+            # P(correct)); монотонность сохраняет порядок сортировки.
+            raw = p_yes_by_id.get(cand.landmark_id, 0.0)
+            p_yes_calibrated.append(round(self.calibrator.calibrate(raw), 4))
+
+        result["retrieved_names"] = names
+        result["retrieved_images"] = images
+        result["retrieved_captions"] = captions
+        result["retrieved_scores"] = scores
+        result["retrieved_p_yes"] = p_yes_calibrated
+
+        # winner_images — все фото победителя реранкера (scored[0]),
+        # отсортированные по score для слайдера.
+        if scored:
+            winner = scored[0]
+            result["winner_landmark_id"] = winner.landmark_id
+            result["winner_images"] = [
+                img.image_path
+                for _, img in sorted(
+                    winner.gallery_images, key=lambda x: x[0], reverse=True
+                )
+            ]
 
     async def _enhance_with_internet_search(
         self,
@@ -804,49 +861,14 @@ class AITourGuide:
                 logger.error(f"[{correlation_id}] Ошибка загрузки: {e}")
                 return result
 
-            # 2. Retrieval кандидатов
+            # 2. Retrieval кандидатов. retrieved_* и winner_* заполняются
+            # позже (_populate_ranked_candidates) в порядке p_yes реранкера,
+            # а не retrieval — победитель определяется на шаге 3.
             try:
                 retrieved = await self._retrieve_candidates(image, timing)
-                retrieved_scores = []
-                retrieved_names = []  # RU-названия для UI
-                retrieved_names_en = []  # EN-названия для маппинга p_yes
-                retrieved_images = []
-                retrieved_captions = []
-
-                for candidate in retrieved:
-                    top_image = candidate.get_top_image()
-                    if not top_image:
-                        continue
-                    retrieved_scores.append(candidate.aggregated_score)
-                    # Русское название для отображения пользователю
-                    display_name = top_image.landmark_name_ru or candidate.landmark_name
-                    retrieved_names.append(display_name)
-                    # EN-название для маппинга p_yes из VLM
-                    retrieved_names_en.append(candidate.landmark_name)
-                    retrieved_images.append(top_image.image_path)
-                    retrieved_captions.append(top_image.caption)
-
-                result["retrieved_scores"] = retrieved_scores
-                result["retrieved_names"] = retrieved_names
-                result["retrieved_images"] = retrieved_images
-                result["retrieved_captions"] = retrieved_captions
-
-                # Все изображения top-1 кандидата для слайдера
-                if retrieved:
-                    winner = retrieved[0]
-                    result["winner_landmark_id"] = winner.landmark_id
-                    result["winner_images"] = [
-                        img.image_path
-                        for _, img in sorted(
-                            winner.gallery_images,
-                            key=lambda x: x[0],
-                            reverse=True,
-                        )
-                    ]
-
                 logger.info(
                     f"[{correlation_id}] Найдено {len(retrieved)} кандидатов, "
-                    f"top score: {retrieved_scores[0]:.4f}"
+                    f"top retrieval score: {retrieved[0].aggregated_score:.4f}"
                 )
             except RuntimeError as e:
                 result["error"] = str(e)
@@ -859,16 +881,12 @@ class AITourGuide:
                 parsed = await self._generate_vlm_prediction(image, retrieved, timing)
                 result["name"] = parsed["name"]
                 result["description"] = parsed["description"]
-                # Заполняем p_yes для каждого кандидата в том же порядке
-                # что retrieved_names — для отображения в UI. Значения
-                # калибруем (isotonic P(correct)), как и главную уверенность;
-                # монотонность сохраняет порядок сортировки кандидатов.
-                # Маппинг строится по EN-именам (all_p_yes ключи — EN).
-                all_p_yes = parsed.get("all_p_yes", {})
-                result["retrieved_p_yes"] = [
-                    round(self.calibrator.calibrate(all_p_yes.get(name_en, 0.0)), 4)
-                    for name_en in retrieved_names_en
-                ]
+                # Победитель = argmax(p_yes) реранкера, а не top-1 retrieval.
+                # Заполняем retrieved_* и winner_* в порядке убывания p_yes,
+                # чтобы индекс 0 (и winner_images) указывал на тот же объект,
+                # что result["name"] — иначе название и фото «из базы»
+                # разъезжаются при перестановке реранкером.
+                self._populate_ranked_candidates(result, retrieved, parsed)
                 logger.info(
                     f"[{correlation_id}] VLM выбрал: {parsed['name']} "
                     f"(P(yes)={parsed.get('p_yes', 0):.4f})"
@@ -894,8 +912,8 @@ class AITourGuide:
                 await self._enhance_with_internet_search(
                     image=image,
                     image_path=image_path,
-                    retrieved_names=retrieved_names,
-                    retrieved_descs=retrieved_captions,
+                    retrieved_names=result["retrieved_names"],
+                    retrieved_descs=result["retrieved_captions"],
                     result=result,
                     timing=timing,
                 )
