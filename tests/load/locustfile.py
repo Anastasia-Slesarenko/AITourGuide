@@ -152,14 +152,14 @@ def _load_pool_from_manifest(label: str, manifest_path: str) -> list[bytes]:
     """
     if not os.path.isfile(manifest_path):
         print(
-            f"⚠️  [{label}] манифест {manifest_path!r} не найден — "
+            f"[{label}] манифест {manifest_path!r} не найден — "
             f"синтетические изображения (нереалистичный вход)"
         )
         return [_make_synthetic_jpeg() for _ in range(POOL_SIZE)]
 
     names = _scan_manifest_names(manifest_path, SCAN_LIMIT)
     if not names:
-        print(f"⚠️  [{label}] в манифесте нет query_image — синтетические изображения")
+        print(f"[{label}] в манифесте нет query_image — синтетические изображения")
         return [_make_synthetic_jpeg() for _ in range(POOL_SIZE)]
 
     sample = random.sample(names, min(POOL_SIZE, len(names)))
@@ -169,16 +169,16 @@ def _load_pool_from_manifest(label: str, manifest_path: str) -> list[bytes]:
             with Image.open(os.path.join(IMAGE_DIR, name)) as img:
                 pool.append(_encode_jpeg(img))
         except (OSError, ValueError) as exc:  # noqa: PERF203
-            print(f"⚠️  [{label}] пропущено {name}: {exc}")
+            print(f"[{label}] пропущено {name}: {exc}")
 
     if not pool:
         print(
-            f"⚠️  [{label}] ни одно фото не удалось прочитать из {IMAGE_DIR!r} — "
+            f"[{label}] ни одно фото не удалось прочитать из {IMAGE_DIR!r} — "
             f"синтетические изображения"
         )
         return [_make_synthetic_jpeg() for _ in range(POOL_SIZE)]
 
-    print(f"✅ [{label}] пул: {len(pool)} фото ({manifest_path} → {IMAGE_DIR})")
+    print(f"[{label}] пул: {len(pool)} фото ({manifest_path} → {IMAGE_DIR})")
     return pool
 
 
@@ -227,7 +227,7 @@ def _on_test_start(environment, **kwargs):
             timeout=120,
         )
     except requests.RequestException as exc:  # noqa: BLE001
-        print(f"⚠️  Warmup request failed (продолжаем тест): {exc}")
+        print(f"Warmup request failed (продолжаем тест): {exc}")
 
 
 class APIUser(HttpUser):

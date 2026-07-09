@@ -11,9 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-# ---------------------------------------------------------------------------
 # Изображения
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def sample_image() -> Image.Image:
@@ -39,9 +37,7 @@ def sample_image_file(sample_image: Image.Image) -> Generator[Path, None, None]:
     path.unlink(missing_ok=True)
 
 
-# ---------------------------------------------------------------------------
 # Мок AITourGuide
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def mock_guide() -> MagicMock:
@@ -70,9 +66,7 @@ def mock_guide() -> MagicMock:
     return guide
 
 
-# ---------------------------------------------------------------------------
 # FastAPI TestClient
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def api_client(mock_guide: MagicMock) -> TestClient:
