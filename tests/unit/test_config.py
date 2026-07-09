@@ -42,10 +42,11 @@ class TestSettings:
         } <= s.allowed_mime_types
 
     def test_cors_defaults(self):
-        """CORS по умолчанию открыт для всех."""
+        """CORS: origins открыты, но credentials выключены — wildcard "*" с
+        credentials=True невалиден по CORS-спеке."""
         s = Settings()
         assert s.cors_origins == ["*"]
-        assert s.cors_allow_credentials is True
+        assert s.cors_allow_credentials is False
 
     def test_environment_variables(self, monkeypatch):
         """Настройки читаются из переменных окружения."""

@@ -102,3 +102,9 @@ class TestBrokenCurveFallsBackToIdentity:
     def test_length_mismatch(self, tmp_path):
         cal = ConfidenceCalibrator(curve_path=_write_curve(tmp_path, [0.0, 1.0], [0.0]))
         assert cal.calibrate(0.7) == 0.7
+
+    def test_malformed_json(self, tmp_path):
+        path = tmp_path / "curve.json"
+        path.write_text("{not valid json", encoding="utf-8")
+        cal = ConfidenceCalibrator(curve_path=str(path))
+        assert cal.calibrate(0.7) == 0.7

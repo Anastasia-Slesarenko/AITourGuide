@@ -5,6 +5,12 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Единый источник порога accept/reject (known/unknown) по сырому p_yes.
+# Youden-оптимум LoRA, посчитанный офлайн в scripts/experiments/calibration.py
+# (ACCEPT_THRESHOLD). Отсюда его берут и Settings, и AITourGuideConfig —
+# чтобы дефолт не расходился между окружением и сервисом.
+DEFAULT_CONFIDENCE_THRESHOLD = 0.472656
+
 
 class Settings(BaseSettings):
     """Настройки приложения с валидацией через pydantic."""
@@ -31,8 +37,8 @@ class Settings(BaseSettings):
     # RAG / retrieval
     top_k_retrieval: int = 10
     # Порог по сырому p_yes: accept/reject (known/unknown) и запуск интернет-поиска.
-    # Youden-оптимум LoRA; совпадает с ACCEPT_THRESHOLD в calibration.py.
-    confidence_threshold: float = 0.472656
+    # Единый источник — DEFAULT_CONFIDENCE_THRESHOLD (см. выше).
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
     enable_internet_search: bool = True
 
     # Калибровка отдаваемой уверенности (isotonic-кривая, фит на val)
@@ -78,7 +84,10 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: list[str] = ["*"]
-    cors_allow_credentials: bool = True
+    # False: публичный API без cookie/сессий, а wildcard ["*"] с
+    # credentials=True невалиден по CORS-спеке (браузер отклоняет ответ,
+    # Starlette не отдаёт credentials). Нужны cookie — задать конкретные origins.
+    cors_allow_credentials: bool = False
     cors_allow_methods: list[str] = ["*"]
     cors_allow_headers: list[str] = ["*"]
 

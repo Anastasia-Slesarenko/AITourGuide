@@ -25,6 +25,7 @@ from typing import Any, cast
 from cachetools import LRUCache, TTLCache
 from PIL import Image
 
+from src.core.config import DEFAULT_CONFIDENCE_THRESHOLD
 from src.core.metrics import METRICS
 from src.rag.landmark_retriever import (
     LandmarkRetrievalResult,
@@ -92,10 +93,10 @@ class AITourGuideConfig:
 
     # Уверенность
     # vlm_threshold — порог на сыром p_yes для accept/reject (known/unknown) и
-    # запуска интернет-поиска. Youden-оптимальный порог LoRA из open-set анализа
-    # (recompute_e2e_metrics.py, sweep по TPR+TNR). Должен совпадать с
-    # ACCEPT_THRESHOLD в calibration.py. Калибруется только отдаваемое число.
-    vlm_threshold: float = 0.472656
+    # запуска интернет-поиска. Единый источник — DEFAULT_CONFIDENCE_THRESHOLD
+    # в src/core/config.py (Youden-оптимум LoRA из scripts/experiments/
+    # calibration.py). Калибруется только отдаваемое число.
+    vlm_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
 
     # Калибровка отдаваемой уверенности (isotonic, фит на val).
     # Прод показывает калиброванный P(correct), а не сырой P(yes) реранкера
