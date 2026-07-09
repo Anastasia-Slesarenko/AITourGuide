@@ -95,9 +95,6 @@ class IndexConfig:
     metadata_path: Path = Path("data/models/faiss_metadata.pkl")
     embeddings_path: Path = Path("data/models/embeddings.npy")
 
-    # Модели по умолчанию (заполняется в __post_init__)
-    _DEFAULT_MODELS: dict = None  # type: ignore
-
     def __post_init__(self):
         """Автовыбор модели и создание директорий."""
         _defaults = {
@@ -113,10 +110,63 @@ class IndexConfig:
             path.parent.mkdir(parents=True, exist_ok=True)
 
 
+# Базовый энкодер
+
+
+class _BaseEncoder:
+    """Общая логика энкодеров: аугментация, слияние эмбеддингов, очистка."""
+
+    @staticmethod
+    def _build_augment_fn(use_augmentation: bool):
+        """Пайплайн аугментаций для обучающих gallery-изображений (или None)."""
+        if not use_augmentation:
+            return None
+        return transforms.Compose(
+            [
+                transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
+            ]
+        )
+
+    @staticmethod
+    def fuse_embeddings(
+        embeddings: list[np.ndarray],
+        weights: list[float] | None = None,
+    ) -> np.ndarray:
+        """Объединяет несколько эмбеддингов с опциональными весами."""
+        if not embeddings:
+            raise ValueError("Список эмбеддингов пуст")
+
+        if weights is None:
+            fused = np.mean(embeddings, axis=0)
+        else:
+            if len(embeddings) != len(weights):
+                raise ValueError("Длины embeddings и weights не совпадают")
+            fused = np.average(embeddings, axis=0, weights=weights)
+
+        norm = np.linalg.norm(fused)
+        if norm > 0:
+            fused = fused / norm
+
+        return np.array(fused)
+
+    def __del__(self):
+        try:
+            if hasattr(self, "model"):
+                del self.model
+            if hasattr(self, "processor"):
+                del self.processor
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
 # SigLIP энкодер
 
 
-class SigLIPEncoder:
+class SigLIPEncoder(_BaseEncoder):
     """
     Кодирует изображения через SigLIP с классификацией exterior/interior.
 
@@ -167,29 +217,7 @@ class SigLIPEncoder:
             logger.error(f"Ошибка загрузки SigLIP: {e}")
             raise
 
-        if config.use_augmentation:
-            self.augment_fn = transforms.Compose(
-                [
-                    transforms.ColorJitter(
-                        brightness=0.1, contrast=0.1, saturation=0.1
-                    ),
-                    transforms.RandomHorizontalFlip(p=0.5),
-                    transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
-                ]
-            )
-        else:
-            self.augment_fn = None
-
-    def __del__(self):
-        try:
-            if hasattr(self, "model"):
-                del self.model
-            if hasattr(self, "processor"):
-                del self.processor
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
+        self.augment_fn = self._build_augment_fn(config.use_augmentation)
 
     def _encode_text_prompts(self) -> tuple[torch.Tensor, Any]:
         """Кодирует текстовые промпты для классификации."""
@@ -258,33 +286,11 @@ class SigLIPEncoder:
             logger.error(f"Ошибка кодирования SigLIP батча: {e}")
             return [None] * len(images)
 
-    @staticmethod
-    def fuse_embeddings(
-        embeddings: list[np.ndarray],
-        weights: list[float] | None = None,
-    ) -> np.ndarray:
-        """Объединяет несколько эмбеддингов с опциональными весами."""
-        if not embeddings:
-            raise ValueError("Список эмбеддингов пуст")
-
-        if weights is None:
-            fused = np.mean(embeddings, axis=0)
-        else:
-            if len(embeddings) != len(weights):
-                raise ValueError("Длины embeddings и weights не совпадают")
-            fused = np.average(embeddings, axis=0, weights=weights)
-
-        norm = np.linalg.norm(fused)
-        if norm > 0:
-            fused = fused / norm
-
-        return np.array(fused)
-
 
 # DINOv2 энкодер
 
 
-class DINOv2Encoder:
+class DINOv2Encoder(_BaseEncoder):
     """
     Кодирует изображения через DINOv2.
 
@@ -324,29 +330,7 @@ class DINOv2Encoder:
             logger.error(f"Ошибка загрузки DINOv2: {e}")
             raise
 
-        if config.use_augmentation:
-            self.augment_fn = transforms.Compose(
-                [
-                    transforms.ColorJitter(
-                        brightness=0.1, contrast=0.1, saturation=0.1
-                    ),
-                    transforms.RandomHorizontalFlip(p=0.5),
-                    transforms.RandomAffine(degrees=5, translate=(0.02, 0.02)),
-                ]
-            )
-        else:
-            self.augment_fn = None
-
-    def __del__(self):
-        try:
-            if hasattr(self, "model"):
-                del self.model
-            if hasattr(self, "processor"):
-                del self.processor
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
+        self.augment_fn = self._build_augment_fn(config.use_augmentation)
 
     def encode_batch(
         self, images: list[Image.Image]
@@ -378,28 +362,6 @@ class DINOv2Encoder:
         except Exception as e:
             logger.error(f"Ошибка кодирования DINOv2 батча: {e}")
             return [None] * len(images)
-
-    @staticmethod
-    def fuse_embeddings(
-        embeddings: list[np.ndarray],
-        weights: list[float] | None = None,
-    ) -> np.ndarray:
-        """Объединяет несколько эмбеддингов с опциональными весами."""
-        if not embeddings:
-            raise ValueError("Список эмбеддингов пуст")
-
-        if weights is None:
-            fused = np.mean(embeddings, axis=0)
-        else:
-            if len(embeddings) != len(weights):
-                raise ValueError("Длины embeddings и weights не совпадают")
-            fused = np.average(embeddings, axis=0, weights=weights)
-
-        norm = np.linalg.norm(fused)
-        if norm > 0:
-            fused = fused / norm
-
-        return np.array(fused)
 
 
 # Фабрика энкодеров
@@ -695,25 +657,6 @@ class IndexBuilder:
         with open(self.config.metadata_path, "wb") as f:
             pickle.dump(metadata, f)
         logger.info(f"Метаданные сохранены: {self.config.metadata_path}")
-
-    @staticmethod
-    def load(
-        index_path: Path,
-        embeddings_path: Path,
-        metadata_path: Path,
-    ) -> tuple[np.ndarray, list[dict[str, Any]], faiss.Index]:
-        """Загружает индекс, эмбеддинги и метаданные с диска."""
-        logger.info(f"Загрузка индекса из {index_path}")
-
-        index = faiss.read_index(str(index_path))
-        embeddings = np.load(embeddings_path)
-
-        with open(metadata_path, "rb") as f:
-            metadata = pickle.load(f)
-
-        logger.info(f"Загружен индекс: {index.ntotal} векторов")
-
-        return embeddings, metadata, index
 
 
 # Точка входа

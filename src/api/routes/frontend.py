@@ -31,7 +31,7 @@ def _build_sorted_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
     names = result.get("retrieved_names") or []
     p_yes_list = result.get("retrieved_p_yes") or []
 
-    logger.info(
+    logger.debug(
         f"_build_sorted_candidates: images={len(images)}, p_yes_list={p_yes_list}"
     )
 
@@ -51,7 +51,7 @@ def _build_sorted_candidates(result: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     candidates.sort(key=lambda c: c["p_yes"], reverse=True)
-    logger.info(
+    logger.debug(
         f"sorted_candidates order: "
         f"{[(c['name'], round(c['p_yes'], 3)) for c in candidates]}"
     )

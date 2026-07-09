@@ -35,9 +35,8 @@
     Чтобы принудительно перестроить:
         config.force_rebuild_index = True
 
-    ВНИМАНИЕ: Это НЕ продакшен-индекс. Для продакшена используйте
-    LandmarkRetriever.build_index_from_landmarks(), который включает ВСЕ
-    изображения.
+    ВНИМАНИЕ: Это НЕ продакшен-индекс: он включает только gallery-изображения,
+    использованные при обучении.
 
 Использование:
     python step6_setup_dataset.py
@@ -2852,9 +2851,6 @@ def main():
             logger.info("STEP 6.5: Saving training gallery index")
             logger.info("-" * 70)
             logger.info("NOTE: This is a TRAINING index (gallery images only)")
-            logger.info(
-                "      For production, use LandmarkRetriever.build_index_from_landmarks()"
-            )
 
             try:
                 # Сохраняем FAISS-индекс
@@ -2949,23 +2945,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # index_config = IndexConfig(
-    #     embedder_type="siglip", batch_size=32, max_images_per_landmark=10
-    # )
-    # build_index_from_landmarks(
-    #     landmarks_json_path="data/processed/landmarks_with_guide_descriptions_filtred.json",
-    #     image_base_dir="images",
-    #     output_dir="data/index/siglip",
-    #     index_config=index_config,
-    # )
-    # index_config = IndexConfig(
-    #     embedder_type="dinov2",
-    #     batch_size=32,
-    #     max_images_per_landmark=10)
-    # build_index_from_landmarks(
-    #     landmarks_json_path="data/processed/landmarks_with_guide_descriptions_filtred.json",
-    #     image_base_dir="images",
-    #     output_dir="data/index/dinov2",
-    #     index_config=index_config
-    # )

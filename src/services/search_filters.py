@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 OPENSEARCH_LIMIT = 5
 FULLTEXT_SEARCH_LIMIT = 5
-MAX_QUERY_WORDS_FOR_VARIANTS = 4
-MIN_RELEVANCE_RATIO = 0.5
 
 # Стоп-слова для проверки релевантности
 

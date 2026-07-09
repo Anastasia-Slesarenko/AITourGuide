@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Union, cast
+from typing import Any, cast
 
 from cachetools import LRUCache, TTLCache
 from PIL import Image
@@ -240,21 +240,11 @@ class AITourGuide:
     Использует vLLM сервер для VLM reranking через OpenAI API.
     """
 
-    def __init__(
-        self,
-        config: Union["AITourGuideConfig", dict, None] = None,
-        **kwargs,
-    ):
+    def __init__(self, config: "AITourGuideConfig"):
         """
         Args:
-            config: Конфигурация (AITourGuideConfig, dict или None)
-            **kwargs: Параметры конфигурации (если config=None)
+            config: Конфигурация сервиса
         """
-        if config is None:
-            config = AITourGuideConfig(**kwargs)
-        elif isinstance(config, dict):
-            config = AITourGuideConfig(**config)
-
         self.config = config
         self.vlm_threshold = config.vlm_threshold
         self.top_k_retrieval = config.top_k_retrieval
@@ -376,10 +366,6 @@ class AITourGuide:
 
         return health
 
-    def get_metrics(self) -> dict:
-        """Возвращает метрики производительности."""
-        return _metrics_to_dict()
-
     # VLM через vLLM
 
     def _load_and_encode_gallery_image(self, candidate_image: str) -> str:
@@ -483,28 +469,6 @@ class AITourGuide:
                 ],
             }
         ]
-
-    async def _generate_with_vlm(
-        self,
-        image: Image.Image,
-        candidate_image: str,
-        candidate_caption: str,
-        candidate_name: str,
-        max_new_tokens: int = 256,
-        temperature: float = 0.0,
-    ) -> str:
-        """Генерирует ответ VLM для одного кандидата."""
-        messages = await self.prepare_vlm_messages(
-            image, candidate_image, candidate_caption, candidate_name
-        )
-        response = await self.vllm_client.chat_completion(
-            messages=messages,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-        )
-        return str(response["choices"][0]["message"]["content"]).strip()
-
-    # Интернет-поиск
 
     # Основной пайплайн предсказания
 
@@ -995,33 +959,6 @@ class AITourGuide:
             )
             _update_metrics(result, image_size_bytes=_image_size)
             return result
-
-    # Пакетная обработка
-
-    async def predict_batch(
-        self,
-        image_paths: list[str | Path],
-        use_internet_search: bool = True,
-        max_concurrency: int = 4,
-    ) -> list[dict]:
-        """
-        Пакетная обработка изображений с ограниченным параллелизмом.
-
-        Args:
-            image_paths: Список путей к изображениям
-            use_internet_search: Включить интернет-поиск
-            max_concurrency: Максимум одновременных запросов
-        """
-        total = len(image_paths)
-        semaphore = asyncio.Semaphore(max_concurrency)
-
-        async def _predict_with_sem(i: int, path: str | Path) -> dict:
-            async with semaphore:
-                logger.info(f"Прогресс: {i + 1}/{total}")
-                return await self.predict(path, use_internet_search)
-
-        tasks = [_predict_with_sem(i, path) for i, path in enumerate(image_paths)]
-        return list(await asyncio.gather(*tasks))
 
     # Очистка ресурсов
 

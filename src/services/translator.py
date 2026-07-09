@@ -88,30 +88,3 @@ class YandexTranslator:
         except Exception as e:
             logger.error(f"Ошибка перевода: {e}")
             return None
-
-    async def translate_dict(
-        self,
-        data: dict,
-        keys_to_translate: list[str] | None = None,
-    ) -> dict:
-        """
-        Переводит указанные ключи в словаре.
-
-        Args:
-            data: Словарь с данными
-            keys_to_translate: Список ключей для перевода
-
-        Returns:
-            Словарь с переведёнными значениями
-        """
-        if keys_to_translate is None:
-            keys_to_translate = ["name", "description"]
-
-        result = data.copy()
-        for key in keys_to_translate:
-            if key in result and result[key]:
-                translated = await self.translate(result[key])
-                if translated:
-                    result[key] = translated
-
-        return result

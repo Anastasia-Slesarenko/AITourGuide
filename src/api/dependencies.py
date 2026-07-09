@@ -35,11 +35,6 @@ async def get_guide() -> AITourGuide:
     return _guide
 
 
-async def get_client_id(request: Request) -> str:
-    """Возвращает IP-адрес клиента из запроса."""
-    return request.client.host if request.client else "unknown"
-
-
 async def get_rate_limiter(request: Request):
     """Возвращает экземпляр RateLimiter из состояния приложения."""
     return request.app.state.rate_limiter
