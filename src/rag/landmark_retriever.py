@@ -29,9 +29,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-# ==============================
 # Метаданные изображения галереи
-# ==============================
 
 
 @dataclass
@@ -89,9 +87,7 @@ class GalleryImageMetadata:
         return asdict(self)
 
 
-# ==============================
 # Результат retrieval
-# ==============================
 
 
 @dataclass
@@ -132,9 +128,7 @@ class LandmarkRetrievalResult:
         }
 
 
-# ==============================
 # Агрегация оценок
-# ==============================
 
 
 def aggregate_scores(
@@ -175,9 +169,7 @@ def aggregate_scores(
     return sorted_scores[0]
 
 
-# ==============================
 # Retriever
-# ==============================
 
 
 class LandmarkRetriever:
@@ -248,7 +240,7 @@ class LandmarkRetriever:
         # Группируем по landmark_id
         landmark_scores: dict[str, list[tuple[float, GalleryImageMetadata]]] = {}
 
-        for dist, idx in zip(distances[0], indices[0]):
+        for dist, idx in zip(distances[0], indices[0], strict=False):
             if idx < 0 or idx >= len(self.gallery_metadata):
                 continue
             meta = self.gallery_metadata[idx]
@@ -433,9 +425,7 @@ class LandmarkRetriever:
         logger.info(f"Индекс сохранён в {out}")
 
 
-# ==============================
 # Вспомогательная функция
-# ==============================
 
 
 def build_index_from_landmarks(

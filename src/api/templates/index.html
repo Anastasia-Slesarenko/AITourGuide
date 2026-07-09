@@ -119,8 +119,8 @@
                                 <div id="resultImageContainer" class="result-image-wrapper"></div>
                                 <span class="slide-label">Ваше фото</span>
                             </div>
-                            {# Слайды 1…N: изображения победителя из базы #}
-                            {% if result.winner_images %}
+                            {# Слайды 1…N: изображения победителя из базы (не при unknown) #}
+                            {% if result.winner_images and not result.unknown %}
                             {% for img_path in result.winner_images %}
                             <div class="gallery-slide">
                                 <img
@@ -161,13 +161,16 @@
                                 <span class="result-icon">🏛️</span>
                                 <h2>{{ result.name or "Объект не найден" }}</h2>
                             </div>
-                            <div class="confidence-indicator" data-confidence="{{ (result.confidence * 100)|round(0)|int }}">
+                            {% set band_label = {'high': 'Высокая', 'medium': 'Средняя', 'low': 'Низкая'}.get(result.confidence_band, '') %}
+                            {% if band_label %}
+                            <div class="confidence-indicator" data-band="{{ result.confidence_band }}">
                                 <svg class="confidence-ring" viewBox="0 0 36 36">
                                     <path class="confidence-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                                     <path class="confidence-progress" stroke-dasharray="{{ (result.confidence * 100)|round(0)|int }}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                                 </svg>
-                                <span class="confidence-value">{{ (result.confidence * 100)|round(0)|int }}%</span>
+                                <span class="confidence-value confidence-value--band confidence-band--{{ result.confidence_band }}">{{ band_label }}</span>
                             </div>
+                            {% endif %}
                         </div>
 
                         <div class="result-description">
@@ -210,14 +213,14 @@
                                 </div>
                             </div>
                             
-                            {% if result.confidence %}
+                            {% if band_label %}
                             <div class="stat-card glass-card">
                                 <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
                                 </svg>
                                 <div class="stat-content">
-                                    <span class="stat-label">Точность</span>
-                                    <span class="stat-value">{{ (result.confidence * 100)|round(1) }}%</span>
+                                    <span class="stat-label">Уверенность</span>
+                                    <span class="stat-value confidence-band--{{ result.confidence_band }}">{{ band_label }}</span>
                                 </div>
                             </div>
                             {% endif %}
@@ -232,8 +235,8 @@
                         </button>
                     </div>
 
-                    {# Секция «Похожие» — кандидаты кроме победителя, отсортированные по p_yes убыванию #}
-                    {% if sorted_candidates %}
+                    {# Секция «Похожие» — кандидаты из базы (не при unknown) #}
+                    {% if sorted_candidates and not result.unknown %}
                     <div class="candidates-section glass-card">
                         <div class="candidates-header">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

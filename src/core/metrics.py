@@ -24,7 +24,7 @@ class _AITourGuideMetrics:
     """
 
     def __init__(self) -> None:
-        # ── Счётчики запросов ──────────────────────────────────────────────
+        # Счётчики запросов
         self.requests_total = Counter(
             "aitourguide_requests_total",
             "Общее число вызовов predict()",
@@ -49,7 +49,7 @@ class _AITourGuideMetrics:
             "Число predict-запросов, отклонённых backpressure (503, перегрузка)",
         )
 
-        # ── Гистограммы времени выполнения ────────────────────────────────
+        # Гистограммы времени выполнения
         self.retrieval_duration = Histogram(
             "aitourguide_retrieval_duration_seconds",
             "Время SigLIP+FAISS retrieval",
@@ -89,7 +89,7 @@ class _AITourGuideMetrics:
             ),
         )
 
-        # ── Gauge: текущие значения ───────────────────────────────────────
+        # Gauge: текущие значения
         self.confidence_last = Gauge(
             "aitourguide_confidence_last",
             "Confidence последнего успешного запроса",

@@ -122,10 +122,5 @@ def setup_logging(
 
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    Возвращает логгер с указанным именем.
-
-    Args:
-        name: Имя логгера (обычно __name__)
-    """
+    """Возвращает логгер с указанным именем (обычно __name__)."""
     return logging.getLogger(name)

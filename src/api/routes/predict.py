@@ -37,7 +37,10 @@ class PredictionResponse(BaseModel):
 
     name: str = Field(..., description="Название достопримечательности")
     description: str = Field(..., description="Описание достопримечательности")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Уверенность (0–1)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Калиброванная уверенность P(верно), 0–1")
+    confidence_band: str | None = Field(
+        None, description="Уровень уверенности для показа: high / medium / low (None если unknown)"
+    )
     unknown: bool = Field(
         False, description="True если достопримечательность не распознана"
     )
@@ -137,6 +140,7 @@ async def predict(
         name=result.get("name", ""),
         description=result.get("description", ""),
         confidence=result.get("confidence", 0.0),
+        confidence_band=result.get("confidence_band"),
         unknown=result.get("unknown", False),
         source=result.get("source", "unknown"),
         timing=result.get("timing", {}),

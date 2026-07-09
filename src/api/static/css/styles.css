@@ -1114,3 +1114,29 @@ body {
         padding: 18px 24px;
     }
 }
+
+/* Уверенность: окраска по бэнду (перекрывает окраску по проценту) */
+.confidence-indicator[data-band="high"] .confidence-progress {
+    stroke: var(--success);
+    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.6));
+}
+.confidence-indicator[data-band="medium"] .confidence-progress {
+    stroke: var(--warning);
+    filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.6));
+}
+.confidence-indicator[data-band="low"] .confidence-progress {
+    stroke: #ef4444;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.6));
+}
+
+.confidence-band--high { color: var(--success); }
+.confidence-band--medium { color: var(--warning); }
+.confidence-band--low { color: #ef4444; }
+
+/* Бэнд-слово в центре кольца (вместо процента) — меньше шрифт, чтобы поместилось */
+.confidence-value--band {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.1;
+}

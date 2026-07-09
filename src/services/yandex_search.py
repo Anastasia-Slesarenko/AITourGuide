@@ -588,15 +588,7 @@ class WikipediaService:
         return None
 
     def _detect_language(self, query: str) -> str:
-        """
-        Определяет язык запроса по наличию кириллицы.
-
-        Args:
-            query: Поисковый запрос
-
-        Returns:
-            Код языка ('ru' или 'en')
-        """
+        """Определяет язык запроса ('ru'/'en') по наличию кириллицы."""
         if re.search(r"[а-яА-ЯёЁ]", query):
             return self.language
         else:

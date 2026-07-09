@@ -280,7 +280,7 @@ def _maybe_plot(rel_raw: Dict, rel_cal: Dict, T: float, out_path: str) -> None:
 
 if __name__ == "__main__":
     # ===================== КОНФИГ (без CLI) =====================
-    _BASE = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline"
+    _BASE = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e_pipline"
     # Калибраторы ФИТЯТСЯ на val, метрики честно считаются на TEST.
     KNOWN_VAL_JSON = f"{_BASE}/e2e_val_results_best_lora.json"        # e2e на val.json
     NOVEL_VAL_JSON = f"{_BASE}/e2e_val_results_best_lora_novel.json"  # e2e на novel_val
@@ -289,25 +289,36 @@ if __name__ == "__main__":
     KNOWN_TEST_JSON = f"{_BASE}/e2e_results_best_lora.json"           # e2e на test.json
     NOVEL_TEST_JSON = f"{_BASE}/e2e_results_best_lora_novel.json"     # e2e на novel_test
     N_BINS = 10
+    # Selective prediction: калибруем на ПРИНЯТЫХ (accepted) примерах — тех, где
+    # пайплайн отвечает (confidence >= порога). Отклонённые не показываются, поэтому
+    # в калибровку не идут. ДОЛЖЕН совпадать с продовым vlm_threshold —
+    # Youden-оптимальный порог LoRA (open-set). None → калибровать на всех.
+    ACCEPT_THRESHOLD = 0.472656
     PLOT_PATH = f"{_BASE}/reliability_best_lora.png"
     SAVE_JSON = f"{_BASE}/calibration_best_lora.json"
     # ===========================================================
 
     print("=" * 60)
-    print("КАЛИБРОВКА: фит на VAL, оценка на TEST")
+    print("КАЛИБРОВКА (accepted): фит на VAL, оценка на TEST")
     print("=" * 60)
 
-    # Пары для фита (val) и для оценки (test либо val).
-    val_pairs = build_calibration_pairs(
-        _load_predictions(KNOWN_VAL_JSON), _load_predictions(NOVEL_VAL_JSON))
+    def _accepted(pairs):
+        if ACCEPT_THRESHOLD is None:
+            return pairs
+        return [(c, y) for c, y in pairs if c >= ACCEPT_THRESHOLD]
+
+    # Пары для фита (val) и для оценки (test либо val), только accepted.
+    val_pairs = _accepted(build_calibration_pairs(
+        _load_predictions(KNOWN_VAL_JSON), _load_predictions(NOVEL_VAL_JSON)))
     if KNOWN_TEST_JSON and NOVEL_TEST_JSON:
-        eval_pairs = build_calibration_pairs(
-            _load_predictions(KNOWN_TEST_JSON), _load_predictions(NOVEL_TEST_JSON))
+        eval_pairs = _accepted(build_calibration_pairs(
+            _load_predictions(KNOWN_TEST_JSON), _load_predictions(NOVEL_TEST_JSON)))
         eval_name = "TEST"
     else:
         eval_pairs = val_pairs
         eval_name = "VAL (isotonic-ECE переоценён — нет held-out!)"
-    print(f"  fit: val ({len(val_pairs)} пар)   eval: {eval_name} ({len(eval_pairs)} пар)")
+    print(f"  accepted (conf>={ACCEPT_THRESHOLD}) — fit: val ({len(val_pairs)}) "
+          f"eval: {eval_name} ({len(eval_pairs)})")
 
     # Фит калибраторов на VAL.
     T, _ = fit_temperature(val_pairs)

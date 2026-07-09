@@ -10,20 +10,16 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # Числовые константы для поиска
-# ---------------------------------------------------------------------------
 
-OPENSEARCH_LIMIT: int = 5
-FULLTEXT_SEARCH_LIMIT: int = 5
-MAX_QUERY_WORDS_FOR_VARIANTS: int = 4
-MIN_RELEVANCE_RATIO: float = 0.5
+OPENSEARCH_LIMIT = 5
+FULLTEXT_SEARCH_LIMIT = 5
+MAX_QUERY_WORDS_FOR_VARIANTS = 4
+MIN_RELEVANCE_RATIO = 0.5
 
-# ---------------------------------------------------------------------------
 # Стоп-слова для проверки релевантности
-# ---------------------------------------------------------------------------
 
-STOPWORDS_EN: frozenset = frozenset(
+STOPWORDS_EN = frozenset(
     {
         "this",
         "that",
@@ -44,7 +40,7 @@ STOPWORDS_EN: frozenset = frozenset(
     }
 )
 
-STOPWORDS_RU: frozenset = frozenset(
+STOPWORDS_RU = frozenset(
     {
         "это",
         "что",
@@ -61,13 +57,11 @@ STOPWORDS_RU: frozenset = frozenset(
     }
 )
 
-STOPWORDS: frozenset = STOPWORDS_EN | STOPWORDS_RU
+STOPWORDS = STOPWORDS_EN | STOPWORDS_RU
 
-# ---------------------------------------------------------------------------
 # Шумовые токены — результаты с такими подстроками в названии отбрасываются
-# ---------------------------------------------------------------------------
 
-SEARCH_NOISE_TOKENS: frozenset = frozenset(
+SEARCH_NOISE_TOKENS = frozenset(
     {
         # Файлы и медиа
         ".jpg",
@@ -139,11 +133,9 @@ SEARCH_NOISE_TOKENS: frozenset = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
 # Архитектурные термины — результаты с такими словами получают приоритет
-# ---------------------------------------------------------------------------
 
-ARCHITECTURAL_TERMS: frozenset = frozenset(
+ARCHITECTURAL_TERMS = frozenset(
     {
         # Английские
         "cathedral",
@@ -199,11 +191,9 @@ ARCHITECTURAL_TERMS: frozenset = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
 # Паттерны исключения для _is_likely_landmark()
-# ---------------------------------------------------------------------------
 
-LANDMARK_EXCLUDE_PATTERNS: tuple = (
+LANDMARK_EXCLUDE_PATTERNS = (
     # Музыка и искусство (не архитектура)
     r"\bsymphony\b",
     r"\bopera\s+no\b",
@@ -245,11 +235,9 @@ LANDMARK_EXCLUDE_PATTERNS: tuple = (
     r"^бульвар\s+",
 )
 
-# ---------------------------------------------------------------------------
 # Позитивные индикаторы достопримечательностей для _is_likely_landmark()
-# ---------------------------------------------------------------------------
 
-LANDMARK_POSITIVE_PATTERNS: tuple = (
+LANDMARK_POSITIVE_PATTERNS = (
     # Типы зданий
     r"\b(cathedral|church|temple|mosque|synagogue|chapel)\b",
     r"\b(собор|церковь|храм|мечеть|синагога|часовня)\b",
@@ -264,11 +252,9 @@ LANDMARK_POSITIVE_PATTERNS: tuple = (
     r"\b(готический|барокко|ренессанс|романский|неоклассический)\b",
 )
 
-# ---------------------------------------------------------------------------
 # Шумовые префиксы первого предложения Wikipedia-описания
-# ---------------------------------------------------------------------------
 
-DESC_NOISE_PREFIXES: frozenset = frozenset(
+DESC_NOISE_PREFIXES = frozenset(
     {
         "туризм",
         "tourism",
@@ -287,11 +273,9 @@ DESC_NOISE_PREFIXES: frozenset = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
 # Мусорные слова в ответе VLM — туристические фразы вместо названия
-# ---------------------------------------------------------------------------
 
-VLM_RESPONSE_NOISE: frozenset = frozenset(
+VLM_RESPONSE_NOISE = frozenset(
     {
         "экскурси",
         "тур ",
@@ -319,11 +303,9 @@ VLM_RESPONSE_NOISE: frozenset = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
 # Индикаторы сайтов/агрегаторов в суффиксах названий
-# ---------------------------------------------------------------------------
 
-SITE_INDICATORS: frozenset = frozenset(
+SITE_INDICATORS = frozenset(
     {
         "klook",
         "viator",
@@ -345,21 +327,17 @@ SITE_INDICATORS: frozenset = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
 # Regex для удаления мусорных хвостов из названий (компилируем один раз)
-# ---------------------------------------------------------------------------
 
-TAIL_NOISE_RE: re.Pattern = re.compile(
+TAIL_NOISE_RE = re.compile(
     r"\s+(ticket|tickets|билет|билеты|tour|tours|"
     r"тур|туры|visit|посетить|купить|buy|price|цена).*$",
     re.IGNORECASE,
 )
 
-# ---------------------------------------------------------------------------
 # Специальные ключевые слова для проверки релевантности Wikipedia
-# ---------------------------------------------------------------------------
 
-RELEVANCE_SPECIAL_KEYWORDS: frozenset = frozenset(
+RELEVANCE_SPECIAL_KEYWORDS = frozenset(
     {
         "cathedral",
         "church",
@@ -384,11 +362,9 @@ RELEVANCE_SPECIAL_KEYWORDS: frozenset = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
 # Вспомогательные функции
-# ---------------------------------------------------------------------------
 
-MIN_WORD_LENGTH_FOR_RELEVANCE: int = 4
+MIN_WORD_LENGTH_FOR_RELEVANCE = 4
 
 
 def is_likely_landmark(name: str) -> bool:

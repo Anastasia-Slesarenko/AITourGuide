@@ -22,10 +22,8 @@
     builder.save(embeddings, metadata, index)
 """
 
-# ---------------------------------------------------------------
 # Предотвращение segfault на macOS: ограничиваем потоки до
 # импорта нативных библиотек (numpy, torch, faiss).
-# ---------------------------------------------------------------
 import os as _os
 import platform as _platform
 
@@ -39,7 +37,6 @@ if _platform.system() == "Darwin":
     _os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
     _os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
     _os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-# ---------------------------------------------------------------
 
 import json
 import logging
@@ -60,9 +57,7 @@ from transformers import AutoProcessor, SiglipModel
 logger = logging.getLogger(__name__)
 
 
-# ==============================
 # Конфигурация
-# ==============================
 
 
 @dataclass
@@ -118,9 +113,7 @@ class IndexConfig:
             path.parent.mkdir(parents=True, exist_ok=True)
 
 
-# ==============================
 # SigLIP энкодер
-# ==============================
 
 
 class SigLIPEncoder:
@@ -288,9 +281,7 @@ class SigLIPEncoder:
         return np.array(fused)
 
 
-# ==============================
 # DINOv2 энкодер
-# ==============================
 
 
 class DINOv2Encoder:
@@ -411,9 +402,7 @@ class DINOv2Encoder:
         return np.array(fused)
 
 
-# ==============================
 # Фабрика энкодеров
-# ==============================
 
 
 def build_encoder(
@@ -435,9 +424,7 @@ def build_encoder(
     )
 
 
-# ==============================
 # Построитель индекса
-# ==============================
 
 
 class IndexBuilder:
@@ -729,9 +716,7 @@ class IndexBuilder:
         return embeddings, metadata, index
 
 
-# ==============================
 # Точка входа
-# ==============================
 
 
 def main():
