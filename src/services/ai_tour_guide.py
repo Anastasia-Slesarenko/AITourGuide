@@ -10,10 +10,8 @@
 """
 
 import asyncio
-import base64
 import hashlib
 import logging
-import math
 import time
 import traceback
 import uuid
@@ -24,7 +22,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Union, cast
 
-import httpx
 from cachetools import LRUCache, TTLCache
 from PIL import Image
 
@@ -35,13 +32,9 @@ from src.rag.landmark_retriever import (
 )
 
 from .calibration import ConfidenceCalibrator
-from .internet_search import (
-    build_vlm_messages,
-    extract_clean_name,
-    filter_wiki_results,
-    needs_translation,
-    validate_vlm_answer,
-)
+from .image_utils import image_to_base64_data_uri, to_pil_image
+from .internet_search import InternetSearchService, needs_translation
+from .scoring import parse_logprobs_p_yes, text_response_to_p_yes
 from .translator import YandexTranslator
 from .vllm_client import VLLMClient
 from .yandex_search import (
@@ -247,13 +240,6 @@ class AITourGuide:
     Использует vLLM сервер для VLM reranking через OpenAI API.
     """
 
-    MAX_CONTEXT_LENGTH = 200
-    DEFAULT_MAX_RESULTS = 5
-
-    # Варианты токенов Yes/No для парсинга logprobs
-    _YES_VARIANTS = frozenset({"yes", "Yes", "YES", " yes", " Yes"})
-    _NO_VARIANTS = frozenset({"no", "No", "NO", " no", " No"})
-
     def __init__(
         self,
         config: Union["AITourGuideConfig", dict, None] = None,
@@ -318,6 +304,13 @@ class AITourGuide:
             model_name=config.vllm_model_name,
             timeout=config.vllm_timeout,
             max_retries=config.vllm_max_retries,
+        )
+
+        # Сервис fallback-поиска в интернете (Yandex + Wikipedia + верификация)
+        self.internet_search = InternetSearchService(
+            vllm_client=self.vllm_client,
+            yandex_service=self._yandex_service,
+            config=config,
         )
 
         # Калибратор отдаваемой уверенности (isotonic-кривая, фит на val).
@@ -389,48 +382,6 @@ class AITourGuide:
 
     # VLM через vLLM
 
-    def _image_to_base64_data_uri(
-        self,
-        image: Image.Image,
-        max_size: int = 448,
-        quality: int = 85,
-    ) -> str:
-        """Конвертирует PIL Image в base64 data URI для OpenAI API.
-
-        Ресайзит до max_size px по большей стороне чтобы не превышать
-        лимит payload vLLM.
-        """
-        # Ресайз с сохранением пропорций
-        w, h = image.size
-        if max(w, h) > max_size:
-            scale = max_size / max(w, h)
-            new_w = max(1, int(w * scale))
-            new_h = max(1, int(h * scale))
-            image = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
-
-        with BytesIO() as buf:
-            image.save(buf, format="JPEG", quality=quality)
-            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            return f"data:image/jpeg;base64,{b64}"
-
-    @staticmethod
-    def _to_pil_image(image: "Image.Image | str | bytes") -> "Image.Image":
-        """
-        Конвертирует входное изображение в PIL Image.
-
-        Args:
-            image: PIL Image, путь к файлу или байты
-
-        Returns:
-            PIL Image в режиме RGB
-        """
-        if isinstance(image, Image.Image):
-            return image.convert("RGB")
-        if isinstance(image, bytes):
-            return Image.open(BytesIO(image)).convert("RGB")
-        # Строка — путь к файлу
-        return Image.open(image).convert("RGB")
-
     def _load_and_encode_gallery_image(self, candidate_image: str) -> str:
         """
         Синхронно загружает изображение галереи и кодирует в base64 data URI.
@@ -449,7 +400,7 @@ class AITourGuide:
 
         with Image.open(candidate_path) as img:
             pil_img = img.convert("RGB")
-            return self._image_to_base64_data_uri(pil_img)
+            return image_to_base64_data_uri(pil_img)
 
     async def _get_candidate_image_uri(self, candidate_image: str) -> str:
         """
@@ -503,8 +454,8 @@ class AITourGuide:
             Список сообщений для OpenAI API
         """
         if query_uri is None:
-            query_img = self._to_pil_image(query_image)
-            query_uri = self._image_to_base64_data_uri(query_img)
+            query_img = to_pil_image(query_image)
+            query_uri = image_to_base64_data_uri(query_img)
         # Изображение кандидата берём из кэша (lazy load + кэш по пути)
         candidate_uri = await self._get_candidate_image_uri(candidate_image)
         caption = candidate_caption[: self.caption_max_length]
@@ -554,250 +505,6 @@ class AITourGuide:
         return str(response["choices"][0]["message"]["content"]).strip()
 
     # Интернет-поиск
-
-    def _yandex_search_sync(self, image: str | bytes | Image.Image) -> set | None:
-        """
-        Синхронный wrapper для Yandex Image Search.
-        Использует переиспользуемый экземпляр _yandex_service.
-        """
-        if self._yandex_service is None:
-            return None
-        return self._yandex_service.search_by_image(
-            image, num_results=self.DEFAULT_MAX_RESULTS
-        )
-
-    async def _search_internet(
-        self,
-        image: Image.Image | str | bytes,
-        retrieved_descs: list[str],
-        retrieved_names: list[str],
-        fallback_name: str,
-        timeout: float = 90.0,
-    ) -> dict:
-        """
-        Ищет информацию о достопримечательности через Yandex + Wikipedia.
-
-        Пайплайн:
-          1. Yandex Image Search → список pageTitle
-          2. Qwen (этап 1 без подсказок, этап 2 с pageTitle) → чистое название
-          3. Wikipedia ищет по названию от Qwen + pageTitle как запасные
-          4. Выбор best_key с дифференцированным confidence
-
-        Возвращает словарь с полями: found, name, description, confidence.
-        """
-        result = {
-            "found": False,
-            "name": fallback_name,
-            "description": "",
-            "query": None,
-            "confidence": 0.5,
-            # True если интернет-поиск провалился и вернули top-1 из retrieval.
-            "is_fallback_retrieval": False,
-        }
-
-        if self._yandex_service is None:
-            logger.warning("Yandex API ключи не настроены, поиск пропущен")
-            return result
-
-        # Нормализуем image в PIL для VLM (None, если прочитать не удалось)
-        try:
-            pil_image: Image.Image | None = self._to_pil_image(image)
-        except Exception:
-            pil_image = None
-
-        try:
-            found = await asyncio.wait_for(
-                self._do_internet_search(image, pil_image), timeout=timeout
-            )
-            if found:
-                result["found"] = True
-                result["name"] = found["name"]
-                result["description"] = found["description"]
-                result["query"] = found["query"]
-                result["confidence"] = found["confidence"]
-                return result
-        except asyncio.TimeoutError:
-            logger.warning(f"Таймаут интернет-поиска ({timeout}с)")
-        except Exception as e:
-            logger.error(f"Ошибка интернет-поиска: {e}")
-
-        # Fallback: возвращаем top-1 из retrieval
-        if retrieved_names and retrieved_names[0]:
-            result["found"] = True
-            result["name"] = retrieved_names[0]
-            result["query"] = [retrieved_names[0]]
-            result["description"] = retrieved_descs[0] if retrieved_descs else ""
-            # confidence ниже чем при слабом интернет-результате
-            # т.к. retrieval-fallback означает полный провал интернет-поиска
-            result["confidence"] = self.config.internet_confidence_fallback_retrieval
-            result["is_fallback_retrieval"] = True
-
-        return result
-
-    async def _do_internet_search(
-        self,
-        image: Image.Image | str | bytes,
-        pil_image: Image.Image | None,
-    ) -> dict | None:
-        """
-        Выполняет поиск достопримечательности через Yandex + Wikipedia.
-
-        Вынесен из _search_internet() для тестируемости и читаемости.
-        Вызывается под таймаутом через asyncio.wait_for().
-
-        Пайплайн:
-          1. Yandex Image Search + VLM этап 1 (параллельно)
-          2. VLM этап 2 с pageTitle (если этап 1 не дал результата)
-          3. Wikipedia-поиск по vlm_name + pageTitle
-          4. Фильтрация и выбор best_key с дифференцированным confidence
-
-        Returns:
-            Словарь {name, description, query, confidence} или None
-        """
-        # Кодируем query-изображение в base64 один раз —
-        # используется и в этапе 1, и в этапе 2 VLM.
-        image_uri: str | None = (
-            self._image_to_base64_data_uri(pil_image) if pil_image is not None else None
-        )
-
-        # 1. Yandex Image Search (синхронный вызов в потоке) и
-        #    VLM этап 1 (без подсказок) запускаются параллельно.
-        #    VLM этап 1 не зависит от результатов Yandex — модель
-        #    использует собственные визуальные знания без pageTitle.
-        #    Параллельный запуск экономит ~1–3s на Yandex IO.
-        #    Если skip_internet_search_stage1=True — VLM этап 1 пропускается.
-
-        async def _vlm_stage1_no_hints() -> str | None:
-            """VLM этап 1: название без подсказок."""
-            if image_uri is None or self.config.skip_internet_search_stage1:
-                return None
-            try:
-                response = await self.vllm_client.chat_completion(
-                    messages=build_vlm_messages(image_uri, hint=None),
-                    max_tokens=48,
-                    temperature=0.0,
-                )
-                raw = str(response["choices"][0]["message"]["content"]).strip()
-                logger.debug(f"VLM этап 1 (без подсказок, параллельно): {raw!r}")
-                return validate_vlm_answer(raw)
-            except Exception as e:
-                logger.warning(f"Ошибка VLM этап 1 (параллельно): {e}")
-                return None
-
-        yandex_task = asyncio.create_task(
-            asyncio.to_thread(self._yandex_search_sync, image)
-        )
-        vlm_stage1_task = asyncio.create_task(_vlm_stage1_no_hints())
-
-        names_raw, vlm_stage1_result = await asyncio.gather(
-            yandex_task, vlm_stage1_task
-        )
-
-        if not names_raw:
-            logger.info("Yandex не вернул результатов")
-            return None
-
-        # Сортируем по длине: короткие названия обычно точнее
-        page_titles = sorted(names_raw, key=len)
-
-        # 2. Определяем vlm_name:
-        #    - если VLM этап 1 уже дал результат — используем его
-        #    - иначе запускаем VLM этап 2 с pageTitle как подсказками
-        if image_uri is None:
-            logger.warning(
-                "pil_image недоступен, VLM-шаг пропущен — "
-                "поиск по pageTitle без уточнения от Qwen"
-            )
-        vlm_name: str | None = None
-        if vlm_stage1_result is not None:
-            vlm_name = vlm_stage1_result
-            logger.info(f"VLM извлёк название (этап 1, параллельно): {vlm_name!r}")
-        elif image_uri is not None:
-            if not page_titles:
-                logger.info("VLM не смог определить название (нет pageTitle)")
-            else:
-                titles_str = "\n".join(f"- {t}" for t in page_titles[:10])
-                try:
-                    response2 = await self.vllm_client.chat_completion(
-                        messages=build_vlm_messages(image_uri, hint=titles_str),
-                        max_tokens=48,
-                        temperature=0.0,
-                    )
-                    raw2 = str(response2["choices"][0]["message"]["content"]).strip()
-                    logger.debug(f"VLM этап 2 (с подсказками): {raw2!r}")
-                    result2 = validate_vlm_answer(raw2)
-                    if result2:
-                        vlm_name = result2
-                        logger.info(f"VLM извлёк название (этап 2): {vlm_name!r}")
-                    else:
-                        logger.info(
-                            "VLM не смог определить название достопримечательности"
-                        )
-                except Exception as e:
-                    logger.warning(f"Ошибка VLM этап 2: {e}")
-
-        # 3. Wikipedia-поиск — один вызов для всех кандидатов.
-        # Если Qwen дал название — добавляем его первым (приоритет
-        # при выборе best_key ниже), pageTitle идут как запасные.
-        search_names: set = (
-            {vlm_name} | set(page_titles) if vlm_name else set(page_titles)
-        )
-        async with WikipediaService(language="ru") as wiki:
-            wiki_result = await wiki.get_landmark_info(search_names)
-
-        if not any(wiki_result.values()):
-            return None
-
-        # Передаём pageTitle как подсказки для фильтрации нерелевантных
-        # статей. vlm_name передаём отдельно — он пропускает hint-фильтр.
-        filtered = filter_wiki_results(
-            wiki_result,
-            query_hints=page_titles,
-            vlm_name=vlm_name,
-        )
-        if not filtered:
-            return None
-
-        # Выбираем лучший ключ из filtered с дифференцированным confidence:
-        # 1. Точное совпадение с vlm_name → internet_confidence_exact
-        # 2. Частичное совпадение с vlm_name → internet_confidence_partial
-        # 3. Ключ с минимальным числом слов → internet_confidence_fallback_wiki
-        best_key: str
-        match_confidence: float
-        if vlm_name and vlm_name in filtered:
-            best_key = vlm_name
-            match_confidence = self.config.internet_confidence_exact
-        else:
-            partial_match: str | None = None
-            if vlm_name:
-                for key in filtered:
-                    vl = vlm_name.lower()
-                    kl = key.lower()
-                    if vl in kl or kl in vl:
-                        partial_match = key
-                        break
-            if partial_match is not None:
-                best_key = partial_match
-                match_confidence = self.config.internet_confidence_partial
-            else:
-                best_key = min(filtered.keys(), key=lambda n: len(n.split()))
-                match_confidence = self.config.internet_confidence_fallback_wiki
-                logger.debug(
-                    f"Fallback к min(len): выбран '{best_key}' "
-                    f"из {list(filtered.keys())}"
-                )
-
-        # Всегда прогоняем через _extract_clean_name —
-        # даже vlm_name может содержать мусорные суффиксы
-        best_name = extract_clean_name(best_key)
-        logger.info(f"Интернет-поиск: best_key='{best_key}' → best_name='{best_name}'")
-
-        return {
-            "name": best_name,
-            "description": filtered[best_key],
-            "query": page_titles,
-            "confidence": match_confidence,
-        }
 
     # Основной пайплайн предсказания
 
@@ -922,8 +629,8 @@ class AITourGuide:
 
         # Query одно на всех кандидатов — кодируем в base64 один раз: меньше
         # работы CPU и попадание в prefix-кэш vLLM по токенам query-картинки.
-        query_img = self._to_pil_image(image)
-        query_uri = await asyncio.to_thread(self._image_to_base64_data_uri, query_img)
+        query_img = to_pil_image(image)
+        query_uri = await asyncio.to_thread(image_to_base64_data_uri, query_img)
 
         async def _score_candidate(cand: dict) -> dict:
             """Вычисляет P(yes) для одного кандидата."""
@@ -943,10 +650,10 @@ class AITourGuide:
                     top_logprobs=20,
                 )
 
-                p_yes = self._parse_logprobs_p_yes(response)
+                p_yes = parse_logprobs_p_yes(response)
                 if p_yes is None:
                     # logprobs не вернулись — fallback на текстовый ответ
-                    p_yes = self._text_response_to_p_yes(response)
+                    p_yes = text_response_to_p_yes(response)
                     logger.debug(
                         f"logprobs пусты, текст fallback: "
                         f"p_yes={p_yes} "
@@ -992,237 +699,6 @@ class AITourGuide:
             "all_p_yes": all_p_yes,
         }
 
-    def _parse_logprobs_p_yes(self, response: dict) -> float | None:
-        """
-        Извлекает p_yes из logprobs ответа vLLM.
-
-        Единая точка парсинга logprobs для VLM reranking и верификации.
-        Используется в _score_candidate() и _verify_internet_result_with_vlm().
-
-        Args:
-            response: Ответ от vLLM chat_completion
-
-        Returns:
-            p_yes ∈ [0, 1] или None если logprobs недоступны
-            (None — вызывающий код должен использовать текстовый fallback)
-        """
-        logprobs_data = response.get("choices", [{}])[0].get("logprobs", {})
-        if not logprobs_data or not logprobs_data.get("content"):
-            return None
-
-        top_lp = logprobs_data["content"][0].get("top_logprobs", [])
-
-        logit_yes = None
-        logit_no = None
-        for item in top_lp:
-            token = item.get("token", "")
-            logprob = item.get("logprob", -100)
-            if logit_yes is None and token in self._YES_VARIANTS:
-                logit_yes = logprob
-            elif logit_no is None and token in self._NO_VARIANTS:
-                logit_no = logprob
-
-        if logit_yes is not None and logit_no is not None:
-            max_logit = max(logit_yes, logit_no)
-            exp_yes = math.exp(logit_yes - max_logit)
-            exp_no = math.exp(logit_no - max_logit)
-            return exp_yes / (exp_yes + exp_no)
-        elif logit_yes is not None:
-            return 1.0
-        elif logit_no is not None:
-            return 0.0
-        return None
-
-    def _text_response_to_p_yes(self, response: dict) -> float:
-        """
-        Fallback: извлекает p_yes из текстового ответа VLM (без logprobs).
-
-        Args:
-            response: Ответ от vLLM chat_completion
-
-        Returns:
-            0.9 если ответ начинается с "yes", 0.1 если "no", иначе 0.5
-        """
-        text = (
-            str(response.get("choices", [{}])[0].get("message", {}).get("content", ""))
-            .strip()
-            .lower()
-        )
-        if text.startswith("yes"):
-            return 0.9
-        elif text.startswith("no"):
-            return 0.1
-        return 0.5
-
-    async def _fetch_image_from_url(self, url: str) -> Image.Image | None:
-        """
-        Скачивает изображение по URL и возвращает PIL Image.
-
-        Использует User-Agent совместимый с Wikimedia политикой доступа
-        (upload.wikimedia.org блокирует запросы без корректного User-Agent).
-
-        Args:
-            url: URL изображения
-
-        Returns:
-            PIL Image или None при ошибке
-        """
-        try:
-            headers = {
-                "User-Agent": (
-                    "AITourGuide/1.0 (slesarenko221999@gmail.com) educational bot"
-                )
-            }
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(15.0),
-                headers=headers,
-                follow_redirects=True,
-            ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return Image.open(BytesIO(response.content)).convert("RGB")
-        except Exception as e:
-            logger.warning(f"Не удалось скачать thumbnail {url}: {e}")
-            return None
-
-    async def _verify_internet_result_with_vlm(
-        self,
-        image: Image.Image,
-        landmark_name: str,
-        description: str,
-        wiki_service: WikipediaService | None = None,
-    ) -> float:
-        """
-        Верифицирует результат интернет-поиска через VLM.
-
-        Два режима в зависимости от доступности Wikipedia thumbnail:
-
-        1. Thumbnail доступен → промпт идентичен prepare_vlm_messages():
-           Query Photo + Candidate Photo (Wikipedia thumbnail) + вопрос.
-           Это формат обучения VLM reranker — наиболее точный p_yes.
-
-        2. Thumbnail недоступен → промпт с одним фото + текстовый контекст:
-           Photo + вопрос с названием и описанием из Wikipedia.
-           Модель оценивает соответствие фото и текстового описания объекта.
-
-        Args:
-            image: PIL-изображение запроса
-            landmark_name: Название из интернет-поиска (до перевода,
-                EN — VLM обучен на английском)
-            description: Описание из Wikipedia (до перевода)
-            wiki_service: Открытый WikipediaService для получения thumbnail.
-
-        Returns:
-            p_yes ∈ [0, 1]
-        """
-        try:
-            query_uri = self._image_to_base64_data_uri(image)
-            caption = description[: self.caption_max_length] if description else ""
-
-            # Пытаемся получить thumbnail из Wikipedia.
-            # Если thumbnail доступен — промпт идентичен prepare_vlm_messages()
-            # (Query Photo + Candidate Photo) — формат обучения.
-            # Если недоступен — промпт с одним фото и текстовым контекстом:
-            # модель оценивает "является ли объект на фото данным landmark"
-            # опираясь на название и описание из Wikipedia.
-            candidate_uri: str | None = None
-            if wiki_service is not None:
-                thumb_url = await wiki_service.get_thumbnail_url(landmark_name)
-                if thumb_url:
-                    thumb_img = await self._fetch_image_from_url(thumb_url)
-                    if thumb_img is not None:
-                        candidate_uri = self._image_to_base64_data_uri(thumb_img)
-                        logger.info(f"Wikipedia thumbnail скачан для '{landmark_name}'")
-                    else:
-                        logger.warning(
-                            f"Не удалось скачать thumbnail для "
-                            f"'{landmark_name}': {thumb_url}"
-                        )
-
-            if candidate_uri is not None:
-                # Формат обучения: Query Photo + Candidate Photo.
-                # Строим сообщения напрямую из готовых URI —
-                # НЕ вызываем prepare_vlm_messages() с заглушкой,
-                # иначе она попытается открыть файл "/data/images/__uri__".
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Query Photo:"},
-                            {"type": "image_url", "image_url": {"url": query_uri}},
-                            {"type": "text", "text": "Candidate Photo:"},
-                            {"type": "image_url", "image_url": {"url": candidate_uri}},
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"Question: Are these photos showing the same "
-                                    f'landmark: "{landmark_name}"?\n'
-                                    f"Candidate details: {caption}\n"
-                                    f"Answer only with Yes or No."
-                                ),
-                            },
-                        ],
-                    }
-                ]
-                logger.info(
-                    f"VLM верификация: thumbnail режим "
-                    f"(Query+Candidate) для '{landmark_name}'"
-                )
-            else:
-                # Thumbnail недоступен: один фото + название + описание.
-                # Модель оценивает соответствие фото и текстового описания
-                # объекта из Wikipedia.
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Photo:"},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": query_uri},
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    f"Question: Is the landmark shown in "
-                                    f'this photo "{landmark_name}"?\n'
-                                    f"Description: {caption}\n"
-                                    f"Answer only with Yes or No."
-                                ),
-                            },
-                        ],
-                    }
-                ]
-                logger.info(
-                    f"VLM верификация: текстовый режим "
-                    f"(нет thumbnail) для '{landmark_name}'"
-                )
-
-            response = await self.vllm_client.chat_completion(
-                messages=messages,
-                max_tokens=1,
-                temperature=0.0,
-                logprobs=True,
-                top_logprobs=20,
-            )
-
-            p_yes = self._parse_logprobs_p_yes(response)
-            if p_yes is None:
-                p_yes = self._text_response_to_p_yes(response)
-                logger.info(
-                    f"VLM верификация (logprobs недоступны, текст fallback): "
-                    f"'{landmark_name}' → p_yes={p_yes}"
-                )
-            else:
-                logger.info(
-                    f"VLM верификация (logprobs): '{landmark_name}' → p_yes={p_yes:.4f}"
-                )
-            return p_yes
-
-        except Exception as e:
-            logger.warning(f"Ошибка VLM верификации для '{landmark_name}': {e}")
-            return 0.5
-
     async def _enhance_with_internet_search(
         self,
         image: Image.Image,
@@ -1236,7 +712,7 @@ class AITourGuide:
         search_input = image if image_path == "bytes_image" else str(image_path)
 
         t0 = time.time()
-        search_result = await self._search_internet(
+        search_result = await self.internet_search.search(
             image=search_input,
             retrieved_descs=retrieved_descs,
             retrieved_names=retrieved_names,
@@ -1293,7 +769,7 @@ class AITourGuide:
         # Открываем WikipediaService для получения thumbnail —
         # промпт будет идентичен prepare_vlm_messages() (обучение).
         async with WikipediaService(language="ru", fallback_lang="en") as wiki_svc:
-            verified_p_yes = await self._verify_internet_result_with_vlm(
+            verified_p_yes = await self.internet_search.verify(
                 image=image,
                 landmark_name=search_result["name"],
                 description=search_result["description"],

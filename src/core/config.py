@@ -30,7 +30,9 @@ class Settings(BaseSettings):
 
     # RAG / retrieval
     top_k_retrieval: int = 10
-    confidence_threshold: float = 0.5
+    # Порог по сырому p_yes: accept/reject (known/unknown) и запуск интернет-поиска.
+    # Youden-оптимум LoRA; совпадает с ACCEPT_THRESHOLD в calibration.py.
+    confidence_threshold: float = 0.472656
     enable_internet_search: bool = True
 
     # Калибровка отдаваемой уверенности (isotonic-кривая, фит на val)

@@ -19,7 +19,7 @@ class TestSettings:
         assert s.predict_timeout == 90
         assert s.max_file_size_mb == 10
         assert s.top_k_retrieval == 10
-        assert s.confidence_threshold == 0.5
+        assert s.confidence_threshold == 0.472656
 
     def test_file_size_conversion_to_bytes(self):
         """max_file_size_bytes = max_file_size_mb * 1024 * 1024."""
