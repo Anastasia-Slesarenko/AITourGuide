@@ -139,7 +139,7 @@ def make_collate_fn(
             # Перемешиваем чтобы позитив не всегда был первым
             random.shuffle(selected)
 
-            # FIX: вес позитива = n_neg (реальный дисбаланс в батче).
+            # вес позитива = n_neg (реальный дисбаланс в батче).
             # При max_pairs=12: 1 позитив + 11 негативов → weight_pos=11.
             # Это гарантирует, что суммарный градиент от позитива ≥ градиенту
             # от всех негативов вместе взятых, и модель не коллапсирует
@@ -307,7 +307,7 @@ class RerankTrainer(Trainer):
         self.metrics_callback = metrics_callback
         self.label_smoothing = label_smoothing
 
-        # используем convert_tokens_to_ids как в eval.py FIX #16 —
+        # используем convert_tokens_to_ids как в eval.py —
         # возвращает ровно один id без BPE-контекста. encode() может добавлять
         # пробел перед токеном в зависимости от позиции (BPE-сплит).
         _tokenizer = getattr(processor, "tokenizer", processor)
@@ -473,7 +473,7 @@ class MetricsCallback(TrainerCallback):
         total_valid_queries = 0
         none_correct = 0
         total_none_queries = 0
-        # FIX: метрики по hardness негативов в батче, а не по типу позитива.
+        # метрики по hardness негативов в батче, а не по типу позитива.
         # "hard" случай = в кандидатах есть хотя бы один hard-негатив (score>=0.85)
         # "semi_hard" случай = нет hard, но есть semi_hard негатив
         # "easy" случай = все негативы easy (score<0.75) — лёгкий для reranker
@@ -486,13 +486,13 @@ class MetricsCallback(TrainerCallback):
         eval_loss_sum = 0.0
         eval_loss_count = 0
 
-        # PERF: device вычисляем один раз вне цикла
+        # device вычисляем один раз вне цикла
         device = next(self.model.parameters()).device
-        # PERF: увеличен batch_size для eval — меньше forward pass-ов,
+        # увеличен batch_size для eval — меньше forward pass-ов,
         # лучше утилизация GPU. T4 при inference_mode тянет 8 пар (16 изображений).
         eval_batch_size = 8
 
-        # FIX #16: inference_mode быстрее и безопаснее no_grad (как в eval.py)
+        # inference_mode быстрее и безопаснее no_grad (как в eval.py)
         with torch.inference_mode():
             pbar = tqdm(subset_indices, desc="Evaluating", leave=False)
             for idx in pbar:
@@ -510,9 +510,9 @@ class MetricsCallback(TrainerCallback):
                     batch_candidates = candidates[batch_start:batch_end]
 
                     batch_texts = []
-                    # FIX #6: список пар изображений (как в eval.py)
+                    # список пар изображений (как в eval.py)
                     batch_images_grouped = []
-                    # FIX #14: отслеживаем валидные индексы для корректного
+                    # отслеживаем валидные индексы для корректного
                     # маппинга скоров обратно на позиции кандидатов
                     batch_valid_indices = []
 
@@ -525,9 +525,9 @@ class MetricsCallback(TrainerCallback):
                         if query_img is None:
                             continue
 
-                        # FIX batch_size>1: ресайз до фиксированного
+                        # ресайз до фиксированного
                         # разрешения — одинаковое количество патчей в батче.
-                        # PERF: BILINEAR быстрее LANCZOS при незначительной
+                        # BILINEAR быстрее LANCZOS при незначительной
                         # потере качества для eval (не для финального теста).
                         if fixed_image_size is not None:
                             query_img = query_img.resize(
@@ -543,8 +543,8 @@ class MetricsCallback(TrainerCallback):
                             add_generation_prompt=True
                         )
                         batch_texts.append(text)
-                        # FIX #6: пара [query, candidate] как в eval.py
-                        # FIX #17: копируем чтобы избежать in-place мутации
+                        # пара [query, candidate] как в eval.py
+                        # копируем чтобы избежать in-place мутации
                         batch_images_grouped.append(
                             [query_img.copy(), cand_img.copy()]
                         )
@@ -555,7 +555,7 @@ class MetricsCallback(TrainerCallback):
                         scores.extend([0.0] * len(batch_candidates))
                         continue
 
-                    # FIX #3: разворачиваем пары в плоский список как в eval.py FIX #8
+                    # разворачиваем пары в плоский список как в eval.py
                     flat_batch_images = [
                         img
                         for pair in batch_images_grouped
@@ -569,14 +569,14 @@ class MetricsCallback(TrainerCallback):
                         padding=True,
                     )
 
-                    # FIX #13: закрываем PIL Images ПОСЛЕ передачи в процессор
+                    # закрываем PIL Images ПОСЛЕ передачи в процессор
                     for pair in batch_images_grouped:
                         for img in pair:
                             img.close()
 
                     inputs = {k: v.to(device) for k, v in inputs.items()}
 
-                    # PERF: прямой forward pass вместо generate(max_new_tokens=1).
+                    # прямой forward pass вместо generate(max_new_tokens=1).
                     # Синхронизирован с eval.py: outputs.logits[:, -1, :] —
                     # логиты последнего токена промпта = P(next token | prompt),
                     # что эквивалентно первому токену generate() при greedy.
@@ -597,7 +597,7 @@ class MetricsCallback(TrainerCallback):
                     # (здесь нет прямого доступа к labels, поэтому считаем BCE
                     # по relevance_logits = logit_yes - logit_no)
 
-                    # FIX #14: маппим скоры обратно на исходные индексы
+                    # маппим скоры обратно на исходные индексы
                     # кандидатов (как в eval.py строки 212-218)
                     score_ptr = 0
                     for ci in range(len(batch_candidates)):
@@ -677,11 +677,11 @@ class MetricsCallback(TrainerCallback):
                             easy_correct += 1
                 else:
                     total_none_queries += 1
-                    # FIX #2: порог 0.5 (вероятности из softmax всегда [0,1])
+                    # порог 0.5 (вероятности из softmax всегда [0,1])
                     if len(scores) == 0 or float(np.max(scores_arr)) < none_threshold:
                         none_correct += 1
 
-        # FIX #8: возвращаем модель в train() режим после оценки.
+        # возвращаем модель в train() режим после оценки.
         self.model.train()
 
         eval_hit_1 = (
@@ -743,8 +743,8 @@ class MetricsCallback(TrainerCallback):
 
         print(f"\nВычисление метрик на шаге {state.global_step}...")
 
-        # FIX #2: передаём self.none_threshold для синхронизации с eval.py
-        # FIX: subset_size=100 вместо 50 — уменьшает дисперсию метрик.
+        # передаём self.none_threshold для синхронизации с eval.py
+        # subset_size=100 вместо 50 — уменьшает дисперсию метрик.
         # При 50 сэмплах Easy/Semi-Hard могут содержать 1-3 примера,
         # что даёт скачки 0→1→0. 100 сэмплов стабилизирует оценку.
         metrics = self.evaluate_on_subset(
@@ -822,7 +822,7 @@ class MetricsCallback(TrainerCallback):
                 print(f"Ошибка сохранения чекпоинта: {e}")
         else:
             self.es_counter += 1
-            # FIX #3: self.patience вместо args.early_stopping_patience
+            # self.patience вместо args.early_stopping_patience
             # (TrainingArguments не имеет такого атрибута — AttributeError)
             print(f"ES Counter: {self.es_counter}/{self.patience}")
             if self.es_counter >= self.patience:
@@ -860,14 +860,14 @@ def run_experiment(
     seed=42,
     early_stopping_patience=5,
     eval_every_n_steps=50,
-    # FIX batch_size>1: фиксированный размер изображений для корректного
+    # фиксированный размер изображений для корректного
     # батчинга в Qwen2-VL. (448, 448) — стандартный тайл Qwen2-VL.
     # None отключает ресайз (только batch_size=1 безопасен без ресайза).
     fixed_image_size: tuple = (448, 448),
-    # FIX #2: none_threshold синхронизирован с eval.py threshold_for_none.
+    # none_threshold синхронизирован с eval.py threshold_for_none.
     # Порог для none-of-the-above: max(scores) < threshold → unknown.
     none_threshold: float = 0.5,
-    # PERF: число пар (query, candidate) на сэмпл в collate.
+    # число пар (query, candidate) на сэмпл в collate.
     # Каждый сэмпл имеет ~15 кандидатов; обрабатывать все = 30 изображений/шаг.
     # 4 = 1 позитив + 3 негатива → 8 изображений/шаг, ~4x быстрее.
     max_pairs_per_sample: int = 4,
@@ -929,8 +929,8 @@ def run_experiment(
         val_dataset.image_base_dir = IMAGE_DIR
 
         # Функция сборки батча (collate)
-        # FIX batch_size>1: передаём fixed_image_size для корректного батчинга
-        # PERF: max_pairs_per_sample ограничивает число пар на сэмпл
+        # передаём fixed_image_size для корректного батчинга
+        # max_pairs_per_sample ограничивает число пар на сэмпл
         data_collator = make_collate_fn(
             processor, IMAGE_DIR,
             fixed_image_size=fixed_image_size,
@@ -938,9 +938,9 @@ def run_experiment(
         )
 
         # Создаем callback сначала
-        # FIX #3: передаём early_stopping_patience в MetricsCallback
-        # FIX batch_size>1: передаём fixed_image_size для eval батчинга
-        # FIX #2: передаём none_threshold для синхронизации с eval.py
+        # передаём early_stopping_patience в MetricsCallback
+        # передаём fixed_image_size для eval батчинга
+        # передаём none_threshold для синхронизации с eval.py
         callback = MetricsCallback(
             val_dataset, processor, model, output_dir,
             eval_every_n_steps=eval_every_n_steps,
@@ -950,7 +950,7 @@ def run_experiment(
             none_threshold=none_threshold,
         )
 
-        # FIX #11: передаём label_smoothing в RerankTrainer
+        # передаём label_smoothing в RerankTrainer
         trainer = RerankTrainer(
             processor=processor,
             model=model,
@@ -1026,19 +1026,19 @@ if __name__ == "__main__":
         max_pairs_per_sample=8,
         # Возвращаем lr=2e-5 — лучший результат в attn-only конфигурации.
         learning_rate=2e-5,
-        # FIX: epochs=2 вместо 5 — при epochs=5 деградация началась на epoch 0.43.
+        # epochs=2 вместо 5 — при epochs=5 деградация началась на epoch 0.43.
         # Модель достигает пика на ~700 шагах (~epoch 0.31) и затем переобучается.
         # epochs=2 даёт ~2100 шагов — достаточно с учётом early stopping.
         num_train_epochs=2,
         lr_scheduler_type="cosine",
-        # FIX: увеличен warmup с 0.1 до 0.15 — провал Hit@1/MRR на шаге 100
+        # увеличен warmup с 0.1 до 0.15 — провал Hit@1/MRR на шаге 100
         # совпадал с окончанием warmup при 0.1. Более длинный warmup стабилизирует
         # переход к полному LR.
         warmup_ratio=0.15,
-        # FIX: увеличен weight_decay с 0.01 до 0.05 — усиливает регуляризацию,
+        # увеличен weight_decay с 0.01 до 0.05 — усиливает регуляризацию,
         # предотвращает переобучение на Yes/No с высокой уверенностью.
         weight_decay=0.05,
-        # FIX: label_smoothing=0.05 — без сглаживания модель давала None Accuracy=0
+        # label_smoothing=0.05 — без сглаживания модель давала None Accuracy=0
         # (всегда предсказывала Yes с высокой уверенностью). Сглаживание 0.05
         # снижает уверенность и позволяет модели предсказывать "нет совпадения".
         label_smoothing=0.05,

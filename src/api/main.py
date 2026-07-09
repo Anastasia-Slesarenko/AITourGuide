@@ -23,7 +23,7 @@ from src.api.routes import (
 from src.core.config import settings
 from src.core.logging import setup_logging
 from src.core.metrics import METRICS
-from src.services.ai_tour_guide import AITourGuide
+from src.services.ai_tour_guide import AITourGuide, AITourGuideConfig
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +49,7 @@ async def lifespan(app: FastAPI):
     # Инициализация AITourGuide
     logger.info("Инициализация AITourGuide...")
     try:
-        guide = AITourGuide(
-            index_dir=str(settings.index_dir_abs),
-            vllm_base_url=settings.vllm_base_url,
-            vllm_model_name=settings.vllm_model_name,
-            vllm_timeout=settings.vllm_timeout,
-            vllm_max_retries=settings.vllm_max_retries,
-            device=settings.device,
-            siglip_model_path=settings.siglip_model_path,
-            images_base_dir=settings.images_base_dir,
-            top_k_retrieval=settings.top_k_retrieval,
-            vlm_threshold=settings.confidence_threshold,
-            enable_internet_search=settings.enable_internet_search,
-            calibrate_confidence=settings.calibrate_confidence,
-            calibration_curve_path=str(settings.calibration_curve_path_abs),
-            yc_folder_id=settings.yc_folder_id,
-            yc_api_key=settings.yc_api_key,
-        )
+        guide = AITourGuide(config=AITourGuideConfig.from_settings(settings))
         set_guide(guide)
         logger.info("AITourGuide инициализирован успешно")
 

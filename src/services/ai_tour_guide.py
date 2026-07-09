@@ -11,12 +11,9 @@
 
 import asyncio
 import base64
-import bisect
 import hashlib
-import json
 import logging
 import math
-import re
 import time
 import traceback
 import uuid
@@ -37,15 +34,16 @@ from src.rag.landmark_retriever import (
     LandmarkRetriever,
 )
 
-from .search_filters import (
-    ARCHITECTURAL_TERMS,
-    DESC_NOISE_PREFIXES,
-    SEARCH_NOISE_TOKENS,
-    SITE_INDICATORS,
-    TAIL_NOISE_RE,
-    VLM_RESPONSE_NOISE,
+from .calibration import ConfidenceCalibrator
+from .internet_search import (
+    build_vlm_messages,
+    extract_clean_name,
+    filter_wiki_results,
+    needs_translation,
+    validate_vlm_answer,
 )
 from .translator import YandexTranslator
+from .vllm_client import VLLMClient
 from .yandex_search import (
     WikipediaService,
     YandexSearchService,
@@ -143,6 +141,28 @@ class AITourGuideConfig:
         """Конвертирует конфигурацию в словарь."""
         return asdict(self)
 
+    @classmethod
+    def from_settings(cls, settings) -> "AITourGuideConfig":
+        """Собирает конфиг сервиса из app-настроек (Settings) — единая точка
+        маппинга, чтобы поля не расходились между окружением и сервисом."""
+        return cls(
+            index_dir=str(settings.index_dir_abs),
+            vllm_base_url=settings.vllm_base_url,
+            vllm_model_name=settings.vllm_model_name,
+            vllm_timeout=settings.vllm_timeout,
+            vllm_max_retries=settings.vllm_max_retries,
+            device=settings.device,
+            siglip_model_path=settings.siglip_model_path,
+            images_base_dir=settings.images_base_dir,
+            top_k_retrieval=settings.top_k_retrieval,
+            vlm_threshold=settings.confidence_threshold,
+            enable_internet_search=settings.enable_internet_search,
+            calibrate_confidence=settings.calibrate_confidence,
+            calibration_curve_path=str(settings.calibration_curve_path_abs),
+            yc_folder_id=settings.yc_folder_id,
+            yc_api_key=settings.yc_api_key,
+        )
+
 
 # Собственные счётчики для /v1/health и /v1/info — дублируют Prometheus,
 # но не зависят от его приватного API.
@@ -218,120 +238,6 @@ def _update_metrics(result: dict, image_size_bytes: int = 0) -> None:
     # Размер изображения
     if image_size_bytes > 0:
         METRICS.image_size_bytes.observe(image_size_bytes)
-
-
-class VLLMClient:
-    """HTTP-клиент для vLLM сервера (совместимый с OpenAI API)."""
-
-    def __init__(
-        self,
-        base_url: str,
-        model_name: str,
-        timeout: float = 30.0,
-        max_retries: int = 3,
-    ):
-        self.base_url = base_url.rstrip("/")
-        self.model_name = model_name
-        self.timeout = timeout
-        self.max_retries = max_retries
-
-        self.client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout),
-            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-        )
-        # Отдельный клиент с маленьким пулом для health-check, чтобы инференс
-        # под нагрузкой не блокировал liveness-проверки.
-        self.health_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(5.0),
-            limits=httpx.Limits(max_keepalive_connections=1, max_connections=2),
-        )
-        logger.info(f"vLLM клиент инициализирован: {base_url}")
-
-    async def health_check(self) -> bool:
-        """Проверяет доступность vLLM сервера."""
-        try:
-            # vLLM healthcheck на /health (без /v1 префикса)
-            base = self.base_url.rstrip("/")
-            if base.endswith("/v1"):
-                base = base[:-3]
-            response = await self.health_client.get(f"{base}/health")
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"vLLM health-check не прошёл: {e}")
-            return False
-
-    async def chat_completion(
-        self,
-        messages: list[dict],
-        max_tokens: int = 256,
-        temperature: float = 0.0,
-        logprobs: bool = False,
-        top_logprobs: int | None = None,
-    ) -> dict:
-        """
-        Отправляет запрос к vLLM серверу через OpenAI API.
-
-        Args:
-            messages: Список сообщений в формате OpenAI
-            max_tokens: Максимум новых токенов
-            temperature: Температура генерации
-            logprobs: Возвращать ли logprobs
-            top_logprobs: Количество top logprobs
-
-        Returns:
-            Ответ от vLLM сервера
-        """
-        payload: dict[str, Any] = {
-            "model": self.model_name,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": False,
-        }
-
-        if logprobs:
-            payload["logprobs"] = True
-            if top_logprobs:
-                payload["top_logprobs"] = top_logprobs
-
-        last_exception: Exception | None = None
-        for attempt in range(self.max_retries):
-            try:
-                response = await self.client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=payload,
-                )
-                response.raise_for_status()
-                return cast(dict, response.json())
-
-            except httpx.HTTPStatusError as e:
-                last_exception = e
-                logger.warning(
-                    f"vLLM HTTP ошибка "
-                    f"(попытка {attempt + 1}/{self.max_retries}): "
-                    f"{e.response.status_code}"
-                )
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2**attempt)
-
-            except httpx.RequestError as e:
-                last_exception = e
-                logger.warning(
-                    f"vLLM ошибка запроса "
-                    f"(попытка {attempt + 1}/{self.max_retries}): {e}"
-                )
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(2**attempt)
-
-        raise RuntimeError(
-            f"vLLM запрос не выполнен после {self.max_retries} попыток: "
-            f"{last_exception}"
-        )
-
-    async def close(self):
-        """Закрывает HTTP-клиенты."""
-        await self.client.aclose()
-        await self.health_client.aclose()
 
 
 class AITourGuide:
@@ -414,13 +320,17 @@ class AITourGuide:
             max_retries=config.vllm_max_retries,
         )
 
-        # Калибратор отдаваемой уверенности (isotonic, фит на val). Загружаем
-        # один раз; если файла нет или калибровка выключена — прод отдаёт сырой
-        # p_yes. Монотонная кривая → порог и решения не меняет.
-        self._calib_x: list[float] | None = None
-        self._calib_y: list[float] | None = None
-        if config.calibrate_confidence:
-            self._load_calibration_curve(config.calibration_curve_path)
+        # Калибратор отдаваемой уверенности (isotonic-кривая, фит на val).
+        # Без кривой отдаём сырой p_yes; монотонность порог и решения не меняет.
+        self.calibrator = ConfidenceCalibrator(
+            curve_path=(
+                config.calibration_curve_path
+                if config.calibrate_confidence
+                else None
+            ),
+            band_high=config.confidence_band_high,
+            band_medium=config.confidence_band_medium,
+        )
 
         # base64 data URI изображений галереи, заполняется лениво.
         self._gallery_image_cache: LRUCache = LRUCache(maxsize=500)
@@ -452,12 +362,8 @@ class AITourGuide:
 
         try:
             health["components"]["retriever"] = {
-                "status": "ok" if hasattr(self, "retriever") else "error",
-                "index_size": (
-                    len(self.retriever.gallery_metadata)
-                    if hasattr(self, "retriever")
-                    else 0
-                ),
+                "status": "ok",
+                "index_size": len(self.retriever.gallery_metadata),
             }
 
             vllm_ok = await self.vllm_client.health_check()
@@ -660,259 +566,6 @@ class AITourGuide:
             image, num_results=self.DEFAULT_MAX_RESULTS
         )
 
-    def _filter_wiki_results(
-        self,
-        wiki_result: dict[str, str],
-        query_hints: list[str] | None = None,
-        vlm_name: str | None = None,
-    ) -> dict[str, str]:
-        """
-        Фильтрует результаты Wikipedia:
-        - убирает шумовые названия (SEARCH_NOISE_TOKENS)
-        - убирает описания которые явно не про достопримечательность
-        - если переданы query_hints — отбрасывает статьи чьё название
-          не имеет ни одного общего значимого слова с подсказками
-          (защита от нерелевантных fulltext-результатов)
-        - статья с именем vlm_name всегда проходит hint_words фильтр
-          (VLM уже подтвердил релевантность)
-        - даёт приоритет архитектурным объектам (ARCHITECTURAL_TERMS)
-
-        Возвращает пустой словарь если все результаты отфильтрованы.
-
-        Args:
-            wiki_result: Результаты Wikipedia {название: описание}
-            query_hints: Список pageTitle для проверки релевантности
-            vlm_name: Название от VLM — пропускает hint_words фильтр
-        """
-        # Собираем значимые слова из подсказок (длина >= 4, не стоп-слова)
-        hint_words: set = set()
-        if query_hints:
-            for hint in query_hints:
-                for w in hint.lower().split():
-                    if len(w) >= 4:
-                        hint_words.add(w.strip(".,!?;:\"'"))
-
-        # Нормализованное vlm_name для сравнения
-        vlm_name_lower = vlm_name.lower().strip() if vlm_name else None
-
-        filtered = {}
-        for name, desc in wiki_result.items():
-            if not desc:
-                continue
-            # Фильтр по названию
-            if any(x in name.lower() for x in SEARCH_NOISE_TOKENS):
-                logger.debug(f"Отфильтровано по названию: '{name}'")
-                continue
-            # Фильтр по первому предложению описания
-            first_sentence = desc.split(".")[0].lower()
-            if any(x in first_sentence for x in DESC_NOISE_PREFIXES):
-                logger.debug(
-                    f"Отфильтровано по описанию: '{name}' → '{first_sentence[:80]}'"
-                )
-                continue
-            # Фильтр по релевантности к подсказкам:
-            # название статьи должно иметь хотя бы одно общее слово
-            # с pageTitle (защита от нерелевантных fulltext-результатов).
-            # Исключение: статья с именем от VLM всегда проходит —
-            # VLM уже подтвердил её релевантность визуально.
-            is_vlm_match = (
-                vlm_name_lower is not None and name.lower().strip() == vlm_name_lower
-            )
-            if hint_words and not is_vlm_match:
-                name_words = {
-                    w.strip(".,!?;:\"'") for w in name.lower().split() if len(w) >= 4
-                }
-                if name_words and not name_words & hint_words:
-                    logger.debug(
-                        f"Отфильтровано по релевантности: '{name}' "
-                        f"(нет общих слов с подсказками)"
-                    )
-                    continue
-            filtered[name] = desc
-
-        # Если vlm_name точно есть в filtered — возвращаем только его.
-        # Это предотвращает выбор общих статей ('National monument')
-        # вместо конкретного названия от VLM ('Statue of Liberty').
-        if vlm_name_lower:
-            vlm_exact = {
-                name: desc
-                for name, desc in filtered.items()
-                if name.lower().strip() == vlm_name_lower
-            }
-            if vlm_exact:
-                return vlm_exact
-
-        # Приоритет архитектурным объектам у которых есть собственное имя
-        # (название длиннее одного архитектурного термина).
-        # Исключаем чисто родовые названия типа 'National monument',
-        # 'Memorial', 'Museum' — они не несут конкретики.
-        priority = {}
-        for name, desc in filtered.items():
-            name_lower = name.lower()
-            for term in ARCHITECTURAL_TERMS:
-                if term in name_lower:
-                    # Проверяем что есть слова помимо самого термина
-                    other_words = name_lower.replace(term, "").split()
-                    other_words = [
-                        w.strip(".,!?;:\"'")
-                        for w in other_words
-                        if len(w.strip(".,!?;:\"'")) > 2
-                    ]
-                    if other_words:
-                        priority[name] = desc
-                    break
-        if priority:
-            return priority
-        # Возвращаем filtered (может быть пустым) — не откатываемся к
-        # нефильтрованному wiki_result чтобы не пропустить мусор
-        return filtered
-
-    def _needs_translation(self, text: str) -> bool:
-        """
-        Определяет нужен ли перевод текста на русский.
-
-        Считает долю кириллических букв среди всех букв.
-        Если < 30% — текст считается английским и требует перевода.
-
-        Простая проверка "есть ли хоть одна кириллица" не работает:
-        Wikipedia EN может содержать транслитерацию в скобках
-        (напр. "Saint Isaac's Cathedral (Russian: Исаакиевский собор)").
-
-        Args:
-            text: Текст для проверки
-
-        Returns:
-            True если текст нужно переводить на русский
-        """
-        if not text:
-            return False
-        letters = [c for c in text if c.isalpha()]
-        if not letters:
-            return False
-        cyrillic = sum(1 for c in letters if "\u0400" <= c <= "\u04ff")
-        ratio = cyrillic / len(letters)
-        return ratio < 0.3
-
-    def _extract_clean_name(self, raw_name: str) -> str:
-        """
-        Очищает название от мусорных хвостов и сокращает до сути.
-
-        Обрабатывает случаи когда WikipediaService возвращает исходный
-        pageTitle как ключ (например "Hagia Sophia Ticket - Klook Australia"),
-        а не реальное название Wikipedia-статьи.
-        """
-        name = raw_name
-
-        # 1. Убираем суффиксы после :: (личные блоги, авторы)
-        name = re.split(r"\s*::\s*", name)[0].strip()
-
-        # 2. Убираем суффиксы после | (сайты, агрегаторы)
-        name = re.split(r"\s*\|\s*", name)[0].strip()
-
-        # 3. Убираем суффиксы после - (агрегаторы, сайты, страны)
-        #    Но только если вторая часть — сайт/страна или первая содержит
-        #    архитектурный термин (чтобы не обрезать "Notre-Dame")
-        parts = re.split(r"\s+[-–—]\s+", name)
-        if len(parts) > 1:
-            first = parts[0].strip()
-            second = parts[1].strip().lower()
-            if any(s in second for s in SITE_INDICATORS):
-                name = first
-            elif any(t in first.lower() for t in ARCHITECTURAL_TERMS):
-                name = first
-
-        # 4. Убираем слова-мусор в конце (ticket, билет, tour и т.д.)
-        name = TAIL_NOISE_RE.sub("", name).strip()
-
-        # 5. Если есть архитектурный термин — берём контекст вокруг него.
-        #    Берём до 2 слов до термина + сам термин (без слова после —
-        #    чтобы не захватить лишнее: "Hagia Sophia Grand Mosque" → "Sophia
-        #    Grand Mosque" вместо "Hagia Sophia").
-        words = name.split()
-        for i, w in enumerate(words):
-            if w.lower() in ARCHITECTURAL_TERMS:
-                start = max(0, i - 2)
-                arch_name = " ".join(words[start : i + 1]).strip()
-                return arch_name if len(arch_name) >= 3 else name
-
-        # 6. Если нет архитектурного термина но строка длинная (> 6 слов) —
-        #    берём первые 4 слова. Длинные ключи Wikipedia типа
-        #    "Istanbul meta turistica... Hagia sophia, Istanbul, Byzantine"
-        #    не должны возвращаться целиком.
-        if len(words) > 6:
-            name = " ".join(words[:4]).strip()
-
-        return name
-
-    def _validate_vlm_answer(self, answer: str) -> str | None:
-        """
-        Проверяет и очищает ответ VLM на запрос названия достопримечательности.
-
-        Returns:
-            Очищенное название или None если ответ является мусором.
-        """
-        answer = answer.strip("\"'«»").strip()
-        if not answer or answer.lower() in ("unknown", "none", ""):
-            return None
-        # Фильтр туристического мусора
-        answer_lower = answer.lower()
-        if any(noise in answer_lower for noise in VLM_RESPONSE_NOISE):
-            logger.warning(f"VLM вернул туристический мусор: {answer!r}")
-            return None
-        # Слишком длинный ответ — скорее всего не название
-        if len(answer.split()) > 8:
-            logger.warning(
-                f"VLM вернул слишком длинный ответ "
-                f"({len(answer.split())} слов): {answer!r}"
-            )
-            return None
-        return answer
-
-    def _build_vlm_messages(
-        self,
-        image_uri: str,
-        hint: str | None = None,
-    ) -> list[dict]:
-        """
-        Формирует промпт для извлечения названия достопримечательности.
-
-        Args:
-            image_uri: base64 data URI изображения
-            hint: Подсказки из pageTitle (None = без подсказок)
-
-        Returns:
-            Список сообщений в формате OpenAI API
-        """
-        extra = (
-            f"Hint — reverse image search page titles (may contain noise):\n{hint}\n\n"
-            if hint
-            else ""
-        )
-        return [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Photo:"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": image_uri},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            f"{extra}"
-                            "What is the exact name of the landmark "
-                            "shown in the photo? Reply with a short, "
-                            "precise name suitable for a Wikipedia "
-                            "search (e.g. 'Notre-Dame de Paris'). "
-                            "If you cannot identify the landmark, "
-                            "reply with 'unknown'."
-                        ),
-                    },
-                ],
-            }
-        ]
-
     async def _search_internet(
         self,
         image: Image.Image | str | bytes,
@@ -946,20 +599,11 @@ class AITourGuide:
             logger.warning("Yandex API ключи не настроены, поиск пропущен")
             return result
 
-        # Нормализуем image в PIL для VLM
-        pil_image: Image.Image | None = None
-        if isinstance(image, Image.Image):
-            pil_image = image
-        elif isinstance(image, bytes):
-            try:
-                pil_image = Image.open(BytesIO(image)).convert("RGB")
-            except Exception:
-                pass
-        elif isinstance(image, str):
-            try:
-                pil_image = Image.open(image).convert("RGB")
-            except Exception:
-                pass
+        # Нормализуем image в PIL для VLM (None, если прочитать не удалось)
+        try:
+            pil_image: Image.Image | None = self._to_pil_image(image)
+        except Exception:
+            pil_image = None
 
         try:
             found = await asyncio.wait_for(
@@ -1029,13 +673,13 @@ class AITourGuide:
                 return None
             try:
                 response = await self.vllm_client.chat_completion(
-                    messages=self._build_vlm_messages(image_uri, hint=None),
+                    messages=build_vlm_messages(image_uri, hint=None),
                     max_tokens=48,
                     temperature=0.0,
                 )
                 raw = str(response["choices"][0]["message"]["content"]).strip()
                 logger.debug(f"VLM этап 1 (без подсказок, параллельно): {raw!r}")
-                return self._validate_vlm_answer(raw)
+                return validate_vlm_answer(raw)
             except Exception as e:
                 logger.warning(f"Ошибка VLM этап 1 (параллельно): {e}")
                 return None
@@ -1075,13 +719,13 @@ class AITourGuide:
                 titles_str = "\n".join(f"- {t}" for t in page_titles[:10])
                 try:
                     response2 = await self.vllm_client.chat_completion(
-                        messages=self._build_vlm_messages(image_uri, hint=titles_str),
+                        messages=build_vlm_messages(image_uri, hint=titles_str),
                         max_tokens=48,
                         temperature=0.0,
                     )
                     raw2 = str(response2["choices"][0]["message"]["content"]).strip()
                     logger.debug(f"VLM этап 2 (с подсказками): {raw2!r}")
-                    result2 = self._validate_vlm_answer(raw2)
+                    result2 = validate_vlm_answer(raw2)
                     if result2:
                         vlm_name = result2
                         logger.info(f"VLM извлёк название (этап 2): {vlm_name!r}")
@@ -1106,7 +750,7 @@ class AITourGuide:
 
         # Передаём pageTitle как подсказки для фильтрации нерелевантных
         # статей. vlm_name передаём отдельно — он пропускает hint-фильтр.
-        filtered = self._filter_wiki_results(
+        filtered = filter_wiki_results(
             wiki_result,
             query_hints=page_titles,
             vlm_name=vlm_name,
@@ -1145,7 +789,7 @@ class AITourGuide:
 
         # Всегда прогоняем через _extract_clean_name —
         # даже vlm_name может содержать мусорные суффиксы
-        best_name = self._extract_clean_name(best_key)
+        best_name = extract_clean_name(best_key)
         logger.info(f"Интернет-поиск: best_key='{best_key}' → best_name='{best_name}'")
 
         return {
@@ -1347,57 +991,6 @@ class AITourGuide:
             "p_yes": best["p_yes"],
             "all_p_yes": all_p_yes,
         }
-
-    def _load_calibration_curve(self, path: str) -> None:
-        """Загружает isotonic-кривую (x, y) калибровки уверенности."""
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            xs, ys = data.get("x", []), data.get("y", [])
-            if xs and ys and len(xs) == len(ys):
-                self._calib_x, self._calib_y = xs, ys
-                logger.info(
-                    f"  Калибровка уверенности: isotonic ({len(xs)} точек) из {path}"
-                )
-            else:
-                logger.warning(
-                    f"Калибровка: пустая/битая кривая в {path}, отдаём сырой p_yes"
-                )
-        except FileNotFoundError:
-            logger.error(
-                f"Калибровка включена, но файл кривой не найден: {path}. "
-                f"Уверенность и бэнды будут по сырому p_yes (переуверенность)."
-            )
-        except Exception as e:
-            logger.warning(f"Калибровка: не удалось загрузить {path} ({e})")
-
-    def _calibrate_confidence(self, p_yes: float) -> float:
-        """Калибрует p_yes → P(correct) по isotonic-кривой (линейная интерполяция).
-
-        Монотонна, поэтому решения об отсечке/интернет-поиске (на сыром p_yes)
-        не меняет. Если кривая не загружена — возвращает p_yes без изменений.
-        """
-        xs, ys = self._calib_x, self._calib_y
-        if not xs or not ys:
-            return p_yes
-        if p_yes <= xs[0]:
-            return ys[0]
-        if p_yes >= xs[-1]:
-            return ys[-1]
-        i = bisect.bisect_left(xs, p_yes)
-        x0, x1 = xs[i - 1], xs[i]
-        y0, y1 = ys[i - 1], ys[i]
-        if x1 == x0:
-            return y1
-        return y0 + (y1 - y0) * (p_yes - x0) / (x1 - x0)
-
-    def _confidence_band(self, calibrated_conf: float) -> str:
-        """Бэнд уверенности для UI по калиброванному P(correct): high/medium/low."""
-        if calibrated_conf >= self.config.confidence_band_high:
-            return "high"
-        if calibrated_conf >= self.config.confidence_band_medium:
-            return "medium"
-        return "low"
 
     def _parse_logprobs_p_yes(self, response: dict) -> float | None:
         """
@@ -1674,14 +1267,14 @@ class AITourGuide:
         description = search_result["description"]
         t_translate = time.time()
         try:
-            if self._needs_translation(name):
+            if needs_translation(name):
                 translated_name = await self.translator.translate(
                     name, target_language="ru", source_language="en"
                 )
                 if translated_name:
                     name = translated_name
 
-            if description and self._needs_translation(description):
+            if description and needs_translation(description):
                 translated_desc = await self.translator.translate(
                     description, target_language="ru", source_language="en"
                 )
@@ -1833,7 +1426,7 @@ class AITourGuide:
                 # Маппинг строится по EN-именам (all_p_yes ключи — EN).
                 all_p_yes = parsed.get("all_p_yes", {})
                 result["retrieved_p_yes"] = [
-                    round(self._calibrate_confidence(all_p_yes.get(name_en, 0.0)), 4)
+                    round(self.calibrator.calibrate(all_p_yes.get(name_en, 0.0)), 4)
                     for name_en in retrieved_names_en
                 ]
                 logger.info(
@@ -1899,9 +1492,9 @@ class AITourGuide:
                 result["confidence_band"] = None
             else:
                 result["confidence"] = round(
-                    self._calibrate_confidence(result["confidence"]), 4
+                    self.calibrator.calibrate(result["confidence"]), 4
                 )
-                result["confidence_band"] = self._confidence_band(result["confidence"])
+                result["confidence_band"] = self.calibrator.band(result["confidence"])
 
             result["timing"] = timing
             _update_metrics(result, image_size_bytes=_image_size)
@@ -1959,13 +1552,11 @@ class AITourGuide:
     async def cleanup(self):
         """Закрывает HTTP-клиент, YandexSearchService и удаляет retriever."""
         logger.info("Освобождение ресурсов...")
-        if hasattr(self, "vllm_client"):
-            await self.vllm_client.close()
-        if hasattr(self, "_yandex_service") and self._yandex_service:
+        await self.vllm_client.close()
+        if self._yandex_service:
             self._yandex_service.close()
             self._yandex_service = None
-        if hasattr(self, "retriever"):
-            del self.retriever
+        del self.retriever
 
     async def __aenter__(self):
         return self
