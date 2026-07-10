@@ -8,7 +8,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # GHCR требует имя в нижнем регистре, а github.repository (Anastasia-Slesarenko/...)
+  # содержит заглавные. Задаём явно и с суффиксом /api — совпадает с
+  # docker-compose.yml и Makefile.
+  IMAGE_NAME: anastasia-slesarenko/aitourguide/api
 
 jobs:
   # ── 1. Линтинг и тесты ────────────────────────────────────────────────────
@@ -92,7 +95,7 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           IMAGE_TAG: ${{ github.sha }}
           REGISTRY: ghcr.io
-          IMAGE_NAME: ${{ github.repository }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
           # Путь к папке с docker-compose.yml на сервере (repo-переменная).
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
         with:
