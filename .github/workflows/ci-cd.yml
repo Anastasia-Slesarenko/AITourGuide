@@ -96,7 +96,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           REGISTRY: ghcr.io
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          # Путь к папке с docker-compose.yml на сервере (repo-переменная).
+          # Путь на сервере: папка с docker-compose.yml или сам файл (repo-переменная).
           DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -105,7 +105,12 @@ jobs:
           envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG,REGISTRY,IMAGE_NAME,DEPLOY_PATH
           script: |
             set -e
-            cd "$DEPLOY_PATH"
+            # DEPLOY_PATH может указывать на папку с docker-compose.yml или на сам файл
+            if [ -f "$DEPLOY_PATH" ]; then
+              cd "$(dirname "$DEPLOY_PATH")"
+            else
+              cd "$DEPLOY_PATH"
+            fi
 
             # Логинимся в GHCR (docker v1 — используем docker login)
             echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USER" --password-stdin
