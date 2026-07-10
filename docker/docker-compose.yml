@@ -1,0 +1,264 @@
+version: "3.9"
+
+# ============================================================
+# AI Tour Guide — production stack
+#
+# Сервисы:
+#   vllm       — VLM-сервер (Qwen2-VL-2B через vLLM, порт 30000)
+#   api        — FastAPI-приложение (SigLIP+FAISS retrieval, порт 8000)
+#   loki       — хранение логов (внутренний, порт 3100)
+#   promtail   — сбор логов из Docker-контейнеров → Loki
+#   prometheus — сбор метрик (порт 9090)
+#   grafana    — визуализация метрик и логов (порт 3000)
+#
+# Запуск:
+#   docker-compose -f docker/docker-compose.yml up -d
+#
+# Структура бакета S3 (монтируется через s3fs в /mnt/s3-aitourguide):
+#   landmarks/                          — изображения галереи
+#   dataset/index/siglip/               — FAISS-индекс
+#   models/qwen2-vl-2b-r16/             — VLM модель для vLLM
+#   models/siglip-base-patch16-224/     — SigLIP модель
+#
+# Переменные окружения (.env):
+#   S3_MOUNT=/mnt/s3-aitourguide        — точка монтирования s3fs
+#   LOG_DIR=./logs                      — директория логов
+#   GF_ADMIN_PASSWORD=admin             — пароль Grafana (переопределить!)
+#
+# Требования к хосту:
+#   - GPU: NVIDIA T4 с CUDA 12.x + nvidia-container-toolkit
+#   - s3fs смонтирован в S3_MOUNT до запуска compose
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # vLLM VLM-сервер
+  # ----------------------------------------------------------
+  vllm:
+    # Qwen2-VL-2B ранкер в fp16 (смёрженный LoRA-адаптер).
+    # INT4/INT8-квантизацию (GPTQ) пробовали ради экономии VRAM, но GPTQ-Qwen2-VL
+    # на T4 (Turing, sm75) не подаётся корректно ни в одной сборке vLLM: Marlin —
+    # Ampere-only (мусор), fallback-ядро свежих сборок не компилируется под sm75,
+    # на 0.6.6 exllama даёт NaN (INT4) или мусор (INT8). Для 1-токенного ранкера
+    # выигрыш от квантизации всё равно мал (нагрузка prefill-bound, T4 16 ГБ на 2B
+    # в память не упирается) — остаёмся на fp16.
+    image: vllm/vllm-openai:latest
+    container_name: aitourguide_vllm
+    restart: unless-stopped
+
+    # GPU-доступ (убрать если нет GPU)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    volumes:
+      # VLM-модель fp16 (в бакете: models/qwen2-vl-2b-r16/).
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/qwen2-vl-2b-r16:/models/qwen2-vl-2b-r16:ro
+
+    command: >
+      --model /models/qwen2-vl-2b-r16
+        --served-model-name qwen2-vl-2b-r16
+        --port 30000
+        --host 0.0.0.0
+        --dtype float16
+        --max-model-len 2048
+        --gpu-memory-utilization 0.85
+        --trust-remote-code
+        --attention-backend TRITON_ATTN
+        --enable-prefix-caching
+        --max-num-seqs 16
+        --max-num-batched-tokens 4096
+
+    ports:
+      - "30000:30000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:30000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 5
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # FastAPI-приложение
+  # ----------------------------------------------------------
+  api:
+    image: ghcr.io/anastasia-slesarenko/aitourguide/api:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: aitourguide_api
+    restart: unless-stopped
+
+    depends_on:
+      vllm:
+        condition: service_healthy
+
+    env_file:
+      - ../.env
+
+    environment:
+      # Переопределяем адрес vLLM внутри docker-сети
+      VLLM_BASE_URL: "http://vllm:30000/v1"
+      # Должно совпадать с --served-model-name в vllm
+      VLLM_MODEL_NAME: "qwen2-vl-2b-r16"
+      # Пути внутри контейнера (совпадают с точками монтирования volumes ниже)
+      INDEX_DIR: "/data/index/siglip"
+      SIGLIP_MODEL_PATH: "/data/models/siglip-base-patch16-224"
+      # Базовая директория изображений галереи внутри контейнера.
+      # image_path в gallery_metadata.json — просто имя файла (photo.jpg),
+      # полный путь = IMAGES_BASE_DIR/photo.jpg
+      IMAGES_BASE_DIR: "/data/images"
+      DEVICE: "cpu"
+      LOG_FORMAT: "json"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+    volumes:
+      # FAISS-индекс (в бакете: dataset/index/siglip/)
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/dataset/index/siglip:/data/index/siglip:ro
+      # Изображения галереи (в бакете: landmarks/)
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/landmarks:/data/images:ro
+      # SigLIP модель (в бакете: models/siglip-base-patch16-224/)
+      - ${S3_MOUNT:-/mnt/s3-aitourguide}/models/siglip-base-patch16-224:/data/models/siglip-base-patch16-224:ro
+      # Логи — локальная директория на хосте
+      - ${LOG_DIR:-./logs}:/app/logs
+
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # Grafana Loki — хранение логов
+  # ----------------------------------------------------------
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: aitourguide_loki
+    restart: unless-stopped
+
+    command: ["-config.file=/etc/loki/loki.yaml"]
+
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki_data:/loki
+
+    ports:
+      - "3100:3100"
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # Promtail — агент сбора логов из Docker → Loki
+  # ----------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: aitourguide_promtail
+    restart: unless-stopped
+    user: root
+
+    depends_on:
+      loki:
+        condition: service_healthy
+
+    command: ["-config.file=/etc/promtail/promtail.yaml"]
+
+    volumes:
+      - ./promtail/promtail.yaml:/etc/promtail/promtail.yaml:ro
+      # Docker socket для обнаружения контейнеров
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Лог-файлы контейнеров (json-file driver)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Позиции чтения — сохраняем между перезапусками
+      - promtail_positions:/run/promtail
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # Prometheus — сбор метрик
+  # ----------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: aitourguide_prometheus
+    restart: unless-stopped
+
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-remote-write-receiver"
+
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+    networks:
+      - aitourguide_net
+
+  # ----------------------------------------------------------
+  # Grafana — визуализация метрик
+  # ----------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: aitourguide_grafana
+    restart: unless-stopped
+
+    depends_on:
+      - prometheus
+      - loki
+
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GF_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "http://localhost:${GRAFANA_PORT:-3000}"
+      # Отключаем телеметрию
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+
+    networks:
+      - aitourguide_net
+
+networks:
+  aitourguide_net:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:

@@ -1,0 +1,141 @@
+name: AI Tour Guide CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── 1. Линтинг и тесты ────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # Совпадает с python:3.11-slim в Dockerfile
+          cache: "pip"
+
+      - name: Установка зависимостей
+        run: |
+          pip install --upgrade pip
+          # Минимальный набор для тестов (prod + pytest + ruff), без тяжёлых
+          # пакетов для обучения и документации из requirements-dev.txt.
+          pip install -r requirements-test.txt
+          # torch/torchvision намеренно вне requirements-*.txt (ставятся отдельно
+          # из-за CUDA-индекса). src/rag/indexing_v2.py импортирует torchvision,
+          # поэтому ставим CPU-сборку с версиями, зафиксированными под проект
+          # (numpy<2.0.0 уже из prod).
+          pip install torch==2.2.2 torchvision==0.17.2 \
+            --index-url https://download.pytorch.org/whl/cpu \
+            --extra-index-url https://pypi.org/simple
+
+      - name: Линтинг (ruff)
+        run: ruff check src/ tests/
+
+      - name: Тесты
+        run: pytest tests/unit tests/integration -v --tb=short
+
+  # ── 2. Сборка и пуш Docker-образа ─────────────────────────────────────────
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── 3. Деплой на сервер ───────────────────────────────────────────────────
+  # Выключен по умолчанию: включается repo-переменной DEPLOY_ENABLED=true
+  # (Settings → Secrets and variables → Actions → Variables). Без неё job
+  # пропускается (skipped, не fail) — вкладка Actions остаётся зелёной, даже
+  # когда SERVER_HOST / SSH_PRIVATE_KEY / DEPLOY_PATH не заданы.
+  # Чтобы активировать деплой, задай переменные DEPLOY_ENABLED, DEPLOY_PATH
+  # и секреты SERVER_HOST, SERVER_USER, SSH_PRIVATE_KEY.
+  deploy:
+    needs: build-and-push
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Деплой через SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          # Передаём токен через env, а не через ${{ }} внутри script
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG: ${{ github.sha }}
+          REGISTRY: ghcr.io
+          IMAGE_NAME: ${{ github.repository }}
+          # Путь к папке с docker-compose.yml на сервере (repo-переменная).
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER,IMAGE_TAG,REGISTRY,IMAGE_NAME,DEPLOY_PATH
+          script: |
+            set -e
+            cd "$DEPLOY_PATH"
+
+            # Логинимся в GHCR (docker v1 — используем docker login)
+            echo "$GHCR_TOKEN" | docker login "$REGISTRY" -u "$GHCR_USER" --password-stdin
+
+            # Скачиваем новый образ
+            docker pull "$REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+
+            # Помечаем как latest для docker-compose
+            docker tag "$REGISTRY/$IMAGE_NAME:$IMAGE_TAG" "$REGISTRY/$IMAGE_NAME:latest"
+
+            # Перезапускаем только api (docker-compose v1 — через дефис)
+            docker-compose pull api
+            docker-compose up -d --no-deps api
+
+            # Ждём, пока контейнер станет healthy (healthcheck из Dockerfile)
+            echo "Ожидаем healthy статус..."
+            for i in $(seq 1 24); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' aitourguide_api 2>/dev/null || echo "missing")
+              echo "  попытка $i/24: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Деплой успешен!"
+                break
+              fi
+              if [ "$i" = "24" ]; then
+                echo "Таймаут ожидания healthy. Откатываемся..."
+                docker-compose stop api
+                docker-compose rm -f api
+                # Запускаем предыдущий образ (latest до обновления тега)
+                docker-compose up -d --no-deps api
+                exit 1
+              fi
+              sleep 5
+            done
+
+            # Чистим неиспользуемые образы
+            docker image prune -f

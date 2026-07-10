@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Tour Guide - Распознавание достопримечательностей</title>
+    <meta name="description" content="Искусственный интеллект для распознавания достопримечательностей по фотографиям">
+    <link rel="icon" type="image/svg+xml" href="/static/images/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css?v=6">
+</head>
+<body>
+    <div class="animated-background">
+        <div class="gradient-orb orb-1"></div>
+        <div class="gradient-orb orb-2"></div>
+        <div class="gradient-orb orb-3"></div>
+    </div>
+    
+    <div class="container">
+        <header class="header">
+            <div class="logo-container">
+                <img src="/static/images/logo.svg" alt="AI Tour Guide" class="logo-image">
+                <div class="logo-text">
+                    <h1>AI Tour Guide</h1>
+                    <span class="tagline">Умное распознавание достопримечательностей</span>
+                </div>
+            </div>
+            <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+                <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"></circle>
+                    <line x1="12" y1="1" x2="12" y2="3"></line>
+                    <line x1="12" y1="21" x2="12" y2="23"></line>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                    <line x1="1" y1="12" x2="3" y2="12"></line>
+                    <line x1="21" y1="12" x2="23" y2="12"></line>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                </svg>
+                <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+            </button>
+        </header>
+
+        <main class="main-content">
+            <div class="glass-card">
+                <form method="POST" enctype="multipart/form-data" action="/predict" id="uploadForm">
+                    <input type="file" id="file" name="image" accept="image/*" hidden required>
+                    
+                    <div class="upload-section">
+                        <div class="upload-area" onclick="document.getElementById('file').click()" id="uploadArea">
+                            <div id="uploadContent">
+                                <div class="upload-icon-wrapper">
+                                    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="17 8 12 3 7 8"></polyline>
+                                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                                    </svg>
+                                </div>
+                                <h3 class="upload-title">Загрузите фотографию</h3>
+                                <p class="upload-text">Перетащите файл или нажмите для выбора</p>
+                                <p class="upload-subtext">JPEG, PNG, WebP • Макс. 10 MB</p>
+                            </div>
+                            <div id="previewContainer" style="display: none;"></div>
+                        </div>
+
+                        <div class="options-section">
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="use_internet" id="useInternet" {% if use_internet %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label">
+                                    <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="8"></circle>
+                                        <path d="m21 21-4.35-4.35"></path>
+                                    </svg>
+                                    Расширенный поиск в интернете
+                                </span>
+                            </label>
+                        </div>
+
+                        <button type="submit" class="submit-btn" id="processBtn">
+                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                            <span>Распознать достопримечательность</span>
+                        </button>
+                    </div>
+                </form>
+
+                {% if error %}
+                <div class="alert alert-error">
+                    <div class="alert-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                    </div>
+                    <div class="alert-content">
+                        <h3>Ошибка обработки</h3>
+                        <p>{{ error }}</p>
+                    </div>
+                    <button class="alert-btn" onclick="location.href='/'">Попробовать снова</button>
+                </div>
+                {% endif %}
+
+                {% if result and not error %}
+                <div class="result-section">
+
+                    {# Слайдер: фото пользователя + изображения победителя из базы #}
+                    <div class="gallery-slider" id="gallerySlider">
+                        <div class="gallery-track" id="galleryTrack">
+                            {# Слайд 0: фото пользователя #}
+                            <div class="gallery-slide" id="userPhotoSlide">
+                                <div id="resultImageContainer" class="result-image-wrapper"></div>
+                                <span class="slide-label">Ваше фото</span>
+                            </div>
+                            {# Слайды 1…N: изображения победителя из базы (не при unknown) #}
+                            {% if result.winner_images and not result.unknown %}
+                            {% for img_path in result.winner_images %}
+                            <div class="gallery-slide">
+                                <img
+                                    src="/gallery-image/{{ img_path }}"
+                                    alt="{{ result.name }}"
+                                    loading="lazy"
+                                    onerror="this.closest('.gallery-slide').style.display='none'"
+                                >
+                                <span class="slide-label">Из базы данных</span>
+                            </div>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                        <button class="slider-btn slider-prev" id="sliderPrev" aria-label="Назад">&#8249;</button>
+                        <button class="slider-btn slider-next" id="sliderNext" aria-label="Вперёд">&#8250;</button>
+                        <div class="slider-dots" id="sliderDots"></div>
+                    </div>
+
+                    {% if result.unknown %}
+                    <div class="alert alert-warning">
+                        <div class="alert-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                        </div>
+                        <div class="alert-content">
+                            <h3>Достопримечательность не распознана</h3>
+                            <p>Не удалось определить объект на фотографии. Попробуйте сделать более чёткий снимок или убедитесь, что на фото изображена известная достопримечательность.</p>
+                        </div>
+                        <button class="alert-btn" onclick="location.href='/'">Попробовать снова</button>
+                    </div>
+                    {% else %}
+                    <div class="result-card glass-card">
+                        <div class="result-header">
+                            <div class="result-title-group">
+                                <span class="result-icon">🏛️</span>
+                                <h2>{{ result.name or "Объект не найден" }}</h2>
+                            </div>
+                            {% set band_label = {'high': 'Высокая', 'medium': 'Средняя', 'low': 'Низкая'}.get(result.confidence_band, '') %}
+                            {% if band_label %}
+                            <div class="confidence-indicator" data-band="{{ result.confidence_band }}">
+                                <svg class="confidence-ring" viewBox="0 0 36 36">
+                                    <path class="confidence-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                    <path class="confidence-progress" stroke-dasharray="{{ (result.confidence * 100)|round(0)|int }}, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                </svg>
+                                <span class="confidence-value confidence-value--band confidence-band--{{ result.confidence_band }}">{{ band_label }}</span>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <div class="result-description">
+                            <div class="description-header">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                                </svg>
+                                <h3>Описание</h3>
+                            </div>
+                            <p>{{ result.description }}</p>
+                        </div>
+                        
+                        <div class="result-stats">
+                            <div class="stat-card glass-card">
+                                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                                <div class="stat-content">
+                                    <span class="stat-label">Время обработки</span>
+                                    <span class="stat-value">{{ "%.2f"|format(result.timing.values()|sum if result.timing else 0) }} сек</span>
+                                </div>
+                            </div>
+                            
+                            <div class="stat-card glass-card">
+                                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    {% if result.source == "internet" %}
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                                    {% else %}
+                                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                                    {% endif %}
+                                </svg>
+                                <div class="stat-content">
+                                    <span class="stat-label">Источник данных</span>
+                                    <span class="stat-value">{{ "Интернет" if result.source == "internet" else "База данных" }}</span>
+                                </div>
+                            </div>
+                            
+                            {% if band_label %}
+                            <div class="stat-card glass-card">
+                                <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                                </svg>
+                                <div class="stat-content">
+                                    <span class="stat-label">Уверенность</span>
+                                    <span class="stat-value confidence-band--{{ result.confidence_band }}">{{ band_label }}</span>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <button class="secondary-btn" onclick="location.href='/'">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="1 4 1 10 7 10"></polyline>
+                                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                            </svg>
+                            Распознать другое изображение
+                        </button>
+                    </div>
+
+                    {# Секция «Похожие» — кандидаты из базы (не при unknown) #}
+                    {% if sorted_candidates and not result.unknown %}
+                    <div class="candidates-section glass-card">
+                        <div class="candidates-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                            <h3>Другие кандидаты из базы</h3>
+                        </div>
+                        <div class="candidates-grid">
+                            {% for cand in sorted_candidates %}
+                            <div class="candidate-card glass-card">
+                                <div class="candidate-img-wrapper">
+                                    <img
+                                        src="/gallery-image/{{ cand.image }}"
+                                        alt="{{ cand.name or 'Кандидат' }}"
+                                        loading="lazy"
+                                        onerror="this.closest('.candidate-card').style.display='none'"
+                                    >
+                                </div>
+                                <div class="candidate-info">
+                                    <span class="candidate-name">
+                                        {{ cand.name or '—' }}
+                                    </span>
+                                    <span class="candidate-score">
+                                        {{ (cand.p_yes * 100) | round(1) }}%
+                                    </span>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </main>
+
+        <footer class="footer">
+            <div class="footer-content">
+                <span>Powered by FastAPI & AI</span>
+                <span class="footer-divider">•</span>
+                <span>© 2026 AI Tour Guide</span>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js?v=6"></script>
+</body>
+</html>

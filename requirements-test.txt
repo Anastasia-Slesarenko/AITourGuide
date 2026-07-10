@@ -1,0 +1,30 @@
+# ============================================================
+# Test dependencies for the CI `test` job (lint + unit + integration).
+#
+# Install: pip install -r requirements-test.txt
+#
+# Includes production runtime deps (tests import src/, which needs them),
+# the pytest toolchain and the linter. Excludes the heavy training / docs /
+# profiling packages from requirements-dev.txt that the test suite never
+# imports (peft, mlflow, datasets, scikit-learn, scipy, matplotlib,
+# jupyter, mkdocs, profilers, security scanners).
+#
+# NOTE: torch & torchvision are intentionally excluded — installed
+# separately via the PyTorch index (CPU in CI, CUDA in Docker). See the
+# note in requirements-prod.txt and the CI workflow.
+# ============================================================
+
+# ── Production runtime (src/ imports these) ──────────────────
+-r requirements-prod.txt
+
+# ── Test framework ───────────────────────────────────────────
+pytest>=7.4.0
+pytest-cov>=4.1.0          # addopts uses --cov=src (pyproject.toml)
+pytest-asyncio>=0.21.0     # asyncio_mode = "auto" (async API tests)
+pytest-mock>=3.11.0
+pytest-timeout>=2.1.0
+httpx>=0.27.0              # FastAPI TestClient (aligned with prod)
+faker>=19.0.0              # Test data generation
+
+# ── Lint (CI `test` job runs `ruff check src/ tests/`) ────────
+ruff>=0.4.0
