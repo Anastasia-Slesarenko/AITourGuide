@@ -68,5 +68,3 @@ rouge-score>=0.1.2         # ROUGE metrics (experiments/eval.py)
 qwen-vl-utils>=0.0.8       # Qwen VL utilities (step4a, step4b)
 boto3>=1.34.0              # AWS S3 client (upload_dataset_s3.py, download_dataset_s3.py)
 
-# ── VLM Inference (llama.cpp) ─────────────────────────────────────────────────
-llama-cpp-python>=0.2.0    # Qwen2-VL inference via GGUF (experiments/test_gguf_model.py)
