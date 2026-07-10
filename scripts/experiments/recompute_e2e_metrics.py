@@ -112,7 +112,7 @@ def recompute(
             pred_correct = p["predicted_landmark_id"] == true_id
         else:
             accepted = float(p["confidence_score"]) >= threshold
-            # accept + истинный объект первый в reranked-порядке → hit
+            # accept + истинный объект первый в reranked-порядке -> hit
             pred_correct = accepted and gt_rer_rank == 1
 
         is_known = _is_known(p, known_definition, known_k, rerank_top_k)
@@ -142,7 +142,7 @@ def recompute(
     return {
         "known_definition": known_definition,
         "known_k": known_k if known_definition == "retrieval_pool" else rerank_top_k,
-        "threshold": threshold,  # None → сохранённое решение пайплайна
+        "threshold": threshold,  # None -> сохранённое решение пайплайна
         "e2e_accuracy": _safe(correct, total),
         "e2e_hit_1": _safe(known_correct, known_total),
         "e2e_mrr": mrr_sum / known_total if known_total > 0 else 0.0,
@@ -268,7 +268,7 @@ def open_set_metrics(
 
     known_preds   — e2e-предсказания на known-наборе (объект В индексе).
     unknown_preds — e2e-предсказания на novel-наборе (объекта НЕТ в индексе).
-    threshold     — accept = confidence >= threshold; None → сохранённое решение.
+    threshold     — accept = confidence >= threshold; None -> сохранённое решение.
     known_k       — known-запрос «найден», если gt_retrieval_rank в 1..known_k.
 
     Метка known/unknown НЕ зависит от retrieval (в отличие от retrieval_pool):
@@ -555,14 +555,12 @@ def _run_open_set(cfg: Dict) -> None:
 
 
 if __name__ == "__main__":
-    # ============================================================
     # КОНФИГ (без CLI)
-    # ============================================================
     MODE = "open_set"           # "single" | "open_set"
 
     KNOWN_K = 10                # known-запрос «найден», если gt_retrieval_rank<=K
-    THRESHOLD = 0.875110            # None → сохранённое решение; число → applied
-    SWEEP_THRESHOLD =  False     # True → подобрать порог (ТОЛЬКО на VAL!)
+    THRESHOLD = 0.875110            # None -> сохранённое решение; число -> applied
+    SWEEP_THRESHOLD =  False     # True -> подобрать порог (ТОЛЬКО на VAL!)
     SWEEP_CRITERION = "youden"  # "youden" (балансо-независим) | "f1_macro"
 
     # Bootstrap-CI для open_set (кластерно по landmark). Только при MODE=open_set
@@ -571,15 +569,14 @@ if __name__ == "__main__":
     N_BOOTSTRAP = 1000
     SEED = 42
 
-    # --- MODE="single": один файл (retrieval_pool-прокси) ---
+    # MODE="single": один файл (retrieval_pool-прокси)
     RESULTS_JSON = "data/eval/e2e_results.json"
     KNOWN_DEFINITION = "retrieval_pool"   # "retrieval_pool" | "reranked_top5"
     COMPARE = False             # сравнить оба определения на одном файле
 
-    # --- MODE="open_set": known + novel unknown (истинная open-set оценка) ---
+    # MODE="open_set": known + novel unknown (истинная open-set оценка)
     KNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_results_baseline.json"     # e2e на test.json
     UNKNOWN_PREDS_JSON = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e pipline/e2e_results_baseline_novel.json"   # e2e на novel_test_unknown
-    # ============================================================
 
     cfg = {
         "MODE": MODE, "KNOWN_K": KNOWN_K, "THRESHOLD": THRESHOLD,

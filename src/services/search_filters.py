@@ -510,7 +510,7 @@ def clean_landmark_name(name: str) -> str:
     # Удаляем лишние пробелы и подчеркивания
     name = re.sub(r"[_\s]+", " ", name).strip()
 
-    # Убираем дублирующиеся части: "A A, B A" → "A"
+    # Убираем дублирующиеся части: "A A, B A" -> "A"
     if "," in name:
         parts = [p.strip() for p in name.split(",")]
         first = parts[0]

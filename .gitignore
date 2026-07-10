@@ -23,3 +23,7 @@ build/
 cv.md
 cv_middle.md
 calib_bundle.tar
+
+# Сгенерированные отчёты нагрузочных тестов (Locust) — папка остаётся через .gitkeep
+tests/load/results/*
+!tests/load/results/.gitkeep

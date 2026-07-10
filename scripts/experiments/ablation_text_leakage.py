@@ -9,18 +9,18 @@ Ablation: на что опирается реранкер — на ЗРЕНИЕ 
 
 Режимы:
     full           — как в проде (контроль).
-    blank_query    — query-фото заменено серым. Если метрики держатся → модель
-                     НЕ использует query → решает по candidate-фото+тексту (плохо).
+    blank_query    — query-фото заменено серым. Если метрики держатся -> модель
+                     НЕ использует query -> решает по candidate-фото+тексту (плохо).
     noise_query    — query-фото = шум (альтернатива blank).
     blank_candidate— candidate-фото серое (проверка опоры на candidate-фото).
-    no_text        — name→"this landmark", caption→"" . Если метрики держатся →
+    no_text        — name->"this landmark", caption->"" . Если метрики держатся ->
                      текст НЕ костыль, реранкер зрительный (хорошо).
     mismatch_query — query из ДРУГОГО случайного сэмпла. Если P(yes) остаётся
-                     высоким → модель игнорирует query.
+                     высоким -> модель игнорирует query.
 
 Интерпретация:
-    full высокий, blank_query коллапсирует, no_text держится → честный vision-реранкер.
-    full ≈ blank_query или full ≈ (no_text коллапс) → опора на текст/приоры, не зрение.
+    full высокий, blank_query коллапсирует, no_text держится -> честный vision-реранкер.
+    full ≈ blank_query или full ≈ (no_text коллапс) -> опора на текст/приоры, не зрение.
 
 VLM-часть зеркалит e2e_eval_v2 (тот же промпт, позиция токена, softmax(No,Yes)).
 Метрики — чистый python.
@@ -40,9 +40,7 @@ from typing import Dict, List, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 
-# ============================================================
 # МЕТРИКИ (чистый python — тестируемо без VLM)
-# ============================================================
 
 def auroc(labels: List[int], scores: List[float]) -> float:
     """AUROC через ранги (Mann-Whitney U). labels ∈ {0,1}."""
@@ -100,9 +98,7 @@ def flat_labels_scores(
     return labels, scores
 
 
-# ============================================================
 # VLM-ЧАСТЬ (зеркалит e2e_eval_v2; запускается на боксе с torch)
-# ============================================================
 
 def _make_ablated_images(query_img, cand_img, mode: str, fixed_size, other_query_img):
     """Применяет ablation к паре изображений. Возвращает (q, c) как PIL."""
@@ -210,12 +206,10 @@ def score_samples(model, processor, yes_id, no_id, samples, image_dir,
     return per_sample_scores
 
 
-# ============================================================
 # ТОЧКА ВХОДА
-# ============================================================
 
 if __name__ == "__main__":
-    # ===================== КОНФИГ (без CLI) =====================
+    # КОНФИГ (без CLI)
     LORA_PATH = "experiments/results/val_rerank_exp_r16_alpha32_lr2e-5_rerank_full_lora_448"
     VAL_DATASET = "data/processed/dataset_v1/val.json"
     IMAGE_DIR = "images"
@@ -224,7 +218,6 @@ if __name__ == "__main__":
     MODES = ["full", "blank_query", "noise_query", "blank_candidate",
              "no_text", "mismatch_query"]
     OUT_JSON = "data/eval/ablation_text_leakage.json"
-    # ===========================================================
 
     from e2e_eval_v2 import load_vlm_reranker
 
@@ -265,8 +258,8 @@ if __name__ == "__main__":
             continue
         dh = results[mode]["hit_1"] - full.get("hit_1", 0)
         print(f"  {mode:<16} ΔHit@1 = {dh:+.3f}")
-    print("  blank_query близко к full  → реранкер не использует query (плохо)")
-    print("  no_text близко к full      → текст не костыль, зрительный (хорошо)")
+    print("  blank_query близко к full  -> реранкер не использует query (плохо)")
+    print("  no_text близко к full      -> текст не костыль, зрительный (хорошо)")
 
     os.makedirs(os.path.dirname(OUT_JSON), exist_ok=True)
     with open(OUT_JSON, "w", encoding="utf-8") as f:

@@ -538,7 +538,7 @@ class WikipediaService:
                         data = await resp.json()
                         titles = data[1] if len(data) > 1 else []
                         if titles:
-                            logger.debug(f"Opensearch по '{variant}' → {titles}")
+                            logger.debug(f"Opensearch по '{variant}' -> {titles}")
                             for title in titles:
                                 res = await self._try_get_summary(
                                     title, lang, try_search=False
@@ -570,7 +570,7 @@ class WikipediaService:
                         pages = data.get("query", {}).get("search", [])
                         if pages:
                             titles = [p["title"] for p in pages]
-                            logger.debug(f"Полнотекстовый поиск по '{variant}' → {titles}")
+                            logger.debug(f"Полнотекстовый поиск по '{variant}' -> {titles}")
                             for title in titles:
                                 res = await self._try_get_summary(
                                     title, lang, try_search=False

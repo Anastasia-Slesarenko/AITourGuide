@@ -55,7 +55,7 @@ class ConfidenceCalibrator:
 
     def calibrate(self, p_yes: float) -> float:
         """
-        p_yes → P(correct) по кривой (линейная интерполяция).
+        p_yes -> P(correct) по кривой (линейная интерполяция).
 
         Если кривая не загружена — возвращает p_yes без изменений.
         """

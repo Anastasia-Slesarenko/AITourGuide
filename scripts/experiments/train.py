@@ -34,7 +34,6 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
-# ----------------------------
 # Параметры
 MLFLOW_AVAILABLE = True
 TRAIN_DATASET_FILE = "data/processed/dataset_v1/train.json"
@@ -140,7 +139,7 @@ def make_collate_fn(
             random.shuffle(selected)
 
             # вес позитива = n_neg (реальный дисбаланс в батче).
-            # При max_pairs=12: 1 позитив + 11 негативов → weight_pos=11.
+            # При max_pairs=12: 1 позитив + 11 негативов -> weight_pos=11.
             # Это гарантирует, что суммарный градиент от позитива ≥ градиенту
             # от всех негативов вместе взятых, и модель не коллапсирует
             # к тривиальному решению "всё — No".
@@ -344,7 +343,7 @@ class RerankTrainer(Trainer):
         # Примечание: в отличие от eval.py (generate + output_logits), здесь
         # используем forward pass для поддержки backprop через LoRA-параметры.
         outputs = model(**inputs)
-        # [B, T, V] → логиты на позиции -1 = предсказание первого токена ответа
+        # [B, T, V] -> логиты на позиции -1 = предсказание первого токена ответа
         logits_last = outputs.logits[:, -1, :]
 
         logit_yes = logits_last[:, self.yes_id]  # [B]
@@ -746,7 +745,7 @@ class MetricsCallback(TrainerCallback):
         # передаём self.none_threshold для синхронизации с eval.py
         # subset_size=100 вместо 50 — уменьшает дисперсию метрик.
         # При 50 сэмплах Easy/Semi-Hard могут содержать 1-3 примера,
-        # что даёт скачки 0→1→0. 100 сэмплов стабилизирует оценку.
+        # что даёт скачки 0->1->0. 100 сэмплов стабилизирует оценку.
         metrics = self.evaluate_on_subset(
             subset_size=100,
             none_threshold=self.none_threshold,
@@ -865,11 +864,11 @@ def run_experiment(
     # None отключает ресайз (только batch_size=1 безопасен без ресайза).
     fixed_image_size: tuple = (448, 448),
     # none_threshold синхронизирован с eval.py threshold_for_none.
-    # Порог для none-of-the-above: max(scores) < threshold → unknown.
+    # Порог для none-of-the-above: max(scores) < threshold -> unknown.
     none_threshold: float = 0.5,
     # число пар (query, candidate) на сэмпл в collate.
     # Каждый сэмпл имеет ~15 кандидатов; обрабатывать все = 30 изображений/шаг.
-    # 4 = 1 позитив + 3 негатива → 8 изображений/шаг, ~4x быстрее.
+    # 4 = 1 позитив + 3 негатива -> 8 изображений/шаг, ~4x быстрее.
     max_pairs_per_sample: int = 4,
 ):
     set_seed(seed)
@@ -1003,14 +1002,14 @@ def run_experiment(
 if __name__ == "__main__":
     run_experiment(
         # Итог экспериментов с MLP:
-        # - attn+mlp r=8  lr=2e-5: Hit@1=0.725, grad_norm=9.47  → хуже
-        # - attn+mlp r=16 lr=1e-5: Hit@1=0.750, grad_norm=11.14 → хуже
+        # - attn+mlp r=8  lr=2e-5: Hit@1=0.725, grad_norm=9.47  -> хуже
+        # - attn+mlp r=16 lr=1e-5: Hit@1=0.750, grad_norm=11.14 -> хуже
         # MLP не помогает: reranking = сравнение двух изображений,
         # важен cross-attention, а не независимая трансформация токенов.
         # Возвращаемся к лучшей конфигурации: attn-only r=16 lr=2e-5
         # (Hit@1=0.775, MRR=0.88).
-        # Следующее улучшение: увеличить разрешение 336→448 + уменьшить
-        # max_pairs 12→8 чтобы не выйти за VRAM.
+        # Следующее улучшение: увеличить разрешение 336->448 + уменьшить
+        # max_pairs 12->8 чтобы не выйти за VRAM.
         r=16,
         lora_alpha=32,
         lora_dropout=0.05,
@@ -1020,7 +1019,7 @@ if __name__ == "__main__":
         # 448×448: больше деталей для различения похожих landmarks.
         # max_pairs=8 вместо 12: 2×8=16 пар = 32 изображения/шаг —
         # компенсирует рост VRAM от увеличения разрешения.
-        # grad_acc=4 → эффективный батч = 2×4=8 сэмплов × 8 пар = 64 пары.
+        # grad_acc=4 -> эффективный батч = 2×4=8 сэмплов × 8 пар = 64 пары.
         batch_size=2,
         gradient_accumulation_steps=4,
         max_pairs_per_sample=8,

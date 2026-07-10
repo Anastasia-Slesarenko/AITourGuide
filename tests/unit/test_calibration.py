@@ -63,7 +63,7 @@ class TestCalibrateWithCurve:
         cal = ConfidenceCalibrator(
             curve_path=_write_curve(tmp_path, [0.0, 0.5, 1.0], [0.0, 0.25, 1.0])
         )
-        # между (0.0, 0.0) и (0.5, 0.25): линейно → 0.125
+        # между (0.0, 0.0) и (0.5, 0.25): линейно -> 0.125
         assert cal.calibrate(0.25) == pytest.approx(0.125)
         # между (0.5, 0.25) и (1.0, 1.0): 0.25 + 0.75 * 0.5 = 0.625
         assert cal.calibrate(0.75) == pytest.approx(0.625)
@@ -72,11 +72,11 @@ class TestCalibrateWithCurve:
         cal = ConfidenceCalibrator(
             curve_path=_write_curve(tmp_path, [0.1, 0.9], [0.05, 0.8])
         )
-        assert cal.calibrate(0.0) == pytest.approx(0.05)  # <= xs[0] → ys[0]
-        assert cal.calibrate(1.0) == pytest.approx(0.80)  # >= xs[-1] → ys[-1]
+        assert cal.calibrate(0.0) == pytest.approx(0.05)  # <= xs[0] -> ys[0]
+        assert cal.calibrate(1.0) == pytest.approx(0.80)  # >= xs[-1] -> ys[-1]
 
     def test_corrects_overconfidence(self, tmp_path):
-        """Переуверенный p_yes=0.9 калибруется вниз (как в README: 0.9→0.49)."""
+        """Переуверенный p_yes=0.9 калибруется вниз (как в README: 0.9->0.49)."""
         cal = ConfidenceCalibrator(
             curve_path=_write_curve(tmp_path, [0.0, 0.9, 1.0], [0.0, 0.49, 1.0])
         )

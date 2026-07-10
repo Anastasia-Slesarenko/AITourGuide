@@ -100,7 +100,7 @@ class AITourGuideConfig:
 
     # Калибровка отдаваемой уверенности (isotonic, фит на val).
     # Прод показывает калиброванный P(correct), а не сырой P(yes) реранкера
-    # (сырой переуверен: ECE 0.16 → 0.006 после isotonic). Преобразование
+    # (сырой переуверен: ECE 0.16 -> 0.006 после isotonic). Преобразование
     # монотонно — порог отсечки и решение known/unknown не меняет.
     calibrate_confidence: bool = True
     calibration_curve_path: str = "data/calibration/isotonic_reranker.json"

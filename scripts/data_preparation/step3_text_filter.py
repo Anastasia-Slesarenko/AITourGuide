@@ -22,9 +22,7 @@ from dataclasses import dataclass, field
 
 load_dotenv()
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -32,9 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ======================
 # КОНФИГУРАЦИЯ
-# ======================
 @dataclass
 class Config:
     """Конфигурация для текстовой фильтрации."""
@@ -104,9 +100,7 @@ class Config:
         Path(self.output_path).parent.mkdir(parents=True, exist_ok=True)
 
 
-# ======================
 # МЕТРИКИ
-# ======================
 class Metrics:
     """Отслеживание метрик обработки."""
     def __init__(self):
@@ -135,9 +129,7 @@ class Metrics:
         }
 
 
-# ======================
 # КЭШИРОВАНИЕ
-# ======================
 class TextCache:
     """Кэш результатов текстовой классификации."""
     def __init__(self, path: Path, flush_interval: int = 50):
@@ -204,9 +196,7 @@ class ProgressTracker:
             self.pending_writes.clear()
 
 
-# ======================
 # RATE LIMITER
-# ======================
 class RateLimiter:
     """Ограничитель частоты запросов."""
     def __init__(self, rate_per_sec: int):
@@ -224,9 +214,7 @@ class RateLimiter:
             self.last_time = time.time()
 
 
-# ======================
 # ТЕКСТОВЫЙ ФИЛЬТР
-# ======================
 class YandexTextFilter:
     """Текстовая классификация с использованием Yandex GPT."""
     def __init__(
@@ -330,9 +318,7 @@ class YandexTextFilter:
         return False
 
 
-# ======================
 # ОСНОВНОЙ КЛАСС
-# ======================
 class TextFilterProcessor:
     """Процессор текстовой фильтрации."""
     def __init__(self, config: Config):
@@ -522,9 +508,7 @@ class TextFilterProcessor:
             logger.info(f"Примерная стоимость: {cost:.2f} ₽")
 
 
-# ======================
 # ТОЧКА ВХОДА
-# ======================
 async def main():
     """Главная точка входа."""
     try:

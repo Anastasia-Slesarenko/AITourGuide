@@ -8,7 +8,7 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 load_dotenv()
 
-# === Настройки ===
+# Настройки
 LOCAL_FOLDER = "./images"                     # Путь к папке с изображениями
 BUCKET_NAME = "ai-tour-guide"              # Имя вашего бакета
 S3_PREFIX = "landmarks/"                      # Опционально: папка в бакете (оставьте "" если не нужно)

@@ -81,7 +81,7 @@ app = FastAPI(
     title="AI Tour Guide API",
     description=(
         "Сервис распознавания достопримечательностей по фотографиям.\n\n"
-        "**Пайплайн:** SigLIP + FAISS → VLM reranking (vLLM) → "
+        "**Пайплайн:** SigLIP + FAISS -> VLM reranking (vLLM) -> "
         "интернет-поиск при низкой уверенности."
     ),
     version="1.0.0",

@@ -11,8 +11,8 @@ End-to-End оценка пайплайна распознавания досто
 - Правильная логика:
   1. Для каждого сэмпла делаем retrieval через production index
   2. Проверяем, есть ли meta["landmark_id"] в top-k retrieval
-  3. Если есть → known sample, оцениваем hit@1, MRR
-  4. Если нет → настоящий unknown, оцениваем unknown detection accuracy
+  3. Если есть -> known sample, оцениваем hit@1, MRR
+  4. Если нет -> настоящий unknown, оцениваем unknown detection accuracy
 
 Это даёт честную production-like оценку без искусственных unknown.
 """
@@ -43,9 +43,9 @@ class E2EResult:
     is_correct: bool
     sample_type: str  # "known" или "unknown"
 
-    # --- Обогащённые поля для offline-пересчёта (вариант A, фикс. знаменатель) ---
+    # Обогащённые поля для offline-пересчёта (вариант A, фикс. знаменатель)
     # Ранг истинного объекта в СЫРОМ retrieval-пуле (1..N, -1 если не найден).
-    # Не зависит от реранкера → одинаков для всех моделей на одном retrieval.
+    # Не зависит от реранкера -> одинаков для всех моделей на одном retrieval.
     gt_retrieval_rank: int = -1
     # Ранг истинного объекта в ПОЛНОМ reranked-списке (1..N, -1 если не найден).
     # Нужен для честного MRR независимо от порога отсечки.
@@ -235,7 +235,7 @@ class ProductionPipeline:
             }
 
         # Сырой retrieval-пул в порядке ретривера (до реранка).
-        # Не зависит от реранкера → фиксированный known/unknown-знаменатель.
+        # Не зависит от реранкера -> фиксированный known/unknown-знаменатель.
         retrieved_landmark_ids = [r.landmark_id for r in valid_results]
 
         if self.use_reranker:
@@ -297,14 +297,14 @@ def evaluate_e2e(
     1. Берём ground truth landmark_id из meta["landmark_id"].
     2. Заново делаем retrieval через production index.
     3. Метим сэмпл known/unknown (см. known_definition).
-    4. known  → оцениваем hit@1, MRR.
-       unknown → оцениваем unknown detection accuracy.
+    4. known  -> оцениваем hit@1, MRR.
+       unknown -> оцениваем unknown detection accuracy.
 
     Args:
         known_definition: как определять known/unknown-знаменатель:
             - "retrieval_pool" (вариант A, по умолчанию): истинный объект есть в
               СЫРОМ retrieval-пуле (top-k FAISS, до реранка). Пул одинаков для
-              всех моделей → знаменатель фиксирован → столбцы строго сравнимы.
+              всех моделей -> знаменатель фиксирован -> столбцы строго сравнимы.
             - "reranked_top5" (legacy): истинный объект в top-5 ПОСЛЕ реранка.
               Знаменатель зависит от модели (историческое поведение).
     """
@@ -508,7 +508,7 @@ if __name__ == "__main__":
 
     # Определение known/unknown-знаменателя (вариант A против legacy):
     #   "retrieval_pool"  — истинный объект в СЫРОМ retrieval-пуле (одинаков для
-    #                       всех моделей → знаменатель фиксирован → столбцы сравнимы).
+    #                       всех моделей -> знаменатель фиксирован -> столбцы сравнимы).
     #   "reranked_top5"   — истинный объект в top-5 ПОСЛЕ реранка (историческое
     #                       поведение, знаменатель зависит от модели).
     KNOWN_DEFINITION = "retrieval_pool"
@@ -624,10 +624,10 @@ if __name__ == "__main__":
     print(f"  Known Correct:             {metrics['known_correct']}")
     print(f"  Unknown Correct:           {metrics['unknown_correct']}")
     
-    print(f"\nТРАНСФОРМАЦИЯ СЭМПЛОВ (step6 → retrieval):")
-    print(f"  Step6 unknown → Known:     {metrics['step6_unknown_became_known']}")
-    print(f"  Step6 known → Known:       {metrics['step6_known_stayed_known']}")
-    print(f"  Step6 known → Unknown:     {metrics['step6_known_became_unknown']}")
+    print(f"\nТРАНСФОРМАЦИЯ СЭМПЛОВ (step6 -> retrieval):")
+    print(f"  Step6 unknown -> Known:     {metrics['step6_unknown_became_known']}")
+    print(f"  Step6 known -> Known:       {metrics['step6_known_stayed_known']}")
+    print(f"  Step6 known -> Unknown:     {metrics['step6_known_became_unknown']}")
 
     print(f"\nРезультаты сохранены: {OUTPUT_PATH}")
     print("=" * 70)

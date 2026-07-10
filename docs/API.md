@@ -30,8 +30,8 @@ API не требует аутентификации. Применяется rat
 
 | Поле | Тип | Обязательно | Описание |
 |------|-----|-------------|---------|
-| `file` | file | ✅ | Изображение (JPEG, PNG, GIF, WEBP), макс. 10 MB |
-| `use_internet_search` | boolean | ❌ | Включить интернет-поиск при низкой уверенности (default: `true`) |
+| `file` | file | да | Изображение (JPEG, PNG, GIF, WEBP), макс. 10 MB |
+| `use_internet_search` | boolean | нет | Включить интернет-поиск при низкой уверенности (default: `true`) |
 
 **Пример запроса:**
 
@@ -117,7 +117,7 @@ curl -X POST http://localhost:8000/v1/predict \
   },
   "config": {
     "top_k_retrieval": 10,
-    "vlm_threshold": 0.5,
+    "vlm_threshold": 0.473,
     "enable_internet_search": true,
     "device": "cpu"
   },

@@ -21,7 +21,7 @@ except ImportError:
 
 # Chat handler для multimodal моделей (mmproj).
 # В llama-cpp-python 0.3.22 доступен Qwen25VLChatHandler (для Qwen2-VL и Qwen2.5-VL).
-# Порядок приоритета: Qwen25VLChatHandler → Llava15ChatHandler → Llava16ChatHandler
+# Порядок приоритета: Qwen25VLChatHandler -> Llava15ChatHandler -> Llava16ChatHandler
 _ChatHandlerClass = None
 _CHAT_HANDLER_NAME = None
 _HANDLER_CANDIDATES = [
@@ -127,7 +127,7 @@ MODEL_BASE = "/Users/anastasiya/Documents/AITourGuide/data/models/qwen2-vl-2b-r1
 VAL_DATASET = "/Users/anastasiya/Documents/AITourGuide/data/processed/dataset_v1/test.json"
 
 # Порог уверенности — синхронизирован с e2e_eval.py и train.py (none_threshold=0.5)
-# Если max(P(yes)) < RERANK_THRESHOLD → результат считается "unknown"
+# Если max(P(yes)) < RERANK_THRESHOLD -> результат считается "unknown"
 RERANK_THRESHOLD = 0.5
 
 # Параметры retrieval — синхронизированы с e2e_eval.py
@@ -140,7 +140,7 @@ RETRIEVAL_FAISS_K = 50
 #   1. H и W кратны PATCH_SIZE * MERGE_SIZE = 14 * 2 = 28
 #   2. MIN_PIXELS <= H*W <= MAX_PIXELS
 #   3. Соотношение сторон сохраняется
-# При 224×224: H*W=50176 < MIN_PIXELS=200704 → масштабируется до ~448×448
+# При 224×224: H*W=50176 < MIN_PIXELS=200704 -> масштабируется до ~448×448
 # Это воспроизводит поведение HF Qwen2VLImageProcessor.
 QWEN2VL_PATCH_SIZE: int = 14        # patch_size в vision encoder
 QWEN2VL_MERGE_SIZE: int = 2         # merge_size (spatial merge)
@@ -188,9 +188,7 @@ def _smart_resize(
 
     return h_bar, w_bar
 
-# ==========================================
 # 2. Загрузка GGUF модели
-# ==========================================
 def load_gguf_model(
     model_path: str,
     mmproj_path: str = None,
@@ -255,7 +253,7 @@ def load_gguf_model(
             )
             # Патч: отключаем GPU в mtmd_context (use_gpu=False).
             # Без патча _init_mtmd_context жёстко устанавливает use_gpu=True
-            # → Metal пытается выделить ~4.4 GB → segfault на Mac.
+            # -> Metal пытается выделить ~4.4 GB -> segfault на Mac.
             if n_gpu_layers == 0:
                 _patch_chat_handler_no_gpu(chat_handler)
                 if verbose:
@@ -281,9 +279,7 @@ def load_gguf_model(
         return None
 
 
-# ==========================================
 # 3. Подготовка попарного промпта
-# ==========================================
 def _image_to_data_uri(
     image_path: str,
     size: Optional[Tuple[int, int]] = None,
@@ -295,7 +291,7 @@ def _image_to_data_uri(
     Режимы ресайза:
     - hf_preprocess=True (default): воспроизводит HF Qwen2VLImageProcessor:
         1. Ресайзим до e2e_eval.py fixed_image_size=(224,224) BILINEAR
-        2. Применяем _smart_resize(224,224) → 448×448 (кратно 28, ≥ MIN_PIXELS)
+        2. Применяем _smart_resize(224,224) -> 448×448 (кратно 28, ≥ MIN_PIXELS)
         Это идентично тому что делает HF перед передачей в модель.
     - hf_preprocess=False + size задан: фиксированный размер (fallback).
 
@@ -346,7 +342,7 @@ def prepare_pairwise_messages(
 
     Промпт идентичен e2e_eval.py (_rerank_all_candidates, строки 269-289).
     Изображения ресайзятся через _smart_resize (воспроизводит HF Qwen2VLImageProcessor):
-    224×224 → 448×448, соотношение сторон сохраняется, H и W кратны 28.
+    224×224 -> 448×448, соотношение сторон сохраняется, H и W кратны 28.
     Передаются через base64 data URI чтобы GGUF runtime не применял свой ресайз.
     """
     query_uri = _image_to_data_uri(query_image_path)
@@ -380,9 +376,7 @@ def prepare_pairwise_messages(
     ]
 
 
-# ==========================================
 # 4. Вычисление P(yes) через низкоуровневый API
-# ==========================================
 
 # Кеш ID токенов Yes/No — инициализируется один раз при первом вызове
 _YES_TOKEN_ID: Optional[int] = None
@@ -462,7 +456,7 @@ def _extract_logits_from_scores(
         raw = llm._scores
         n_vocab = llm.n_vocab()
 
-        # --- Стратегия 1: уже numpy array ---
+        # Стратегия 1: уже numpy array
         if isinstance(raw, np.ndarray):
             arr_2d = raw if raw.ndim == 2 else raw.reshape(1, -1)
             # [-1] = последний токен промпта (сгенерированный НЕ включён в _scores)
@@ -472,14 +466,14 @@ def _extract_logits_from_scores(
             )
             return True, float(row[yes_id]), float(row[no_id])
 
-        # --- Стратегия 2: list/tuple вложенных строк ---
+        # Стратегия 2: list/tuple вложенных строк
         if isinstance(raw, (list, tuple)) and len(raw) > 0:
             n_tokens = len(raw)
             row = np.array(raw[-1], dtype=np.float32)
             print(f"   ℹ_scores list[{n_tokens}], строка [-1]")
             return True, float(row[yes_id]), float(row[no_id])
 
-        # --- Стратегия 3: ctypes LP_c_float плоский массив ---
+        # Стратегия 3: ctypes LP_c_float плоский массив
         try:
             total_floats = len(raw)
         except TypeError:
@@ -570,7 +564,7 @@ def get_yes_probability(llm: Llama, messages: List[Dict]) -> float:
         )
 
         if captured["logits"] is None:
-            print("   logits_processor не вызван → fallback")
+            print("   logits_processor не вызван -> fallback")
             return _get_yes_probability_fallback(llm, messages)
 
         logit_yes = captured["logits"][yes_id]
@@ -608,10 +602,10 @@ def get_yes_probability(llm: Llama, messages: List[Dict]) -> float:
         return round(p_yes, 4)
 
     except AttributeError as e:
-        print(f"AttributeError: {e} → fallback")
+        print(f"AttributeError: {e} -> fallback")
         return _get_yes_probability_fallback(llm, messages)
     except Exception as e:
-        print(f"Ошибка (logits_processor): {e} → fallback")
+        print(f"Ошибка (logits_processor): {e} -> fallback")
         return _get_yes_probability_fallback(llm, messages)
 
 
@@ -679,9 +673,7 @@ def _get_yes_no_grammar() -> Optional["LlamaGrammar"]:
     return _YES_NO_GRAMMAR
 
 
-# ==========================================
 # 5. Ранжирование кандидатов
-# ==========================================
 def rank_candidates(llm: Llama, query_image_path: str, candidates: List[Dict]) -> List[Dict]:
     """
     Оценивает каждого кандидата и возвращает отсортированный список по P(yes).
@@ -733,9 +725,7 @@ def rank_candidates(llm: Llama, query_image_path: str, candidates: List[Dict]) -
     return results
 
 
-# ==========================================
 # 6. Главный тестовый сценарий
-# ==========================================
 def main_test(retrieved_candidates: List[Dict], query_image_path: str, true_lid: str):
     """Главная функция теста ранжирования."""
     print("=" * 70)
@@ -771,7 +761,7 @@ def main_test(retrieved_candidates: List[Dict], query_image_path: str, true_lid:
     # + текст промпта (~200 токенов) = ~712 токенов на запрос.
     # n_ctx=8192 вызывает segfault на Mac: KV cache на Metal GPU
     # вырастает до ~4.4 GB (recommendedMaxWorkingSetSize = 1.6 GB).
-    # n_ctx=2048 → KV cache = 744 MB — укладывается в лимит.
+    # n_ctx=2048 -> KV cache = 744 MB — укладывается в лимит.
     # n_gpu_layers=0: отключаем offload весов модели на GPU.
     llm = load_gguf_model(
         selected_model,
@@ -804,7 +794,7 @@ def main_test(retrieved_candidates: List[Dict], query_image_path: str, true_lid:
     print(f"⏱Общее время оценки: {total_time:.2f} сек")
 
     # Unknown detection — синхронизировано с e2e_eval.py (rerank_threshold)
-    # и train.py (none_threshold=0.5): если max(P(yes)) < порога → "unknown"
+    # и train.py (none_threshold=0.5): если max(P(yes)) < порога -> "unknown"
     top_score = ranked_results[0]["p_yes"] if ranked_results else 0.0
     is_unknown = not ranked_results or top_score < RERANK_THRESHOLD
     if is_unknown:
@@ -837,9 +827,7 @@ def main_test(retrieved_candidates: List[Dict], query_image_path: str, true_lid:
     print("\nТЕСТИРОВАНИЕ ЗАВЕРШЕНО!")
 
 
-# ==========================================
 # 7. Точка входа (Пример использования)
-# ==========================================
 QUERY_ITEM_IDX = 0  # Индекс тестового примера в val.json
 
 if __name__ == "__main__":

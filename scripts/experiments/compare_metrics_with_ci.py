@@ -19,9 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-# ============================================================
 # КОНФИГУРАЦИЯ
-# ============================================================
 
 # Пути к результатам e2e_eval.py
 SIGLIP_RESULTS_PATH = "/home/jupyter/s3/ai-tour-guide/dataset/results/e2e_rerank_exp_r16_alpha32_lr2e-5_rerank_attn_448_results_by_dinov2.json"
@@ -39,9 +37,7 @@ METRICS_TO_COMPARE = [
     "e2e_accuracy",
 ]
 
-# ============================================================
 # BOOTSTRAP ДЛЯ РАЗНИЦЫ (PAIRED)
-# ============================================================
 
 def bootstrap_difference_ci(
     values_a: np.ndarray,
@@ -81,9 +77,7 @@ def bootstrap_difference_ci(
     }
 
 
-# ============================================================
 # ПЕРМУТАЦИОННЫЙ ТЕСТ (PAIRED)
-# ============================================================
 
 def paired_permutation_test(
     values_a: np.ndarray,
@@ -122,9 +116,7 @@ def paired_permutation_test(
     }
 
 
-# ============================================================
 # ЗАГРУЗКА РЕЗУЛЬТАТОВ
-# ============================================================
 
 def load_e2e_results(path: str) -> List[Dict]:
     """Загружает результаты e2e_eval.py."""
@@ -186,9 +178,7 @@ def extract_paired_metric_values(
     return np.array(siglip_values), np.array(dinov2_values)
 
 
-# ============================================================
 # СРАВНЕНИЕ МЕТРИК
-# ============================================================
 
 def compare_metrics(
     siglip_predictions: List[Dict],
@@ -260,9 +250,7 @@ def compare_metrics(
     return results
 
 
-# ============================================================
 # ПОПРАВКА БОНФЕРРОНИ
-# ============================================================
 
 def apply_bonferroni_correction(results: Dict, alpha: float = 0.05) -> Dict:
     """Применяет поправку Бонферрони к p-values."""
@@ -296,13 +284,9 @@ def apply_bonferroni_correction(results: Dict, alpha: float = 0.05) -> Dict:
     return results
 
 
-# ============================================================
 # ВИЗУАЛИЗАЦИЯ
-# ============================================================
 
-# ============================================================
 # ВИЗУАЛИЗАЦИЯ
-# ============================================================
 
 def plot_comparison(results: Dict, output_path: str = "metrics_comparison.png"):
     """Визуализирует результаты сравнения."""
@@ -386,9 +370,7 @@ def plot_comparison(results: Dict, output_path: str = "metrics_comparison.png"):
     print(f"\nГрафик сохранён: {output_path}")
     plt.close()
 
-# ============================================================
 # АНАЛИЗ RETRIEVAL QUALITY
-# ============================================================
 
 def analyze_retrieval_quality(
     siglip_predictions: List[Dict],
@@ -444,15 +426,13 @@ def analyze_retrieval_quality(
     print(f"\n  Общие samples ({len(common_queries)}):")
     print(f"    Обе known:                  {common_known:>6}")
     print(f"    Обе unknown:                {common_unknown:>6}")
-    print(f"    SigLIP known, DINOv2 unknown: {siglip_known_dinov2_unknown:>6}  ← retrieval DINOv2 хуже")
-    print(f"    SigLIP unknown, DINOv2 known: {siglip_unknown_dinov2_known:>6}  ← retrieval SigLIP хуже")
+    print(f"    SigLIP known, DINOv2 unknown: {siglip_known_dinov2_unknown:>6}  <- retrieval DINOv2 хуже")
+    print(f"    SigLIP unknown, DINOv2 known: {siglip_unknown_dinov2_known:>6}  <- retrieval SigLIP хуже")
     
     print(f"{'='*70}")
 
 
-# ============================================================
 # ТОЧКА ВХОДА
-# ============================================================
 
 if __name__ == "__main__":
     print("="*70)

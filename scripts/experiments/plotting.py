@@ -73,9 +73,7 @@ class TrainingPlotter:
             'eval_semi_hard_accuracy': '#7f7f7f',
         }
 
-    # ------------------------------------------------------------------
     # Хелпер: рисует одну линию метрики с защитой от несовпадения длин
-    # ------------------------------------------------------------------
     def _plot_metric(
         self,
         ax,
@@ -111,7 +109,6 @@ class TrainingPlotter:
         ax.plot(aligned_steps, values, **plot_kwargs)
         return True
 
-    # ------------------------------------------------------------------
 
     def plot_metrics(
         self,

@@ -3,7 +3,7 @@
 Оценка retrieval, zero-shot VLM и LoRA-адаптированного VLM reranking на данных из step6.
 
 Оценивает:
-1. Baseline: argmax(retrieval_score) → Hit@1, MRR
+1. Baseline: argmax(retrieval_score) -> Hit@1, MRR
 2. Zero-shot VLM: Qwen2-VL-2B-Instruct как reranker (без LoRA) - опционально
 3. LoRA VLM: Qwen2-VL-2B-Instruct + LoRA reranker
 4. None-of-the-above: корректная обработка target_idx = -1
@@ -50,7 +50,7 @@ def load_qwen2vl_processor(
 ):
     """Загружает модель и процессор для VLM reranking (с LoRA или без)."""
     # PERF: T4 имеет нативные tensor cores для FP16, но не для BF16.
-    # BF16 на T4 эмулируется через FP32 → в ~2x медленнее FP16.
+    # BF16 на T4 эмулируется через FP32 -> в ~2x медленнее FP16.
     # Используем FP16 для inference (качество идентично BF16 для reranking).
     _dtype = torch.float16
 
@@ -283,12 +283,12 @@ def compute_rerank_scores_batch(
             continue
 
         # FIX #8: processor принимает images как плоский список PIL-объектов.
-        # batch_images_grouped = [[q1,c1], [q2,c2], ...] → разворачиваем в
+        # batch_images_grouped = [[q1,c1], [q2,c2], ...] -> разворачиваем в
         # [q1, c1, q2, c2, ...]. Количество изображений = 2 * len(batch_texts),
         # что совпадает с количеством <image> токенов в batch_texts.
         #
         # FIX batch_size>1: при fixed_image_size все изображения имеют
-        # одинаковое разрешение → одинаковое количество патчей → корректный
+        # одинаковое разрешение -> одинаковое количество патчей -> корректный
         # маппинг <image> токенов к патчам в плоском pixel_values тензоре.
         # transformers>=4.47 корректно пересчитывает position_ids при padding.
         flat_images = [img for pair in batch_images_grouped for img in pair]
@@ -454,14 +454,14 @@ def evaluate_retrieval_only(
         scores = [c["retrieval_score"] for c in candidates]
         ranked_indices = np.argsort(scores)[::-1]  # по убыванию
 
-        # === МЕТРИКИ ДЛЯ НАЛИЧИЯ TARGET ===
+        # МЕТРИКИ ДЛЯ НАЛИЧИЯ TARGET
         if target_idx != -1:
             # HIT@K / RECALL@K: находится ли позитив в топ-K
             for k in k_values:
                 if target_idx in ranked_indices[:k]:
                     hits_at_k[k] += 1
                     # FIX #14: стандартная Precision@K = 1/K при одном
-                    # релевантном документе (target в топ-K → 1/K, иначе 0).
+                    # релевантном документе (target в топ-K -> 1/K, иначе 0).
                     precision_at_k[k].append(1.0 / k)
                 else:
                     precision_at_k[k].append(0.0)
@@ -478,7 +478,7 @@ def evaluate_retrieval_only(
             # Но для baseline это всегда fail, т.к. argmax != -1
             pass
     
-    # === ВЫЧИСЛЕНИЕ МЕТРИК ===
+    # ВЫЧИСЛЕНИЕ МЕТРИК
     # Примечание: для single-label задачи (один релевантный документ на запрос)
     # Hit@K == Recall@K. Оба ключа сохраняются для совместимости с внешними
     # системами, но вычисляются из одного значения.
@@ -728,12 +728,12 @@ def calculate_additional_metrics_for_vlm_rerank(
         candidates = sample["candidates"]
         target_idx = sample["target_idx"]
 
-        # === РАНЖИРОВАНИЕ ПО VLM СКОРАМ ===
+        # РАНЖИРОВАНИЕ ПО VLM СКОРАМ
         ranked_indices = np.argsort(vl_scores)[::-1]  # по убыванию
 
-        # === СБОР ДАННЫХ ДЛЯ МЕТРИК ===
+        # СБОР ДАННЫХ ДЛЯ МЕТРИК
         if target_idx != -1:
-            # --- Метрики для известных достопримечательностей ---
+            # Метрики для известных достопримечательностей
             # Метка: 1 для правильного кандидата, 0 для остальных
             labels_for_sample = [
                 1 if i == target_idx else 0
@@ -746,16 +746,16 @@ def calculate_additional_metrics_for_vlm_rerank(
             rank_of_target = np.where(ranked_indices == target_idx)[0][0] + 1
             all_ranks.append(rank_of_target)
 
-            # --- Метрики для задачи unknown (положительный класс = KNOWN) ---
-            # Этот сэмпл "известный" → метка = 1
+            # Метрики для задачи unknown (положительный класс = KNOWN)
+            # Этот сэмпл "известный" -> метка = 1
             all_unknown_labels.append(1)
             
             # Используем confidence на основе энтропии (низкая энтропия = высокая уверенность)
             confidence_known = _compute_confidence_score(vl_scores)
             all_unknown_probs.append(confidence_known)
         else:
-            # --- Метрики для неизвестных достопримечательностей ---
-            # Этот сэмпл "неизвестный" → метка = 0
+            # Метрики для неизвестных достопримечательностей
+            # Этот сэмпл "неизвестный" -> метка = 0
             all_unknown_labels.append(0)
             
             # Confidence на основе энтропии
@@ -764,7 +764,7 @@ def calculate_additional_metrics_for_vlm_rerank(
 
 
 
-    # --- ВЫЧИСЛЕНИЕ МЕТРИК ---
+    # ВЫЧИСЛЕНИЕ МЕТРИК
     metrics = {}
 
     # 1. Median Rank для известных target
@@ -1099,7 +1099,7 @@ def evaluate_vlm_rerank(
     all_skipped_flags: List[bool] = []
     # FIX max_candidates: хранит обновлённый target_idx после _truncate_candidates.
     # Оригинальный sample["target_idx"] может указывать за пределы усечённого
-    # списка кандидатов → IndexError в calculate_additional_metrics_for_vlm_rerank.
+    # списка кандидатов -> IndexError в calculate_additional_metrics_for_vlm_rerank.
     all_effective_target_indices: List[int] = []
     predictions: Optional[List[Dict]] = [] if save_predictions else None
     _ci_seed = ci_seed  # локальная переменная для передачи в CI
@@ -1122,7 +1122,7 @@ def evaluate_vlm_rerank(
 
         start_time = time.time()
 
-        # === ВЫЧИСЛЕНИЕ VLM-СКОРОВ (БАТЧАМИ) ===
+        # ВЫЧИСЛЕНИЕ VLM-СКОРОВ (БАТЧАМИ)
         vl_scores, failed_indices = compute_rerank_scores_batch(
             model, processor, query_img_path, candidates,
             image_base_dir, caption_max_length, batch_size,
@@ -1161,16 +1161,16 @@ def evaluate_vlm_rerank(
         all_skipped_flags.append(False)
         all_effective_target_indices.append(target_idx)
 
-        # === РАНЖИРОВАНИЕ ПО VLM-СКОРАМ ===
+        # РАНЖИРОВАНИЕ ПО VLM-СКОРАМ
         ranked_indices = np.argsort(vl_scores)[::-1]
 
-        # === ОЦЕНКА В ЗАВИСИМОСТИ ОТ ТИПА TARGET ===
+        # ОЦЕНКА В ЗАВИСИМОСТИ ОТ ТИПА TARGET
         if target_idx != -1:
             for k in k_values:
                 if target_idx in ranked_indices[:k]:
                     hits_at_k[k] += 1
                     # FIX #14: стандартная Precision@K = 1/K при одном
-                    # релевантном документе (target в топ-K → 1/K, иначе 0).
+                    # релевантном документе (target в топ-K -> 1/K, иначе 0).
                     precision_at_k[k].append(1.0 / k)
                 else:
                     precision_at_k[k].append(0.0)
@@ -1191,7 +1191,7 @@ def evaluate_vlm_rerank(
             # FIX #СЕР6: считаем только не-skipped none-samples
             total_none_samples += 1
 
-        # === СОХРАНЕНИЕ ПРЕДСКАЗАНИЙ ===
+        # СОХРАНЕНИЕ ПРЕДСКАЗАНИЙ
         if save_predictions and predictions is not None:
             if target_idx != -1:
                 is_correct = int(ranked_indices[0]) == target_idx
@@ -1209,7 +1209,7 @@ def evaluate_vlm_rerank(
                 "correct": is_correct,
             })
     
-    # === ЛОГИРОВАНИЕ ОШИБОК ЗАГРУЗКИ ИЗОБРАЖЕНИЙ ===
+    # ЛОГИРОВАНИЕ ОШИБОК ЗАГРУЗКИ ИЗОБРАЖЕНИЙ
     if total_skipped_query > 0 or total_skipped_cand > 0:
         print(
             f"\n[{model_name}] Image load errors summary:\n"
@@ -1220,12 +1220,12 @@ def evaluate_vlm_rerank(
             f"  Total samples excluded from metrics: {total_skipped_samples}"
         )
 
-    # === ВЫЧИСЛЕНИЕ LATENCY ===
+    # ВЫЧИСЛЕНИЕ LATENCY
     latency_p95 = np.percentile(latencies, 95) if latencies else 0.0
 
-    # === АГРЕГАЦИЯ МЕТРИК ===
+    # АГРЕГАЦИЯ МЕТРИК
     # FIX #17: кешируем hit_values_ci вне цикла по k — одинаковые данные
-    # для всех k, пересчитывать каждый раз нет смысла (O(n*K) → O(n+K)).
+    # для всех k, пересчитывать каждый раз нет смысла (O(n*K) -> O(n+K)).
     # Также фильтруем skipped samples через all_skipped_flags.
     if compute_ci and total_valid > 0:
         _hit_ci_cache: List[tuple] = []  # (s_target, s_ranked) для valid samples
@@ -1301,7 +1301,7 @@ def evaluate_vlm_rerank(
         total_skipped_samples - total_skipped_query
     )
     
-    # === ADDITIONAL METRICS (используем предвычисленные скоры) ===
+    # ADDITIONAL METRICS (используем предвычисленные скоры)
     # FIX #КРИТ2+#КРИТ6: фильтруем skipped samples используя явный флаг
     # all_skipped_flags вместо эвристики по нулевым скорам.
     # Эвристика давала ложные срабатывания: sample с P(Yes)=0.0 для всех
@@ -1547,7 +1547,7 @@ def evaluate_rerank(
             )
     print(f"Загружено {len(samples)} примеров")
 
-    # === 1. ОЦЕНКА ТОЛЬКО RETRIEVAL (BASELINE) ===
+    # 1. ОЦЕНКА ТОЛЬКО RETRIEVAL (BASELINE)
     print("\n1. Evaluating retrieval baseline...")
     retrieval_metrics = evaluate_retrieval_only(
         samples, k_values,
@@ -1593,7 +1593,7 @@ def evaluate_rerank(
                 json.dump(zs_predictions, f, indent=2, ensure_ascii=False)
             print(f"Predictions сохранены: {pred_path}")
 
-        # === 4. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ ZERO-SHOT ===
+        # 4. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ ZERO-SHOT
         print("\n4. Evaluating zero-shot by candidate type...")
         # FIX #КРИТ8: используем zs_valid_samples из evaluate_vlm_rerank —
         # они содержат обновлённый target_idx после _truncate_candidates,
@@ -1615,7 +1615,7 @@ def evaluate_rerank(
     else:
         print("\n2. Skipping zero-shot VLM evaluation.")
 
-    # === 5. EVALUATE LoRA VLM RERANKING (только если lora_path указан) ===
+    # 5. EVALUATE LoRA VLM RERANKING (только если lora_path указан)
     lora_metrics = {}
     lora_type_metrics = {}
     lora_scores = []
@@ -1655,7 +1655,7 @@ def evaluate_rerank(
                 json.dump(lora_predictions, f, indent=2, ensure_ascii=False)
             print(f"Predictions сохранены: {pred_path}")
 
-        # === 6. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ LoRA ===
+        # 6. АНАЛИЗ ПО ТИПУ КАНДИДАТА ДЛЯ LoRA
         print("\n5. Evaluating LoRA by candidate type...")
         # FIX #КРИТ8: используем lora_valid_samples из evaluate_vlm_rerank —
         # они содержат обновлённый target_idx после _truncate_candidates.
@@ -1666,7 +1666,7 @@ def evaluate_rerank(
             lora_valid_samples, lora_valid_scores, model_name="lora_vlm"
         )
 
-    # === 7. ОБЪЕДИНЕНИЕ РЕЗУЛЬТАТОВ ===
+    # 7. ОБЪЕДИНЕНИЕ РЕЗУЛЬТАТОВ
     results = {
         "config": {
             "dataset": dataset_path,
@@ -1793,7 +1793,7 @@ def evaluate_rerank(
         k: v for k, v in results["summary"].items() if v is not None
     }
 
-    # === 8. СОХРАНЕНИЕ И ВЫВОД РЕЗУЛЬТАТОВ ===
+    # 8. СОХРАНЕНИЕ И ВЫВОД РЕЗУЛЬТАТОВ
     # FIX #2/#1: сохраняем JSON ДО открытия MLflow run, чтобы log_artifact
     # логировал актуальный файл внутри основного run, а не в отдельный.
     output_dir = os.path.dirname(output_path)
@@ -1802,7 +1802,7 @@ def evaluate_rerank(
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    # === ЛОГИРОВАНИЕ В MLFLOW (ОПЦИОНАЛЬНО) ===
+    # ЛОГИРОВАНИЕ В MLFLOW (ОПЦИОНАЛЬНО)
     if use_mlflow:
         print("\nЛогирование в MLflow...")
         if mlflow_tracking_uri:
@@ -1851,7 +1851,7 @@ def evaluate_rerank(
                         # FIX #КРИТ9: используем len(_scores) вместо
                         # len(_s["candidates"]) — при max_candidates скоры
                         # усечены, а candidates в sample оригинальные.
-                        # Несоответствие длин → IndexError в calibration plot.
+                        # Несоответствие длин -> IndexError в calibration plot.
                         labels = [
                             1 if i == _s["target_idx"] else 0
                             for i in range(len(_scores))
@@ -1995,9 +1995,7 @@ def evaluate_rerank(
     return results
 
 
-# ============================================
 # ТОЧКА ВХОДА
-# ============================================
 
 if __name__ == "__main__":
     # Конфигурация параметров
@@ -2010,23 +2008,23 @@ if __name__ == "__main__":
     _K_VALUES = [1, 3, 5]
     # Размер батча для VLM inference.
     # T4 16GB: при fixed_image_size=(224,224) оптимально batch_size=4-8.
-    # При (448,448) каждый пример = ~256 патчей × 2 изображения → OOM при >4.
+    # При (448,448) каждый пример = ~256 патчей × 2 изображения -> OOM при >4.
     # batch_size>1 корректно работает при fixed_image_size != None.
     _BATCH_SIZE = 8
     # Фиксированный размер изображений для батчинга.
-    # (224, 224) → 1 тайл = 64 патча на изображение (в 4x меньше чем 448x448).
+    # (224, 224) -> 1 тайл = 64 патча на изображение (в 4x меньше чем 448x448).
     # Даёт ~3-4x ускорение на T4 при незначительной потере качества.
     # (448, 448) — стандартный размер тайла, но тяжело для T4 при батчинге.
     _FIXED_IMAGE_SIZE = (224, 224)
     # Максимальная длина caption в символах.
     # 64 символа ≈ 16-20 токенов — достаточно для ключевых деталей ориентира.
-    # 300 (дефолт) → ~75 токенов, увеличивает sequence length и замедляет attention.
+    # 300 (дефолт) -> ~75 токенов, увеличивает sequence length и замедляет attention.
     _CAPTION_MAX_LENGTH = 64
     # Максимальное число кандидатов на запрос для VLM inference.
     # None = использовать все кандидаты из датасета (по умолчанию ~15).
     # При target_idx != -1 позитив всегда включается в усечённый список.
     # При target_idx == -1 берутся первые _MAX_CANDIDATES негативов.
-    # Пример: 5 кандидатов вместо 15 → ~3x ускорение forward pass.
+    # Пример: 5 кандидатов вместо 15 -> ~3x ускорение forward pass.
     _MAX_CANDIDATES = 10
     # Вычислять ли bootstrap confidence intervals (медленнее, но точнее).
     _COMPUTE_CI = False

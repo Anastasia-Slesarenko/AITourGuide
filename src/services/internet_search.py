@@ -76,7 +76,7 @@ def filter_wiki_results(
         first_sentence = desc.split(".")[0].lower()
         if any(x in first_sentence for x in DESC_NOISE_PREFIXES):
             logger.debug(
-                f"Отфильтровано по описанию: '{name}' → '{first_sentence[:80]}'"
+                f"Отфильтровано по описанию: '{name}' -> '{first_sentence[:80]}'"
             )
             continue
         # Фильтр по релевантности к подсказкам:
@@ -191,7 +191,7 @@ def extract_clean_name(raw_name: str) -> str:
 
     # 5. Если есть архитектурный термин — берём контекст вокруг него.
     #    Берём до 2 слов до термина + сам термин (без слова после —
-    #    чтобы не захватить лишнее: "Hagia Sophia Grand Mosque" → "Sophia
+    #    чтобы не захватить лишнее: "Hagia Sophia Grand Mosque" -> "Sophia
     #    Grand Mosque" вместо "Hagia Sophia").
     words = name.split()
     for i, w in enumerate(words):
@@ -281,8 +281,8 @@ class InternetSearchService:
     """
     Fallback-поиск достопримечательности в интернете, когда реранкер не уверен.
 
-    Пайплайн: Yandex Image Search → уточнение названия через VLM →
-    Wikipedia → выбор статьи → VLM-верификация найденного объекта.
+    Пайплайн: Yandex Image Search -> уточнение названия через VLM ->
+    Wikipedia -> выбор статьи -> VLM-верификация найденного объекта.
     Держит ссылки на vLLM-клиент, YandexSearchService и конфиг сервиса.
     """
 
@@ -501,7 +501,7 @@ class InternetSearchService:
 
         # Даже vlm_name может содержать мусорные суффиксы — чистим всегда.
         best_name = extract_clean_name(best_key)
-        logger.info(f"Интернет-поиск: best_key='{best_key}' → best_name='{best_name}'")
+        logger.info(f"Интернет-поиск: best_key='{best_key}' -> best_name='{best_name}'")
 
         return {
             "name": best_name,
@@ -636,11 +636,11 @@ class InternetSearchService:
                 p_yes = text_response_to_p_yes(response)
                 logger.info(
                     f"VLM верификация (logprobs недоступны, текст fallback): "
-                    f"'{landmark_name}' → p_yes={p_yes}"
+                    f"'{landmark_name}' -> p_yes={p_yes}"
                 )
             else:
                 logger.info(
-                    f"VLM верификация (logprobs): '{landmark_name}' → p_yes={p_yes:.4f}"
+                    f"VLM верификация (logprobs): '{landmark_name}' -> p_yes={p_yes:.4f}"
                 )
             return p_yes
 

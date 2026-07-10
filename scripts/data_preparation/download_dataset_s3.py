@@ -230,7 +230,7 @@ def download_folder(
     return downloaded_files
 
 
-# ==================== Пример использования ====================
+# Пример использования
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()  # Загрузка переменных из .env

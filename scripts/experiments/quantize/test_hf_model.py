@@ -15,9 +15,7 @@ from PIL import Image
 import torch
 from transformers import AutoProcessor, AutoModelForVision2Seq
 
-# ==========================================
 # 1. Пути и константы
-# ==========================================
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.rag.landmark_retriever import LandmarkRetriever
 
@@ -38,9 +36,7 @@ RETRIEVAL_TOP_K = 3
 RETRIEVAL_FAISS_K = 50
 
 
-# ==========================================
 # 2. Загрузка модели
-# ==========================================
 def load_model(
     model_path: str,
     verbose: bool = True,
@@ -79,9 +75,7 @@ def load_model(
     return model, processor
 
 
-# ==========================================
 # 3. Подготовка промпта (идентично e2e_eval.py)
-# ==========================================
 def prepare_pairwise_messages(
     query_image_path: str,
     candidate_image_path: str,
@@ -124,9 +118,7 @@ def prepare_pairwise_messages(
     ]
 
 
-# ==========================================
 # 4. Вычисление P(yes) через logits
-# ==========================================
 
 # Кеш ID токенов
 _YES_TOKEN_ID: Optional[int] = None
@@ -223,9 +215,7 @@ def get_yes_probability(
     return round(p_yes, 4)
 
 
-# ==========================================
 # 5. Ранжирование кандидатов
-# ==========================================
 def rank_candidates(
     model: AutoModelForVision2Seq,
     processor: AutoProcessor,
@@ -283,9 +273,7 @@ def rank_candidates(
     return results
 
 
-# ==========================================
 # 6. Главный тестовый сценарий
-# ==========================================
 def main_test(
     retrieved_candidates: List[Dict],
     query_image_path: str,
@@ -366,9 +354,7 @@ def main_test(
     print("\nТЕСТИРОВАНИЕ ЗАВЕРШЕНО!")
 
 
-# ==========================================
 # 7. Точка входа
-# ==========================================
 QUERY_ITEM_IDX = 0
 
 if __name__ == "__main__":

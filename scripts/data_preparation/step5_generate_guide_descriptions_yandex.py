@@ -42,18 +42,14 @@ from tqdm.asyncio import tqdm
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 
-# ======================
 # КОНФИГУРАЦИЯ
-# ======================
 @dataclass
 class Config:
     """Конфигурация для генерации описаний."""
@@ -113,9 +109,7 @@ class Config:
         Path(self.output_path).parent.mkdir(parents=True, exist_ok=True)
 
 
-# ======================
 # МЕТРИКИ
-# ======================
 class Metrics:
     """Отслеживание метрик обработки."""
 
@@ -143,9 +137,7 @@ class Metrics:
         }
 
 
-# ======================
 # ГЕНЕРАТОР ОПИСАНИЙ
-# ======================
 class GuideDescriptionGenerator:
     """Генерация описаний в стиле гида с использованием Yandex AliceAI LLM."""
 
@@ -360,7 +352,7 @@ class GuideDescriptionGenerator:
 
         # Убираем маркеры списков
         description_text = re.sub(
-            r"^[•→\-\*]\s*", "", description_text, flags=re.MULTILINE
+            r"^[•->\-\*]\s*", "", description_text, flags=re.MULTILINE
         )
 
         # Постобработка: нормализация пробелов
@@ -557,9 +549,7 @@ class GuideDescriptionGenerator:
         return result
 
 
-# ======================
 # ОСНОВНОЙ КЛАСС
-# ======================
 class GuideDescriptionProcessor:
     """Процессор генерации описаний в стиле гида."""
 
@@ -833,9 +823,7 @@ class GuideDescriptionProcessor:
         logger.info("=" * 70)
 
 
-# ======================
 # ТОЧКА ВХОДА
-# ======================
 def main():
     """Главная точка входа."""
     # Настройка обработки сигналов

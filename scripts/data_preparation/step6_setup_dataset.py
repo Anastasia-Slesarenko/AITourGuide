@@ -44,11 +44,9 @@
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------
 # Предотвращение segfault на macOS: ВСЕ переменные окружения для
 # потоков/процессов ДОЛЖНЫ быть заданы до импорта любой нативной
 # библиотеки (numpy, torch, faiss).
-# ---------------------------------------------------------------
 import os
 import platform as _platform
 
@@ -62,7 +60,6 @@ if _platform.system() == "Darwin":
     os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-# ---------------------------------------------------------------
 
 import json
 import logging
@@ -88,18 +85,14 @@ from src.rag.landmark_retriever import (
     aggregate_scores,
 )
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
 
-# ======================
 # КОНФИГУРАЦИЯ
-# ======================
 @dataclass
 class DatasetConfig:
     """Конфигурация для генерации датасета."""
@@ -180,9 +173,9 @@ class DatasetConfig:
 
     # Классификация сложности кандидатов
     hardness_classification_mode: str = "score_based"
-    hard_threshold: float = 0.85  # score >= 0.85 → hard
-    semi_hard_threshold: float = 0.75  # 0.75 <= score < 0.85 → semi-hard
-    # score < 0.75 → easy
+    hard_threshold: float = 0.85  # score >= 0.85 -> hard
+    semi_hard_threshold: float = 0.75  # 0.75 <= score < 0.85 -> semi-hard
+    # score < 0.75 -> easy
 
     # Перцентильная калибровка порогов сложности под шкалу энкодера.
     # Абсолютные пороги (0.85/0.75/0.88) привязаны к SigLIP; у другого энкодера
@@ -192,9 +185,9 @@ class DatasetConfig:
     # фактического распределения retrieval_score перед генерацией сэмплов.
     calibrate_thresholds_by_percentile: bool = True
     calibration_num_queries: int = 500  # сколько query просэмплировать
-    hard_percentile: float = 0.70  # верхние 30% score → hard
+    hard_percentile: float = 0.70  # верхние 30% score -> hard
     semi_hard_percentile: float = 0.40  # граница semi-hard
-    hard_unknown_percentile: float = 0.90  # верхние 10% → hard_unknown
+    hard_unknown_percentile: float = 0.90  # верхние 10% -> hard_unknown
 
     # Обработка текста
     evidence_max_length: int = 80
@@ -283,9 +276,7 @@ class DatasetConfig:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
 
-# ======================
 # ОБРАБОТКА ТЕКСТА
-# ======================
 class TextProcessor:
     """Обрабатывает текст описаний достопримечательностей."""
 
@@ -337,9 +328,7 @@ class TextProcessor:
         return description[:max_length]
 
 
-# ======================
 # НАЗНАЧЕНИЕ РОЛЕЙ ИЗОБРАЖЕНИЙ
-# ======================
 @dataclass
 class LandmarkImageSplit:
     """
@@ -405,9 +394,7 @@ class LandmarkImageSplit:
             )
 
 
-# ======================
 # РАЗБИЕНИЕ ДАННЫХ
-# ======================
 class ImageRoleSplitter:
     """
     Распределяет изображения каждого объекта по ролям gallery/query.
@@ -466,7 +453,7 @@ class ImageRoleSplitter:
 
         elif num_images == 2:
             # Вероятностное распределение для объектов с 2 изображениями:
-            # 80% → gallery + train, 10% → gallery + val, 10% → gallery + test
+            # 80% -> gallery + train, 10% -> gallery + val, 10% -> gallery + test
             rand_val = random.random()
 
             if rand_val < self.config.two_image_train_ratio:
@@ -506,7 +493,7 @@ class ImageRoleSplitter:
 
         elif num_images == 3:
             # Вероятностное распределение для объектов с 3 изображениями:
-            # 70% → 2 gallery + train, 15% → 2 gallery + val, 15% → 2 gallery + test
+            # 70% -> 2 gallery + train, 15% -> 2 gallery + val, 15% -> 2 gallery + test
             rand_val = random.random()
 
             if rand_val < self.config.three_image_train_ratio:
@@ -722,9 +709,7 @@ class ImageRoleSplitter:
         logger.info("=" * 60)
 
 
-# ======================
 # ПОСТРОИТЕЛЬ GALLERY-ИНДЕКСА
-# ======================
 # Примечание: GalleryImageMetadata импортируется из src.rag.landmark_retriever
 
 
@@ -743,9 +728,9 @@ class GalleryIndexBuilder:
     - НОВО: retrieval возвращает изображения, затем агрегирует по landmark_id
 
     Это соответствует продакшен-поведению, где:
-    1. Query-изображение → SigLIP embedding
-    2. FAISS-поиск → top-k gallery-изображений
-    3. Группировка по landmark_id → max similarity на объект
+    1. Query-изображение -> SigLIP embedding
+    2. FAISS-поиск -> top-k gallery-изображений
+    3. Группировка по landmark_id -> max similarity на объект
     4. Возврат top объектов
     """
 
@@ -918,7 +903,7 @@ class GalleryIndexBuilder:
             # Получаем caption_landmark для этого объекта
             caption_landmark = TextProcessor.get_landmark_summary_caption(row)
 
-            # Строим отображение path изображения → caption из valid_images
+            # Строим отображение path изображения -> caption из valid_images
             valid_images = row.get("valid_images", [])
             image_caption_map = {}
             for img_data in valid_images:
@@ -1253,9 +1238,7 @@ class GalleryIndexBuilder:
         return landmark_results
 
 
-# ======================
 # ГЕНЕРАТОР СЭМПЛОВ НА ОСНОВЕ RETRIEVAL (НОВЫЙ)
-# ======================
 class RetrievalBasedSampleGenerator:
     """
     Генерирует обучающие сэмплы, используя естественный retrieval.
@@ -1375,15 +1358,15 @@ class RetrievalBasedSampleGenerator:
             f"Калибровка порогов по {len(scores)} score (медиана {_pct(0.5):.3f}):"
         )
         logger.info(
-            f"  hard:         {old[0]:.3f} → {cfg.hard_threshold:.3f} "
+            f"  hard:         {old[0]:.3f} -> {cfg.hard_threshold:.3f} "
             f"(p{100 * cfg.hard_percentile:.0f})"
         )
         logger.info(
-            f"  semi_hard:    {old[1]:.3f} → {cfg.semi_hard_threshold:.3f} "
+            f"  semi_hard:    {old[1]:.3f} -> {cfg.semi_hard_threshold:.3f} "
             f"(p{100 * cfg.semi_hard_percentile:.0f})"
         )
         logger.info(
-            f"  hard_unknown: {old[2]:.3f} → {cfg.hard_unknown_min_score:.3f} "
+            f"  hard_unknown: {old[2]:.3f} -> {cfg.hard_unknown_min_score:.3f} "
             f"(p{100 * cfg.hard_unknown_percentile:.0f})"
         )
 
@@ -1812,9 +1795,7 @@ class RetrievalBasedSampleGenerator:
         logger.info("=" * 60)
 
 
-# ======================
 # ЗАПИСЬ ФАЙЛОВ
-# ======================
 class FileWriter:
     """Отвечает за запись сэмплов в JSON-файлы."""
 
@@ -1835,9 +1816,7 @@ class FileWriter:
             raise
 
 
-# ======================
 # ГЕНЕРАТОР CONTRASTIVE-СЭМПЛОВ (НОВЫЙ)
-# ======================
 class ImageLevelContrastiveGenerator:
     """
     Генерирует сэмплы contrastive-обучения с корректными ограничениями на уровне изображений.
@@ -1960,9 +1939,7 @@ class ImageLevelContrastiveGenerator:
         logger.info("=" * 60)
 
 
-# ======================
 # ОЦЕНКА RETRIEVAL
-# ======================
 @dataclass
 class RetrievalMetrics:
     """Контейнер для метрик оценки retrieval."""
@@ -2274,9 +2251,7 @@ class RetrievalEvaluator:
         logger.info("=" * 70)
 
 
-# ======================
 # ВАЛИДАЦИЯ
-# ======================
 class DatasetValidator:
     """
     Валидирует датасет для продакшен-корректного closed-set retrieval.
@@ -2482,9 +2457,7 @@ class DatasetValidator:
         return train_metrics, val_metrics, test_metrics
 
 
-# ======================
 # ОСНОВНОЙ PIPELINE
-# ======================
 def main():
     """
     НОВЫЙ ПРОДАКШЕН-КОРРЕКТНЫЙ PIPELINE
@@ -2497,9 +2470,9 @@ def main():
     5. Корректные contrastive-ограничения
 
     Имитируемое продакшен-поведение:
-    Фото пользователя → SigLIP → FAISS retrieval → Gallery-изображения
-    → Группировка по объекту → Max similarity → Top-K объектов
-    → Qwen2-VL reranker → Multiple-choice → Предсказание
+    Фото пользователя -> SigLIP -> FAISS retrieval -> Gallery-изображения
+    -> Группировка по объекту -> Max similarity -> Top-K объектов
+    -> Qwen2-VL reranker -> Multiple-choice -> Предсказание
     """
     # Инициализируем конфигурации
     dataset_config = DatasetConfig()
@@ -2548,9 +2521,7 @@ def main():
     logger.info("")
 
     try:
-        # ============================================================
         # ШАГ 1: Загрузка и подготовка данных
-        # ============================================================
         data_path = Path(dataset_config.data_path)
         if not data_path.exists():
             raise FileNotFoundError(f"Input file not found: {data_path}")
@@ -2582,9 +2553,7 @@ def main():
         df = df[df["images"].map(len) > 0].reset_index(drop=True)
         logger.info(f"Loaded {len(df)} landmarks with images")
 
-        # ============================================================
         # ШАГ 2: Распределение изображений по ролям gallery/query
-        # ============================================================
         logger.info("")
         logger.info("STEP 2: Image role assignment")
         logger.info("-" * 70)
@@ -2599,9 +2568,7 @@ def main():
         if not DatasetValidator.validate_splits(splits):
             raise ValueError("Split validation failed!")
 
-        # ============================================================
         # ШАГ 3: Построение или загрузка gallery FAISS-индекса
-        # ============================================================
         logger.info("")
         logger.info("STEP 3: Gallery index preparation")
         logger.info("-" * 70)
@@ -2661,9 +2628,7 @@ def main():
         index_builder = IndexBuilder(index_config)
 
         if can_reuse:
-            # ============================================================
             # ШАГ 3A: Загрузка существующего обучающего индекса
-            # ============================================================
             logger.info("Loading existing training gallery index...")
             logger.info(f"  Index: {training_index_path}")
             logger.info(f"  Metadata: {training_metadata_path}")
@@ -2708,9 +2673,7 @@ def main():
                 can_reuse = False
 
         if not can_reuse:
-            # ============================================================
             # ШАГ 3B: Построение нового gallery-индекса
-            # ============================================================
             logger.info("Building new training gallery index...")
 
             try:
@@ -2735,9 +2698,7 @@ def main():
                 logger.error(f"Failed to build gallery index: {e}")
                 raise
 
-        # ============================================================
         # ШАГ 4: Генерация reranking-сэмплов
-        # ============================================================
         logger.info("")
         logger.info("STEP 4: Generating reranking samples")
         logger.info("-" * 70)
@@ -2800,9 +2761,7 @@ def main():
             )
         )
 
-        # ============================================================
         # ШАГ 5: Генерация contrastive-сэмплов
-        # ============================================================
         logger.info("")
         logger.info("STEP 5: Generating contrastive samples")
         logger.info("-" * 70)
@@ -2822,9 +2781,7 @@ def main():
         if not DatasetValidator.validate_contrastive(test_contrastive):
             raise ValueError("Test contrastive validation failed!")
 
-        # ============================================================
         # ШАГ 6: Сохранение датасетов
-        # ============================================================
         logger.info("")
         logger.info("STEP 6: Saving datasets")
         logger.info("-" * 70)
@@ -2843,9 +2800,7 @@ def main():
             dataset_config.output_dir / "test_contrastive.json", test_contrastive
         )
 
-        # ============================================================
         # ШАГ 6.5: Сохранение обучающего gallery-индекса для повторного использования
-        # ============================================================
         if not can_reuse:  # Сохраняем только если только что построили
             logger.info("")
             logger.info("STEP 6.5: Saving training gallery index")
@@ -2884,9 +2839,7 @@ def main():
                 logger.warning(f"Failed to save training index: {e}")
                 logger.warning("Continuing without saving index...")
 
-        # ============================================================
         # ШАГ 7: Сохранение метрик оценки
-        # ============================================================
         logger.info("")
         logger.info("STEP 7: Saving evaluation metrics")
         logger.info("-" * 70)
@@ -2902,9 +2855,7 @@ def main():
             dataset_config.output_dir / "retrieval_metrics.json", metrics_data
         )
 
-        # ============================================================
         # ИТОГОВАЯ СВОДКА
-        # ============================================================
         logger.info("")
         DatasetValidator.log_dataset_summary(
             splits=splits,

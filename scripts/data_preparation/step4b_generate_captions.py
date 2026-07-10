@@ -31,9 +31,7 @@ from transformers import (
 )
 from qwen_vl_utils import process_vision_info
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -41,15 +39,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ======================
 # КОНСТАНТЫ
-# ======================
 GPU_CACHE_CLEAR_INTERVAL = 50
 MAX_SUMMARY_CAPTIONS = 3
 
-# ======================
 # КОНФИГУРАЦИЯ
-# ======================
 @dataclass
 class Config:
     """Конфигурация для генерации captions."""
@@ -88,9 +82,7 @@ class Config:
         Path(self.checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
 
 
-# ======================
 # КЭШИРОВАНИЕ
-# ======================
 class CaptionCache:
     """Кэш сгенерированных captions."""
     def __init__(self, path: Path):
@@ -126,9 +118,7 @@ class CaptionCache:
             self.pending_writes.clear()
 
 
-# ======================
 # CAPTION GENERATOR
-# ======================
 class Qwen2VLCaptionGenerator:
     """Генерация captions с использованием Qwen2-VL."""
     def __init__(self, config: Config):
@@ -305,9 +295,7 @@ CAPTION должен:
             return [f"Изображение {name}" for _, name in batch_data]
 
 
-# ======================
 # ГЕНЕРАЦИЯ СВОДНОГО ОПИСАНИЯ
-# ======================
 def generate_landmark_summary(valid_images: List[Dict], landmark_name: str) -> str:
     """Генерация сводного канонического описания достопримечательности."""
     try:
@@ -340,9 +328,7 @@ def generate_landmark_summary(valid_images: List[Dict], landmark_name: str) -> s
         return f"Визуальное описание {landmark_name}"
 
 
-# ======================
 # CHECKPOINT УПРАВЛЕНИЕ
-# ======================
 class CheckpointManager:
     """Управление checkpoint'ами для возобновления обработки."""
     def __init__(self, checkpoint_path: Path):
@@ -386,9 +372,7 @@ class CheckpointManager:
             self.checkpoint_path.unlink()
 
 
-# ======================
 # ОСНОВНОЙ ПРОЦЕССОР
-# ======================
 def main():
     """Главная точка входа."""
     config = Config()

@@ -67,7 +67,7 @@ class TestFilterWikiResults:
         assert "Notre-Dame Cathedral" in res
 
     def test_vlm_exact_match_short_circuits(self):
-        """Точное совпадение с vlm_name → возвращаем только его."""
+        """Точное совпадение с vlm_name -> возвращаем только его."""
         res = filter_wiki_results(
             {
                 "Statue of Liberty": "A statue in New York.",

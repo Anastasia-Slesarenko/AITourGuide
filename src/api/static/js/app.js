@@ -461,7 +461,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (Math.abs(dx) > 40) goTo(dx < 0 ? current + 1 : current - 1);
     }, { passive: true });
 
-    // Клавиши ← →
+    // Клавиши влево/вправо
     document.addEventListener('keydown', e => {
         if (!slider) return;
         if (e.key === 'ArrowLeft') goTo(current - 1);

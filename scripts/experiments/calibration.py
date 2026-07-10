@@ -41,9 +41,7 @@ from typing import Dict, List, Tuple
 _EPS = 1e-6
 
 
-# ============================================================
 # ЗАГРУЗКА И ПОСТРОЕНИЕ ПАР (confidence, label)
-# ============================================================
 
 def _load_predictions(path: str) -> List[Dict]:
     with open(path, "r", encoding="utf-8") as f:
@@ -69,9 +67,7 @@ def build_calibration_pairs(
     return pairs
 
 
-# ============================================================
 # МЕТРИКИ КАЛИБРОВКИ
-# ============================================================
 
 def _clamp(p: float) -> float:
     return min(1.0 - _EPS, max(_EPS, p))
@@ -123,9 +119,7 @@ def nll(pairs: List[Tuple[float, int]]) -> float:
     return s / len(pairs)
 
 
-# ============================================================
 # TEMPERATURE SCALING
-# ============================================================
 
 def _logit(p: float) -> float:
     p = _clamp(p)
@@ -175,15 +169,13 @@ def fit_temperature(
     return best_T, best
 
 
-# ============================================================
 # ISOTONIC REGRESSION (когда одного T мало)
-# ============================================================
 
 def fit_isotonic(pairs: List[Tuple[float, int]]) -> Tuple[List[float], List[float]]:
-    """Изотоническая регрессия confidence → P(correct) через PAV.
+    """Изотоническая регрессия confidence -> P(correct) через PAV.
 
     Гибче temperature scaling (не один параметр, а любая монотонная функция):
-    выправляет миксалибровку произвольной формы. Монотонна → как и T, НЕ меняет
+    выправляет миксалибровку произвольной формы. Монотонна -> как и T, НЕ меняет
     порядок скоров, порог и AUROC; чинит только честность вероятности.
 
     Returns:
@@ -234,9 +226,7 @@ def apply_isotonic(conf: float, xs: List[float], ys: List[float]) -> float:
     return y0 + (y1 - y0) * (conf - x0) / (x1 - x0)
 
 
-# ============================================================
 # ВЫВОД
-# ============================================================
 
 def _print_reliability(rel: Dict, title: str) -> None:
     print(f"\n  {title}")
@@ -274,17 +264,15 @@ def _maybe_plot(rel_raw: Dict, rel_cal: Dict, T: float, out_path: str) -> None:
     print(f"  Reliability diagram: {out_path}")
 
 
-# ============================================================
 # ТОЧКА ВХОДА
-# ============================================================
 
 if __name__ == "__main__":
-    # ===================== КОНФИГ (без CLI) =====================
+    # КОНФИГ (без CLI)
     _BASE = "/Users/anastasiya/Documents/AITourGuide/scripts/experiments/results/e2e_pipline"
     # Калибраторы ФИТЯТСЯ на val, метрики честно считаются на TEST.
     KNOWN_VAL_JSON = f"{_BASE}/e2e_val_results_best_lora.json"        # e2e на val.json
     NOVEL_VAL_JSON = f"{_BASE}/e2e_val_results_best_lora_novel.json"  # e2e на novel_val
-    # TEST для честной оценки (None → оценивать на val; тогда isotonic-ECE
+    # TEST для честной оценки (None -> оценивать на val; тогда isotonic-ECE
     # переоценён — он подгоняет val почти в ноль).
     KNOWN_TEST_JSON = f"{_BASE}/e2e_results_best_lora.json"           # e2e на test.json
     NOVEL_TEST_JSON = f"{_BASE}/e2e_results_best_lora_novel.json"     # e2e на novel_test
@@ -292,11 +280,10 @@ if __name__ == "__main__":
     # Selective prediction: калибруем на ПРИНЯТЫХ (accepted) примерах — тех, где
     # пайплайн отвечает (confidence >= порога). Отклонённые не показываются, поэтому
     # в калибровку не идут. ДОЛЖЕН совпадать с продовым vlm_threshold —
-    # Youden-оптимальный порог LoRA (open-set). None → калибровать на всех.
+    # Youden-оптимальный порог LoRA (open-set). None -> калибровать на всех.
     ACCEPT_THRESHOLD = 0.472656
     PLOT_PATH = f"{_BASE}/reliability_best_lora.png"
     SAVE_JSON = f"{_BASE}/calibration_best_lora.json"
-    # ===========================================================
 
     print("=" * 60)
     print("КАЛИБРОВКА (accepted): фит на VAL, оценка на TEST")

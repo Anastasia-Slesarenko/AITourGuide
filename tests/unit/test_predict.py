@@ -123,7 +123,7 @@ def _make_guide(retrieved, p_yes_by_name, calibrator=None, threshold=THRESHOLD):
 
 # Сценарий: top-1 ретривера ≠ победитель реранкера.
 #   A (Kremlin)   — retrieval top-1 (score 0.9), но p_yes низкий (0.20)
-#   B (Hermitage) — retrieval #2 (0.7),   p_yes высокий (0.95) → победитель
+#   B (Hermitage) — retrieval #2 (0.7),   p_yes высокий (0.95) -> победитель
 #   C (Peterhof)  — retrieval #3 (0.6),   p_yes средний (0.40)
 def _rerank_scenario():
     return [
@@ -177,7 +177,7 @@ class TestRerankWinnerConsistency:
 
 
 class TestUnknown:
-    """Все p_yes ниже порога → объект не распознан, поля очищены."""
+    """Все p_yes ниже порога -> объект не распознан, поля очищены."""
 
     async def test_low_confidence_marks_unknown_and_clears_fields(self):
         guide = _make_guide(
@@ -199,7 +199,7 @@ class TestCalibrationApplied:
     """Решение known/unknown — на сыром p_yes; отдаётся калиброванный."""
 
     async def test_decision_on_raw_but_emits_calibrated_confidence(self):
-        # кривая тянет 0.95 → 0.49 (переуверенность)
+        # кривая тянет 0.95 -> 0.49 (переуверенность)
         cal = ConfidenceCalibrator(curve_path=None)
         cal._x = [0.0, 0.95, 1.0]
         cal._y = [0.0, 0.49, 1.0]
@@ -210,7 +210,7 @@ class TestCalibrationApplied:
         )
         res = await guide.predict(_jpeg_bytes(), use_internet_search=False)
 
-        # сырой 0.95 >= порога → принято (не unknown), название сохранено
+        # сырой 0.95 >= порога -> принято (не unknown), название сохранено
         assert res["unknown"] is False
         assert res["name"] == "Эрмитаж"
         # но наружу отдаётся калиброванная уверенность

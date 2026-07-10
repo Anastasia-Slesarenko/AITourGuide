@@ -34,9 +34,7 @@ from transformers import (
 )
 from qwen_vl_utils import process_vision_info
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -44,14 +42,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ======================
 # КОНСТАНТЫ
-# ======================
 GPU_CACHE_CLEAR_INTERVAL = 50
 
-# ======================
 # КОНФИГУРАЦИЯ
-# ======================
 @dataclass
 class Config:
     """Конфигурация для валидации изображений."""
@@ -98,9 +92,7 @@ class Config:
         Path(self.output_path).parent.mkdir(parents=True, exist_ok=True)
 
 
-# ======================
 # КЭШИРОВАНИЕ
-# ======================
 class ValidationCache:
     """Кэш результатов валидации изображений."""
     def __init__(self, path: Path):
@@ -137,9 +129,7 @@ class ValidationCache:
             self.pending_writes.clear()
 
 
-# ======================
 # CLIP PRE-FILTER
-# ======================
 class CLIPPreFilter:
     """CLIP-based pre-filter для быстрой фильтрации."""
     
@@ -246,9 +236,7 @@ class CLIPPreFilter:
                 img.close()
 
 
-# ======================
 # VLM VALIDATOR
-# ======================
 class Qwen2VLValidator:
     """Валидация изображений с использованием Qwen2-VL."""
     def __init__(self, config: Config):
@@ -410,9 +398,7 @@ no = interior, person, map, text, food, or does NOT match"""
             return [(False, "low") for _ in batch_data]
 
 
-# ======================
 # ОСНОВНОЙ ПРОЦЕССОР
-# ======================
 def main():
     """Главная точка входа."""
     config = Config()

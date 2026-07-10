@@ -42,9 +42,7 @@ from transformers import (
 )
 from peft import PeftModel
 
-# ============================================================
 # КОНФИГУРАЦИЯ — редактируйте здесь
-# ============================================================
 
 # Пути
 BASE_MODEL_PATH = "Qwen/Qwen2-VL-2B-Instruct"
@@ -67,7 +65,6 @@ QUANT_OUTPUT_DIR = Path(
     f"/home/jupyter/s3/ai-tour-guide/models/qwen2-vl-2b-r16-{QUANT_MODE}"
 )
 
-# ============================================================
 
 # Модули, которые НЕ квантуем:
 # - visual — весь vision encoder (~300MB, небольшой, квантование нестабильно)

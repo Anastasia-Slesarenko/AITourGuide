@@ -11,7 +11,7 @@
       known  — query_image из test.json           (объекты есть в индексе),
       novel  — query_image из novel_test_unknown.json (объектов нет в индексе).
     Имена берутся из манифестов, байты — из LOAD_TEST_IMAGE_DIR (база фото).
-    Каждый запрос уникализируется (случайный хвост → уникальный MD5), иначе
+    Каждый запрос уникализируется (случайный хвост -> уникальный MD5), иначе
     кэш результата predict отдавал бы почти всё за миллисекунды и тест мерил
     бы кэш, а не инференс.
   - Ступенчатая нагрузка. StepLoadShape поднимает число пользователей
@@ -77,7 +77,7 @@ POOL_SIZE = int(os.getenv("LOAD_TEST_POOL_SIZE", "64"))
 SPAWN_RATE = float(os.getenv("LOAD_TEST_SPAWN_RATE", "10"))
 # Ступени "users:seconds", через запятую. Каждая держится указанное время.
 # Мягкий ramp: «колено» этого сервиса — на единицах пользователей (один
-# непрокэшированный predict тяжёлый), поэтому идём 1→2→4→8, а не 5→40,
+# непрокэшированный predict тяжёлый), поэтому идём 1->2->4->8, а не 5->40,
 # где всё сразу за пределом ёмкости и меряется лишь глубина очереди.
 STAGES_RAW = os.getenv("LOAD_TEST_STAGES", "1:60,2:60,4:60,8:60")
 # Сколько имён вычитать из манифеста. test.json ~255 МБ; читаем потоково и
@@ -178,7 +178,7 @@ def _load_pool_from_manifest(label: str, manifest_path: str) -> list[bytes]:
         )
         return [_make_synthetic_jpeg() for _ in range(POOL_SIZE)]
 
-    print(f"[{label}] пул: {len(pool)} фото ({manifest_path} → {IMAGE_DIR})")
+    print(f"[{label}] пул: {len(pool)} фото ({manifest_path} -> {IMAGE_DIR})")
     return pool
 
 
@@ -188,7 +188,7 @@ def _unique(jpeg: bytes) -> bytes:
     API кэширует результат predict по MD5 входных байтов
     (TTLCache в ai_tour_guide). При фиксированном пуле почти все запросы
     были бы cache hit'ами (~мс, без инференса) и тест мерил бы кэш, а не
-    модель. Реальные пользователи шлют уникальные фото → всегда промах.
+    модель. Реальные пользователи шлют уникальные фото -> всегда промах.
     Хвост случайных байт после EOI-маркера меняет MD5, но JPEG остаётся
     валидным (PIL игнорирует данные после конца изображения).
     """
@@ -241,7 +241,7 @@ class APIUser(HttpUser):
 
     @task(7)
     def predict_known(self):
-        """Основной путь: объект есть в индексе → retrieval + rerank (вес 7).
+        """Основной путь: объект есть в индексе -> retrieval + rerank (вес 7).
 
         Самый частый в реальном трафике сценарий. use_internet_search=true
         (продовый дефолт), но при высокой уверенности fallback не срабатывает.
@@ -257,7 +257,7 @@ class APIUser(HttpUser):
 
     @task(3)
     def predict_novel(self):
-        """Fallback-путь: объекта нет в индексе → интернет-поиск (вес 3).
+        """Fallback-путь: объекта нет в индексе -> интернет-поиск (вес 3).
 
         Низкая уверенность на novel-фото уводит запрос в дорогой fallback
         (Yandex + Wikipedia + повторная VLM-верификация). Реже, чем known.
@@ -266,7 +266,7 @@ class APIUser(HttpUser):
             "/v1/predict",
             files={"image": ("photo.jpg", _random_novel(), "image/jpeg")},
             data={"use_internet_search": "true"},
-            name="/v1/predict (novel→internet)",
+            name="/v1/predict (novel->internet)",
             catch_response=True,
         ) as response:
             self._check_predict(response)

@@ -61,9 +61,7 @@ from urllib.parse import unquote
 from tqdm.asyncio import tqdm as atqdm
 import logging
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -1076,7 +1074,7 @@ class AsyncWikidataCollector:
                 success = [r for r in results if "error" not in r]
                 self.save_json(success, checkpoint_file)
                 pbar.write(
-                    f"Checkpoint: {len(success)} → {checkpoint_file}"
+                    f"Checkpoint: {len(success)} -> {checkpoint_file}"
                 )
 
         pbar.close()
@@ -1089,7 +1087,7 @@ class AsyncWikidataCollector:
         print(f"Saved: {filename}")
 
 
-# ==================== ТЕСТОВЫЙ ЗАПУСК ====================
+# ТЕСТОВЫЙ ЗАПУСК
 
 async def main():
     csv_path = (

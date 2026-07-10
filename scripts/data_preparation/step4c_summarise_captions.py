@@ -31,9 +31,7 @@ from transformers import (
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-# ======================
 # ЛОГИРОВАНИЕ
-# ======================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -41,14 +39,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ======================
 # КОНСТАНТЫ
-# ======================
 MAX_SUMMARY_CAPTIONS = 3
 
-# ======================
 # КОНФИГУРАЦИЯ
-# ======================
 @dataclass
 class Config:
     """Конфигурация для генерации сводных описаний."""
@@ -72,9 +66,7 @@ class Config:
         Path(self.output_path).parent.mkdir(parents=True, exist_ok=True)
 
 
-# ======================
 # LLM SUMMARIZER
-# ======================
 class Qwen2Summarizer:
     """Суммаризация captions с использованием Qwen2-7B-Instruct."""
     def __init__(self, config: Config):
@@ -233,9 +225,7 @@ Canonical description:
             return ["" for _ in batch_data]
 
 
-# ======================
 # ПОДГОТОВКА ДАННЫХ
-# ======================
 def prepare_captions_text(valid_images: List[Dict]) -> str:
     """Подготовка текста из captions для суммаризации."""
     all_captions = [str(img.get("caption", "")) for img in valid_images if img.get("caption")]
@@ -256,9 +246,7 @@ def prepare_captions_text(valid_images: List[Dict]) -> str:
     return "\n".join(f"- {cap}" for cap in unique_captions)
 
 
-# ======================
 # ОСНОВНОЙ ПРОЦЕССОР
-# ======================
 def main():
     """Главная точка входа."""
     config = Config()

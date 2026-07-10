@@ -81,7 +81,7 @@ class YandexTranslator:
 
             translated: str = translations[0].get("text", "")
             logger.info(
-                f"Переведено {len(text)} символов: {text[:50]!r} → {translated[:50]!r}"
+                f"Переведено {len(text)} символов: {text[:50]!r} -> {translated[:50]!r}"
             )
             return translated
 

@@ -15,9 +15,9 @@
   3. (Опционально) проверяет существование файлов под image_dir.
 
 Использование в оценке:
-  порог  ← known-val (val.json) + novel-val-unknown
-  метрики ← known-test (test.json) + novel-test-unknown
-  Истинная метка: novel → unknown, известные → known (объект есть в индексе).
+  порог  <- known-val (val.json) + novel-val-unknown
+  метрики <- known-test (test.json) + novel-test-unknown
+  Истинная метка: novel -> unknown, известные -> known (объект есть в индексе).
 
 Запуск:
     python experiments/build_unknown_sets.py \
@@ -75,7 +75,7 @@ def build_unknown_items(
                 "candidates": [],          # e2e делает свежий retrieval
                 "target_idx": -1,          # unknown по построению
                 "meta": {
-                    "landmark_id": lid,     # НЕТ в индексе → истинный unknown
+                    "landmark_id": lid,     # НЕТ в индексе -> истинный unknown
                     "landmark_name": name,
                     "is_novel_unknown": True,
                 },
@@ -144,7 +144,7 @@ def main() -> None:
             json.dump(items, f, ensure_ascii=False, indent=2)
         miss_str = f", пропущено отсутствующих файлов: {missing}" if missing else ""
         print(f"  {split_name}: {len(items)} unknown-сэмплов из {len(lms)} объектов{miss_str}")
-        print(f"    → {out_path}")
+        print(f"    -> {out_path}")
 
 
 if __name__ == "__main__":
