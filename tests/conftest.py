@@ -88,10 +88,11 @@ def api_client(mock_guide: MagicMock) -> TestClient:
     from src.api.main import app
 
     # Подменяем guide и на уровне глобального экземпляра, и через
-    # dependency_overrides. Override здесь обязателен: lifespan приложения при
-    # старте пытается создать реальный AITourGuide и перезаписывает глобальный
-    # _guide (main.py: set_guide). С override маршруты всегда берут мок —
-    # независимо от того, поднялся реальный сервис или упал.
+    # dependency_overrides. Подмена через зависимость здесь обязательна:
+    # lifespan при старте создаёт реальный AITourGuide и перезаписывает
+    # глобальный _guide (main.py: set_guide), из-за чего результат теста
+    # зависел бы от того, поднялся реальный сервис или упал. Так маршруты
+    # всегда берут мок.
     dependencies.set_guide(mock_guide)
     app.dependency_overrides[get_guide] = lambda: mock_guide
 
