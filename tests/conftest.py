@@ -61,7 +61,16 @@ def mock_guide() -> MagicMock:
         "error": None,
         "timing": {"image_load": 0.01, "retrieval": 0.15, "vlm_generation": 1.8},
     })
-    guide.health_check = AsyncMock(return_value={"status": "healthy"})
+    guide.health_check = AsyncMock(return_value={
+        "status": "healthy",
+        "ready": True,
+        "components": {
+            "retriever": {"status": "ok", "index_size": 100},
+            "vllm": {"status": "ok"},
+        },
+        "config": {"top_k_retrieval": 10, "vlm_threshold": 0.473},
+        "metrics": {"total_requests": 0},
+    })
     guide.cleanup = AsyncMock()
     return guide
 
@@ -75,13 +84,20 @@ def api_client(mock_guide: MagicMock) -> TestClient:
     Не требует реальных моделей и индекса.
     """
     from src.api import dependencies
+    from src.api.dependencies import get_guide
     from src.api.main import app
 
-    # Подменяем глобальный экземпляр guide
+    # Подменяем guide и на уровне глобального экземпляра, и через
+    # dependency_overrides. Override здесь обязателен: lifespan приложения при
+    # старте пытается создать реальный AITourGuide и перезаписывает глобальный
+    # _guide (main.py: set_guide). С override маршруты всегда берут мок —
+    # независимо от того, поднялся реальный сервис или упал.
     dependencies.set_guide(mock_guide)
+    app.dependency_overrides[get_guide] = lambda: mock_guide
 
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
 
     # Сбрасываем после теста
+    app.dependency_overrides.clear()
     dependencies.set_guide(None)
