@@ -27,6 +27,14 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements-prod.txt
           pip install -r requirements-dev.txt
+          # torch/torchvision намеренно вне requirements-*.txt (ставятся отдельно
+          # из-за CUDA-индекса). requirements-dev тянет torch транзитивно через
+          # peft, но без torchvision — и коллекция тестов падает на
+          # `import torchvision` в src/rag/indexing_v2.py. Ставим CPU-сборку
+          # последней и жёстко пиннированной под проект (numpy<2.0.0 уже из prod).
+          pip install torch==2.2.2 torchvision==0.17.2 \
+            --index-url https://download.pytorch.org/whl/cpu \
+            --extra-index-url https://pypi.org/simple
 
       - name: Линтинг (ruff)
         run: ruff check src/ tests/
